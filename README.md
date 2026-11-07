@@ -109,6 +109,7 @@ file server works without special headers. Everything loads from `web/vendor/`.
 | Snow on the summit (fixes FireRed's unused snow weather, whose flakes never came back) | `src/field_weather_effects.c` |
 | Talking to RED → battle → "You defeated RED!" / "Your team was wiped out…" → record → "Play again tomorrow!" / "Try again tomorrow." → fade out | `data/maps/DailyRed_Summit/scripts.inc` and `text.inc`; the `DailyRed_On*` specials in `src/dailyred.c` |
 | Mountain battle background on the summit | `BattleSetup_GetTerrainId` in `src/battle_setup.c` |
+| Waiting for the next frame sleeps (`VBlankIntrWait`) instead of spinning, so the emulator doesn't run an empty loop; this made phones fast enough | `WaitForVBlank` in `src/main.c` |
 | No free switch when RED's Pokémon faints: Battle Style starts on SET and is locked in Options | `StartNewGame` in `src/dailyred.c`, `src/option_menu.c` |
 | RED as a trainer | `TRAINER_DAILYRED_RED` in `include/constants/opponents.h`, `src/data/trainers.h`, `src/dailyred_boss.c` |
 | Menus: POKéMON / OPTION / EXIT; party: SUMMARY / SWITCH / CANCEL | `src/start_menu.c`, `src/party_menu.c`; window height for short menus in `src/new_menu_helpers.c` |
@@ -316,10 +317,11 @@ screen with "Try again".
 `localStorage.removeItem('dailyred-stats')` in the browser console.
 
 **Speed on phones:** add `&fps` to show the emulator's frame counter (60 is
-full speed). To try other timing settings, add `&audiosync=0` (the screen
-refresh paces the game instead of the audio buffer), `&latency=128` (a
-bigger audio buffer, in ms) or `&vsync=0` (frames on a timer). Example:
-`?seed=42&fps&audiosync=0`.
+full speed). To try other settings, add `&audiosync=0` (the screen refresh
+paces the game instead of the audio buffer), `&latency=128` (a bigger audio
+buffer, in ms), `&vsync=0` (frames on a timer), `&idle=detect` (mGBA skips
+idle loops it finds) or `&frameskip=1` (draw every 2nd frame; the game still
+runs every frame). Example: `?seed=42&fps&frameskip=1`.
 
 **In the browser console:** `dailyRed.emulator` is the running Nostalgist
 instance and `dailyRed.stats` shows your saved stats.

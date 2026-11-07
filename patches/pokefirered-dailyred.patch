@@ -1364,6 +1364,23 @@ index bec0f31..9e870d4 100644
          break;
      }
      return TRUE;
+diff --git a/src/main.c b/src/main.c
+index 542b0f5..7748686 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -463,8 +463,10 @@ static void WaitForVBlank(void)
+ {
+     gMain.intrCheck &= ~INTR_FLAG_VBLANK;
+ 
+-    while (!(gMain.intrCheck & INTR_FLAG_VBLANK))
+-        ;
++    // Daily Red: sleep until the next frame (the BIOS halts the CPU) instead
++    // of spinning on the flag. Same timing on the GBA, but an emulator no
++    // longer has to run the empty loop, which made phones too slow.
++    VBlankIntrWait();
+ }
+ 
+ void SetVBlankCounter1Ptr(u32 *ptr)
 diff --git a/src/new_game.c b/src/new_game.c
 index 3768b3c..d465701 100644
 --- a/src/new_game.c

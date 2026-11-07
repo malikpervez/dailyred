@@ -54,18 +54,29 @@ const practiceSeed = parseSeed(new URLSearchParams(location.search).get('seed'))
 //   ?audiosync=0  don't let the audio buffer pace the game; the screen refresh does
 //   ?latency=128  audio buffer in milliseconds
 //   ?vsync=0      run frames on a timer instead of the screen refresh
+//   ?idle=detect  let mGBA find and skip idle loops (default: known games only)
+//   ?frameskip=1  draw only every 2nd frame (2 = every 3rd, ...); the game
+//                 itself still runs every frame
 // e.g. ?seed=7&fps&audiosync=0 for a practice run with the counter on.
 // (RetroArch's defaults: audio sync on, 64 ms latency, vsync on.)
 const tuning = readTuning(new URLSearchParams(location.search));
 
 function readTuning(params) {
   const config = {};
+  const core = {};
   if (params.has('fps')) config.fps_show = true;
   if (params.get('audiosync') === '0') config.audio_sync = false;
   if (params.get('vsync') === '0') config.video_vsync = false;
   const latency = Number(params.get('latency'));
   if (latency >= 16 && latency <= 512) config.audio_latency = Math.round(latency);
-  return { config };
+  const idle = { detect: 'Detect and Remove', off: "Don't Remove" }[params.get('idle')];
+  if (idle) core.mgba_idle_optimization = idle;
+  const frameskip = Number(params.get('frameskip'));
+  if (Number.isInteger(frameskip) && frameskip >= 1 && frameskip <= 10) {
+    core.mgba_frameskip = 'fixed_interval';
+    core.mgba_frameskip_interval = String(frameskip);
+  }
+  return { config, core };
 }
 
 let stats = null; // loaded in start(), once we know where they're kept
@@ -237,6 +248,7 @@ async function startRun() {
         savestate_thumbnail_enable: false,
         ...tuning.config,
       },
+      retroarchCoreConfig: tuning.core,
     });
 
     readGame = createGameLink(emu, seed);
