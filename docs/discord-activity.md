@@ -28,10 +28,11 @@ Discord app ──▶ <app id>.discordsays.com (Discord's proxy) ──HTTPS─�
 ```
 
 - [Before you start: Discord's limits](#before-you-start-discords-limits)
-- [1. Create the Discord application](#1-create-the-discord-application)
-- [2. Give the Pi a public HTTPS address](#2-give-the-pi-a-public-https-address)
-- [3. Build and run it on the Pi](#3-build-and-run-it-on-the-pi)
-- [4. Play](#4-play)
+- [1. Build it on the Pi and try it in a browser](#1-build-it-on-the-pi-and-try-it-in-a-browser)
+- [2. Create the Discord application](#2-create-the-discord-application)
+- [3. Give the Pi a public HTTPS address](#3-give-the-pi-a-public-https-address)
+- [4. Connect it to Discord](#4-connect-it-to-discord)
+- [5. Play](#5-play)
 - [Updating and backups](#updating-and-backups)
 - [How it works](#how-it-works)
 - [Troubleshooting](#troubleshooting)
@@ -50,7 +51,53 @@ verification or Discovery. Every Activity serves the game to whoever opens it.
 That's why Daily Red itself is meant for local play and the public website
 went offline.
 
-## 1. Create the Discord application
+## 1. Build it on the Pi and try it in a browser
+
+You don't need Discord for this part. You need a **64-bit** OS on the Pi
+(Raspberry Pi 4 or 5; OMV 7/8 on 64-bit Raspberry Pi OS or Debian is fine),
+Docker with compose (OMV's **compose** plugin installs both), about **3 GB
+free disk** for the build and ideally 2 GB+ of RAM.
+
+The repository is private, so git asks you to sign in when cloning. Use your
+GitHub username and, as the password, a
+[fine-grained personal access token](https://github.com/settings/personal-access-tokens/new)
+limited to this repository with **Contents: Read-only**.
+
+Over SSH:
+
+```sh
+sudo apt install git          # if the Pi doesn't have git yet
+git clone https://github.com/malikpervez/dailyred-discord.git dailyred
+cd dailyred
+docker compose up -d --build
+docker compose logs -f dailyred    # Ctrl+C stops watching; the container keeps running
+```
+
+The first build compiles the whole game and takes about 10–20 minutes on a
+Pi 4. Later builds reuse the cached layers. If the build dies with an
+out-of-memory error, uncomment `JOBS: "2"` in `docker-compose.yml`.
+
+When the log says `Daily Red activity server on http://localhost:8080`, open
+**`http://<pi-ip>:8380/`** on a computer on your network. You should see the
+normal Daily Red website, and **Play** should start the game, with stats kept
+in that browser as usual. `http://<pi-ip>:8380/healthz` should say `ok`. The
+log's warning that `DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET are not set` is
+expected until step 4.
+
+If the page loads but the game won't start, try it as `localhost` through an
+SSH tunnel: `ssh -L 8380:localhost:8380 <user>@<pi-ip>`, then open
+`http://localhost:8380/`. Browsers allow some features only on HTTPS or
+localhost. The game shouldn't need any of them, but this rules that out.
+
+If you manage containers in **OMV's Compose plugin** instead, create a compose
+file there with the contents of `docker-compose.yml`. Change `context: .` to
+the full path of the clone (e.g. `/srv/dev-disk-by-uuid-…/appdata/dailyred`)
+and put the `.env` values (step 4) in the plugin's environment field.
+
+Stats are kept in the `dailyred-data` Docker volume. To keep them in an OMV
+shared folder instead, see the comment in `docker-compose.yml`.
+
+## 2. Create the Discord application
 
 In the [Discord Developer Portal](https://discord.com/developers/applications):
 
@@ -68,13 +115,13 @@ In the [Discord Developer Portal](https://discord.com/developers/applications):
    platforms: Desktop/Web, iOS and Android. For phones, choose **portrait**
    (the touch controls sit under the screen).
 7. **Activities > URL Mappings**: set the root mapping **`/`** to your
-   public hostname from step 2, **without** `https://`, e.g.
+   public hostname from step 3, **without** `https://`, e.g.
    `dailyred.example.com`. One mapping is all it needs.
 8. **App Testers**: invite the friends who'll play. They need to accept the email.
 9. Add the app to your server: **Installation**, copy the install link, open
    it and pick your server.
 
-## 2. Give the Pi a public HTTPS address
+## 3. Give the Pi a public HTTPS address
 
 Discord's proxy fetches the Activity from a public HTTPS hostname, so the Pi
 has to be reachable from the internet on one. Pick one of these:
@@ -91,7 +138,7 @@ This needs a domain on Cloudflare (the free plan is enough).
 3. Add a **Public Hostname**: subdomain `dailyred`, your domain, service
    type **HTTP**, URL **`dailyred:8080`** (the container's name on the
    compose network).
-4. Use that hostname (`dailyred.example.com`) for the URL mapping in step 1.7.
+4. Use that hostname (`dailyred.example.com`) for the URL mapping in step 2.7.
 
 ### Option B: a reverse proxy you already run
 
@@ -105,48 +152,27 @@ a Let's Encrypt certificate, add a proxy host:
 You also need ports 80/443 forwarded to the proxy and DNS pointing at your
 home IP, which is the usual setup for these proxies.
 
-## 3. Build and run it on the Pi
+## 4. Connect it to Discord
 
-You need a **64-bit** OS on the Pi (Raspberry Pi 4 or 5; OMV 7/8 on 64-bit
-Raspberry Pi OS or Debian is fine), Docker with compose (OMV's **compose**
-plugin installs both), about **3 GB free disk** for the build and ideally 2 GB+
-of RAM.
-
-Over SSH (the repository is private, so sign in first: `gh auth login`, or
-use a [personal access token](https://github.com/settings/tokens?type=beta)
-with read access to it as the password):
+Put the app's ID and secret (step 2) on the Pi, then restart the container
+with them. It's the same image, so there's nothing to rebuild:
 
 ```sh
-git clone https://github.com/malikpervez/dailyred-discord.git dailyred
 cd dailyred
 cp .env.example .env
 nano .env                     # DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET (+ CLOUDFLARE_TUNNEL_TOKEN)
 
 # Option A (Cloudflare Tunnel):
-docker compose --profile tunnel up -d --build
+docker compose --profile tunnel up -d
 # Option B (your own reverse proxy):
-docker compose up -d --build
-
-docker compose logs -f dailyred
+docker compose up -d
 ```
 
-The first build compiles the whole game and takes about 10–20 minutes on a
-Pi 4. Later builds reuse the cached layers. If the build dies with an
-out-of-memory error, uncomment `JOBS: "2"` in `docker-compose.yml`.
-
-If you manage containers in **OMV's Compose plugin** instead, create a compose
-file there with the contents of `docker-compose.yml`. Change `context: .` to
-the full path of the clone (e.g. `/srv/dev-disk-by-uuid-…/appdata/dailyred-src`)
-and put the `.env` values in the plugin's environment field.
-
 **Check it:** `https://dailyred.example.com/` in a normal browser should show
-the regular website and play the game (stats in that browser, as usual), and
-`https://dailyred.example.com/healthz` should say `ok`.
+the website, and `https://dailyred.example.com/healthz` should say `ok`. The
+log no longer warns about missing Discord settings.
 
-Stats are kept in the `dailyred-data` Docker volume. To keep them in an OMV
-shared folder instead, see the comment in `docker-compose.yml`.
-
-## 4. Play
+## 5. Play
 
 - **Voice channel:** click the rocket (Activities) button and pick Daily Red.
 - **Text channel or DM:** open the App Launcher (the shapes icon next to the
@@ -235,7 +261,7 @@ block Discord's proxy.
 - Nothing in the log: the page couldn't reach `/api`. Check the proxy or tunnel
   forwards everything under the hostname, not just `/`.
 
-Also check the `https://127.0.0.1` redirect from step 1.3.
+Also check the `https://127.0.0.1` redirect from step 2.3.
 
 **Seeing the browser console.** The easiest way is to open Discord in a web
 browser (discord.com/app), start the Activity there and use the browser's dev

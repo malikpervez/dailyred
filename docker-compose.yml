@@ -1,8 +1,10 @@
 # Daily Red as a Discord Activity. Setup: docs/discord-activity.md
 #
-#   cp .env.example .env    # then fill it in
-#   docker compose up -d --build                     # behind your own reverse proxy
-#   docker compose --profile tunnel up -d --build    # or with a Cloudflare Tunnel
+#   docker compose up -d --build     # then try it in a browser: http://<pi-ip>:8380
+#
+# For Discord: cp .env.example .env, fill it in, and run the same command (behind
+# your own reverse proxy), or with a Cloudflare Tunnel:
+#   docker compose --profile tunnel up -d --build
 services:
   dailyred:
     build:
@@ -13,8 +15,10 @@ services:
     container_name: dailyred
     restart: unless-stopped
     environment:
-      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:?Set DISCORD_CLIENT_ID in .env}
-      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:?Set DISCORD_CLIENT_SECRET in .env}
+      # From .env. Without them the site still works in a browser (stats in
+      # the browser, as on the website); only Discord sign-in needs them.
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
     ports:
       # For a reverse proxy on the Pi. Not needed with the tunnel below.
       - "${DAILYRED_PORT:-8380}:8080"
