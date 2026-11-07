@@ -315,6 +315,12 @@ screen with "Try again".
 (nothing saved, no daily limit). To reset your daily stats, run
 `localStorage.removeItem('dailyred-stats')` in the browser console.
 
+**Speed on phones:** add `&fps` to show the emulator's frame counter (60 is
+full speed). To try other timing settings, add `&audiosync=0` (the screen
+refresh paces the game instead of the audio buffer), `&latency=128` (a
+bigger audio buffer, in ms) or `&vsync=0` (frames on a timer). Example:
+`?seed=42&fps&audiosync=0`.
+
 **In the browser console:** `dailyRed.emulator` is the running Nostalgist
 instance and `dailyRed.stats` shows your saved stats.
 

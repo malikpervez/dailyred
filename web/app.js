@@ -49,6 +49,25 @@ const session = {
 // aren't saved, there's no daily limit, and the game keeps dealing new teams.
 const practiceSeed = parseSeed(new URLSearchParams(location.search).get('seed'));
 
+// Test switches for tuning the emulator's speed on phones, also not in the UI:
+//   ?fps          show RetroArch's frame counter (60 is full speed)
+//   ?audiosync=0  don't let the audio buffer pace the game; the screen refresh does
+//   ?latency=128  audio buffer in milliseconds
+//   ?vsync=0      run frames on a timer instead of the screen refresh
+// e.g. ?seed=7&fps&audiosync=0 for a practice run with the counter on.
+// (RetroArch's defaults: audio sync on, 64 ms latency, vsync on.)
+const tuning = readTuning(new URLSearchParams(location.search));
+
+function readTuning(params) {
+  const config = {};
+  if (params.has('fps')) config.fps_show = true;
+  if (params.get('audiosync') === '0') config.audio_sync = false;
+  if (params.get('vsync') === '0') config.video_vsync = false;
+  const latency = Number(params.get('latency'));
+  if (latency >= 16 && latency <= 512) config.audio_latency = Math.round(latency);
+  return { config };
+}
+
 let stats = null; // loaded in start(), once we know where they're kept
 let discord = null; // the Discord session (discord.js) inside an activity
 let emu = null;
@@ -216,6 +235,7 @@ async function startRun() {
         // debugging tools in tests/ read the game's RAM.
         savestate_file_compression: false,
         savestate_thumbnail_enable: false,
+        ...tuning.config,
       },
     });
 
@@ -337,13 +357,17 @@ document.addEventListener('visibilitychange', () => {
 
 // Browsers start audio suspended unless it begins during a click; the
 // emulator starts after the download, so resume it on the next interaction.
+// iPhones only count a tap once the finger lifts (touchend / pointerup), and
+// Safari can also leave audio "interrupted", e.g. after a call. Until the
+// audio runs, the emulator keeps asking for it on every audio chunk.
 function resumeAudio() {
   for (const ctx of audioContexts) {
-    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    if (ctx.state === 'suspended' || ctx.state === 'interrupted') ctx.resume().catch(() => {});
   }
 }
-window.addEventListener('pointerdown', resumeAudio);
-window.addEventListener('keydown', resumeAudio);
+for (const type of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown']) {
+  window.addEventListener(type, resumeAudio, { capture: true, passive: true });
+}
 
 // --- Touch controls ------------------------------------------------------------
 
