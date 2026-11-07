@@ -11,7 +11,7 @@ TC="$ROOT/.toolchain"
 GAME="$ROOT/pokefirered"
 
 if [ ! -x "$TC/arm-none-eabi/bin/arm-none-eabi-gcc" ]; then
-  echo "Toolchain missing. Run scripts/setup-macos.sh first."; exit 1
+  echo "Toolchain missing. Run scripts/setup-macos.sh (or scripts/setup-linux.sh) first."; exit 1
 fi
 
 # gbagfx asks pkg-config for libpng; clang also honours these variables,
@@ -21,7 +21,8 @@ export LIBRARY_PATH="$TC/libpng/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
 # A no-op pkg-config so the tool Makefiles don't print "command not found".
 export PATH="$ROOT/scripts/shims:$PATH"
 
-JOBS="$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
+# JOBS=2 scripts/build-rom.sh uses fewer cores (e.g. on a Pi with little RAM).
+JOBS="${JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || nproc)}"
 
 if [ "$#" -gt 0 ]; then
   make -C "$GAME" -j"$JOBS" TOOLCHAIN="$TC/arm-none-eabi" MODERN=1 "$@"

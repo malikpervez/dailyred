@@ -40,13 +40,26 @@ export function msUntilTomorrow(now = new Date()) {
 //   lastPlayed       date of the last finished battle, lastResult 'won'/'lost'
 //   pending          date of a battle that started but hasn't finished
 
-const EMPTY = { wins: 0, losses: 0, winStreak: 0, dayStreak: 0, lastPlayed: null, lastResult: null, pending: null };
+export const EMPTY = { wins: 0, losses: 0, winStreak: 0, dayStreak: 0, lastPlayed: null, lastResult: null, pending: null };
+
+// Where stats are kept: this browser's localStorage, unless useStatsStorage()
+// swaps in something else (the Discord Activity keeps them on its server, and
+// the server itself reuses the rules below with no storage at all).
+let storage = {
+  read: () => JSON.parse(localStorage.getItem(STORAGE_KEY)),
+  write: (stats) => localStorage.setItem(STORAGE_KEY, JSON.stringify(stats)),
+};
+
+export function useStatsStorage(next) {
+  storage = next;
+  memoryCopy = null;
+}
 
 let memoryCopy = null; // used when localStorage is blocked
 
 export function loadStats() {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    const saved = storage.read();
     return { ...EMPTY, ...saved };
   } catch {
     return { ...EMPTY, ...memoryCopy };
@@ -56,7 +69,7 @@ export function loadStats() {
 function save(stats) {
   memoryCopy = { ...stats };
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(stats));
+    storage.write(stats);
   } catch {
     // Storage blocked (e.g. some private modes): stats last until the page closes.
   }

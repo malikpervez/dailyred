@@ -1,0 +1,11 @@
+# Built inside the image (see Dockerfile), or not needed in it.
+.git
+.toolchain
+pokefirered
+web/vendor
+web/game
+activity/node_modules
+activity/test
+tests
+data
+.env

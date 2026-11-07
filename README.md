@@ -19,6 +19,7 @@ reimplemented in JavaScript.
 - [Development workflow](#development-workflow)
 - [Testing and debugging](#testing-and-debugging)
 - [Running it locally](#running-it-locally)
+- [Discord Activity](#discord-activity)
 - [Copyright and licenses](#copyright-and-licenses)
 - [Known limitations](#known-limitations)
 
@@ -334,6 +335,14 @@ saved in the browser for that address, so keep using the same port to keep
 your streaks. After rebuilding the ROM (`scripts/build-rom.sh`), reload the
 page.
 
+## Discord Activity
+
+Daily Red can also run inside Discord as an Activity, with Discord sign-in,
+stats that follow you across devices and a "Today in this server" list. It's
+one Docker image (it builds the ROM itself) that runs on an x86_64 or arm64
+machine, e.g. a Raspberry Pi NAS. Setup:
+[docs/discord-activity.md](docs/discord-activity.md).
+
 ## Copyright and licenses
 
 Daily Red is a free, unofficial fan project. It isn't affiliated with or
@@ -374,6 +383,7 @@ footer links to it.
 ```
 patches/pokefirered-dailyred.patch   all changes to pret/pokefirered
 scripts/setup-macos.sh               toolchain (xPack arm-none-eabi-gcc 14.2.1 + libpng)
+scripts/setup-linux.sh               the same compiler on Linux x86_64 / arm64
 scripts/get-pokefirered.sh           pinned upstream checkout + patch
 scripts/save-patch.sh                pokefirered/ changes → patches/
 scripts/build-rom.sh                 make modern → web/game/dailyred.gba.gz
@@ -381,6 +391,9 @@ scripts/fetch-vendor.sh              Nostalgist, mGBA core, font (pinned, checks
 scripts/serve.mjs                    local static server
 web/                                 the website
 tests/                               headless browser tests and the teams tool
+activity/                            Discord Activity server (sign-in, stats, server list)
+Dockerfile, docker-compose.yml       the Discord Activity image
+docs/discord-activity.md             Discord Activity setup
 ```
 
 Inside `pokefirered/`, the Daily Red code is `include/dailyred.h`,

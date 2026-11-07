@@ -73,6 +73,13 @@
       </div>
     </section>
 
+    <!-- Discord Activity only (discord.js): who in this server has played today. -->
+    <section class="board" id="board" aria-labelledby="board-heading" hidden>
+      <h2 class="guide-heading" id="board-heading">Today in this server</h2>
+      <ol class="board-list" id="board-list"></ol>
+      <p class="guide-note" id="board-note"></p>
+    </section>
+
     <section class="guide">
       <h2 class="guide-heading">Keyboard</h2>
       <dl class="keys">
@@ -89,6 +96,12 @@
       <p>Daily Red is a free, unofficial fan project. It isn't affiliated with or endorsed by Nintendo, Creatures Inc., GAME FREAK inc. or The Pokémon Company. Pokémon and all game content are © Nintendo, Creatures Inc. and GAME FREAK inc.</p>
       <p><a href="licenses.txt">Licenses</a> · <a href="https://github.com/amoi-builds/dailyred">Source</a></p>
     </footer>
+
+    <!-- Inside Discord, links can't leave the page; licenses.txt opens here instead. -->
+    <dialog class="text-dialog" id="text-dialog" aria-label="Licenses">
+      <form method="dialog"><button class="button button-quiet" type="submit">Close</button></form>
+      <pre class="text-dialog-body" id="text-dialog-body"></pre>
+    </dialog>
   </main>
 </body>
 </html>

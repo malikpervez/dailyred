@@ -430,6 +430,88 @@ kbd {
   color: var(--muted);
 }
 
+/* Discord Activity --------------------------------------------------------- */
+
+/* Discord already shows the name, so the screen gets the room; on desktop it's
+   sized so the screen and toolbar fit the activity's window. */
+html[data-host="discord"] .masthead { display: none; }
+html[data-host="discord"] .app { padding-top: 16px; }
+
+@media (pointer: fine) {
+  html[data-host="discord"] { --column: min(736px, max(360px, calc((100vh - 112px) * 1.5))); }
+}
+
+/* Today in this server: one row per player, today's result on the right. */
+.board {
+  margin-top: 40px;
+  padding-top: 28px;
+  border-top: 2px solid var(--line);
+}
+
+.board-list { margin: 0; padding: 0; list-style: none; }
+
+.board-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  grid-template-areas: "avatar name today" "avatar streak today";
+  column-gap: 12px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.board-row:last-child { border-bottom: none; }
+
+.board-avatar {
+  grid-area: avatar;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+.board-name {
+  grid-area: name;
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.board-streak {
+  grid-area: streak;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.board-today {
+  grid-area: today;
+  padding: 6px 10px;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  font: 600 15px/1 var(--font-pixel);
+  white-space: nowrap;
+}
+
+.board-row[data-today="won"] .board-today { color: var(--on-dark); background: var(--bezel); border-color: var(--bezel); }
+.board-row[data-today="battling"] .board-today { border-style: dashed; }
+.board-row[data-today="none"] .board-today { color: var(--muted); border-color: transparent; }
+
+/* licenses.txt, opened in the page because Discord's frame can't navigate. */
+.text-dialog {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 16px;
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  background: var(--page);
+}
+
+.text-dialog::backdrop { background: rgba(10, 16, 22, 0.6); }
+.text-dialog form { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.text-dialog-body { margin: 0; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
 /* Footer: the fan-project disclaimer and the licenses link. */
 
 .footer {

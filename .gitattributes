@@ -1,0 +1,4 @@
+# Shell scripts run in Linux containers too: keep them LF on every OS.
+*.sh text eol=lf
+scripts/shims/* text eol=lf
+Dockerfile text eol=lf

@@ -1,15 +1,17 @@
 // Website controller: the daily title card (RED, your stats, Play), the
 // emulator, and the toolbar and touch controls. All game behaviour lives in the
 // ROM; this file starts it with the day's seed, watches for the result, and
-// keeps the stats (see daily.js).
+// keeps the stats (see daily.js). Inside a Discord Activity, discord.js adds
+// sign-in, stats kept on the server and the "Today in this server" list.
 import { Nostalgist } from './vendor/nostalgist.js';
 import { loadGameFiles } from './game-files.js';
 import { injectConfig, parseSeed } from './rom-config.js';
 import { createGameLink, PHASE, RESULT } from './game-link.js';
 import {
   today, dailySeed, msUntilTomorrow, loadStats, resultFor, currentStreaks,
-  markBattleStarted, recordResult, settleAbandonedGame,
+  markBattleStarted, recordResult, settleAbandonedGame, useStatsStorage,
 } from './daily.js';
+import { inDiscord, connectDiscord, renderBoard } from './discord.js';
 
 const $ = (id) => document.getElementById(id);
 const app = document.querySelector('.app');
@@ -31,6 +33,10 @@ const ui = {
   loadingDetail: $('loading-detail'),
   meter: $('meter'),
   errorText: $('error-text'),
+  board: $('board'),
+  boardHeading: $('board-heading'),
+  boardList: $('board-list'),
+  boardNote: $('board-note'),
 };
 
 // sessionStorage can throw when storage is blocked; the site works without it.
@@ -43,7 +49,8 @@ const session = {
 // aren't saved, there's no daily limit, and the game keeps dealing new teams.
 const practiceSeed = parseSeed(new URLSearchParams(location.search).get('seed'));
 
-let stats = settleAbandonedGame(loadStats());
+let stats = null; // loaded in start(), once we know where they're kept
+let discord = null; // the Discord session (discord.js) inside an activity
 let emu = null;
 let readGame = null;
 let pollTimer = null;
@@ -90,6 +97,32 @@ function renderTitle() {
   ui.practiceNote.hidden = !practiceSeed;
   if (result) ui.playedResult.textContent = result === 'won' ? 'You beat RED today!' : 'RED won today.';
   updateCountdown();
+
+  const record = `${stats.wins}W ${stats.losses}L`;
+  if (result === 'won') discord?.setPresence('Beat RED today', `${record} · ${winStreak} win streak`);
+  else if (result === 'lost') discord?.setPresence('Lost to RED today', record);
+  else discord?.setPresence("Today's battle: not yet", record);
+  refreshBoard();
+}
+
+// --- Today in this server (Discord only) ---------------------------------------
+
+let boardTimer = null;
+
+async function refreshBoard() {
+  if (!discord?.room) return;
+  clearTimeout(boardTimer);
+  try {
+    const { players } = await discord.board(today());
+    renderBoard(ui.boardList, players);
+    ui.boardNote.textContent = players.length ? '' : 'Nobody has played here yet. Be the first to climb!';
+  } catch (err) {
+    console.warn("Couldn't load today's players", err);
+  }
+  // Keep it fresh while the title card is up; others play meanwhile.
+  boardTimer = setTimeout(() => {
+    if (app.dataset.state === 'title' && !document.hidden) refreshBoard();
+  }, 30000);
 }
 
 function formatTime(ms) {
@@ -150,7 +183,9 @@ async function startRun() {
     });
 
     runDate = today();
-    stats = loadStats(); // another tab may have played meanwhile
+    // Another tab (or, in Discord, another device) may have played meanwhile.
+    await discord?.refreshStats().catch((err) => console.warn("Couldn't refresh stats", err));
+    stats = loadStats();
     if (!practiceSeed && resultFor(stats, runDate)) {
       renderTitle();
       setState('title');
@@ -188,6 +223,7 @@ async function startRun() {
     battleSeen = false;
     pollTimer = setInterval(watchGame, 500);
     setState('playing');
+    discord?.setPresence('Climbing to RED', `${stats.wins}W ${stats.losses}L`);
   } catch (err) {
     console.error(err);
     stopEmulator();
@@ -213,15 +249,30 @@ function watchGame() {
   if (!status || practiceSeed) return;
   if (status.phase >= PHASE.BATTLE) {
     battleSeen = true;
-    markBattleStarted(stats, runDate);
+    saveBattleStart();
   } else if (battleSeen && status.result === RESULT.NONE) {
     // The game restarted mid-battle: that's a loss, like leaving the page.
-    recordResult(stats, runDate, false);
+    saveResult(false);
     endDailyGame(0);
     return;
   }
-  if (status.result !== RESULT.NONE) recordResult(stats, runDate, status.result === RESULT.WON);
+  if (status.result !== RESULT.NONE) saveResult(status.result === RESULT.WON);
   if (status.phase === PHASE.FINISHED) endDailyGame(1000);
+}
+
+// Each is saved once per day (the game is polled twice a second); inside
+// Discord it also goes to the activity server.
+function saveBattleStart() {
+  if (stats.pending === runDate || resultFor(stats, runDate)) return;
+  markBattleStarted(stats, runDate);
+  discord?.report('start', runDate);
+  discord?.setPresence('Battling RED', `${stats.wins}W ${stats.losses}L`);
+}
+
+function saveResult(won) {
+  if (resultFor(stats, runDate)) return;
+  recordResult(stats, runDate, won);
+  discord?.report('result', runDate, won);
 }
 
 function endDailyGame(delayMs) {
@@ -351,7 +402,53 @@ window.dailyRed = {
   get stats() { return { ...stats }; },
 };
 
-renderTitle();
-setState('title');
+// --- Inside Discord ----------------------------------------------------------------
+
+// Links can't navigate the activity's frame: show our own text files in the
+// page, and let Discord open the rest in the browser.
+document.querySelector('.footer').addEventListener('click', async (event) => {
+  const link = event.target.closest('a[href]');
+  if (!inDiscord || !link) return;
+  event.preventDefault();
+  if (link.origin !== location.origin) {
+    discord?.openLink(link.href);
+    return;
+  }
+  const dialog = $('text-dialog');
+  $('text-dialog-body').textContent = await fetch(link.href).then((r) => r.text()).catch(() => "Couldn't load it.");
+  dialog.showModal();
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && app.dataset.state === 'title') refreshBoard();
+});
+
+// --- Start -------------------------------------------------------------------------
+
+async function start() {
+  if (inDiscord) {
+    setState('loading');
+    ui.loadingText.textContent = 'Signing in with Discord';
+    ui.meter.parentElement.hidden = true;
+    try {
+      discord = await connectDiscord();
+      useStatsStorage(discord.storage);
+      ui.board.hidden = !discord.room;
+      ui.boardHeading.textContent = discord.inServer ? 'Today in this server' : 'Today in this chat';
+    } catch (err) {
+      // Still playable: the stats stay in this browser, like on the website.
+      console.error('Discord sign-in failed', err);
+      ui.board.hidden = false;
+      ui.boardNote.textContent = `Couldn't sign in with Discord (${err?.message || err}). Your stats are kept on this device for now.`;
+    }
+    ui.meter.parentElement.hidden = false;
+  }
+  stats = settleAbandonedGame(loadStats());
+  renderTitle();
+  setState('title');
+}
+
+if (inDiscord) document.documentElement.dataset.host = 'discord';
 showMuted();
-ui.fullscreen.hidden = !document.fullscreenEnabled; // e.g. iPhone Safari
+ui.fullscreen.hidden = !document.fullscreenEnabled; // e.g. iPhone Safari, Discord's frame
+start();

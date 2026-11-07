@@ -15,3 +15,8 @@
 /tests/node_modules/
 /tests/output/
 .DS_Store
+
+# The Discord Activity (activity/, docker-compose.yml)
+/activity/node_modules/
+/data/
+.env

@@ -1,0 +1,41 @@
+# Daily Red as a Discord Activity. Setup: docs/discord-activity.md
+#
+#   cp .env.example .env    # then fill it in
+#   docker compose up -d --build                     # behind your own reverse proxy
+#   docker compose --profile tunnel up -d --build    # or with a Cloudflare Tunnel
+services:
+  dailyred:
+    build:
+      context: .
+      # args:
+      #   JOBS: "2"   # fewer parallel compile jobs if a Pi with 1-2 GB RAM runs out of memory
+    image: dailyred-activity:local
+    container_name: dailyred
+    restart: unless-stopped
+    environment:
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:?Set DISCORD_CLIENT_ID in .env}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:?Set DISCORD_CLIENT_SECRET in .env}
+    ports:
+      # For a reverse proxy on the Pi. Not needed with the tunnel below.
+      - "${DAILYRED_PORT:-8380}:8080"
+    volumes:
+      # Players' stats (one SQLite file). To keep it in an OMV shared folder
+      # instead, use e.g. /srv/dev-disk-by-uuid-.../appdata/dailyred:/data and
+      # give the container's user access to it: sudo chown 1000:1000 <folder>
+      - dailyred-data:/data
+
+  # Optional: makes the Pi reachable by Discord over HTTPS without opening a
+  # port on your router. Start with: docker compose --profile tunnel up -d
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.7
+    profiles: [tunnel]
+    container_name: dailyred-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - dailyred
+
+volumes:
+  dailyred-data:
