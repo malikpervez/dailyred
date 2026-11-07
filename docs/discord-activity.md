@@ -55,47 +55,50 @@ went offline.
 
 You don't need Discord for this part. You need a **64-bit** OS on the Pi
 (Raspberry Pi 4 or 5; OMV 7/8 on 64-bit Raspberry Pi OS or Debian is fine),
-Docker with compose (OMV's **compose** plugin installs both), about **3 GB
-free disk** for the build and ideally 2 GB+ of RAM.
+OMV's **compose** plugin (it installs Docker), about **3 GB free disk** for
+the build and ideally 2 GB+ of RAM.
 
-The repository is private, so git asks you to sign in when cloning. Use your
-GitHub username and, as the password, a
-[fine-grained personal access token](https://github.com/settings/personal-access-tokens/new)
-limited to this repository with **Contents: Read-only**.
+### In OpenMediaVault's web interface
 
-Over SSH:
+1. **Services > Compose > Files**, then the **Add (+)** menu > **Add from URL**:
+   - URL: `https://raw.githubusercontent.com/malikpervez/dailyred/main/omv/dailyred.yml`
+   - Name: `dailyred`
+2. Select the new `dailyred` row and press **Up** (the arrow). Docker downloads
+   the code from GitHub and builds the image, which compiles the whole game.
+   The first time this takes about 10–20 minutes on a Pi 4. Leave the
+   output window open, or close it and check later in **Tools > logs**.
+3. When it's done, open **`http://<nas-ip>:8380/`** on a computer on your
+   network. You should see the normal Daily Red website, and **Play** should
+   start the game, with stats kept in that browser as usual.
+   `http://<nas-ip>:8380/healthz` should say `ok`.
+
+The file ([omv/dailyred.yml](../omv/dailyred.yml)) builds straight from this
+repository on GitHub. The log's warning that `DISCORD_CLIENT_ID /
+DISCORD_CLIENT_SECRET are not set` is expected until step 4. If the build
+runs out of memory, edit the file in OMV and uncomment `JOBS: "2"`.
+
+### Or over SSH
 
 ```sh
 sudo apt install git          # if the Pi doesn't have git yet
-git clone https://github.com/malikpervez/dailyred-discord.git dailyred
+git clone https://github.com/malikpervez/dailyred.git
 cd dailyred
 docker compose up -d --build
 docker compose logs -f dailyred    # Ctrl+C stops watching; the container keeps running
 ```
 
-The first build compiles the whole game and takes about 10–20 minutes on a
-Pi 4. Later builds reuse the cached layers. If the build dies with an
-out-of-memory error, uncomment `JOBS: "2"` in `docker-compose.yml`.
+This uses the repository's `docker-compose.yml`, which builds from the
+checkout instead of GitHub (port 8380 too).
 
-When the log says `Daily Red activity server on http://localhost:8080`, open
-**`http://<pi-ip>:8380/`** on a computer on your network. You should see the
-normal Daily Red website, and **Play** should start the game, with stats kept
-in that browser as usual. `http://<pi-ip>:8380/healthz` should say `ok`. The
-log's warning that `DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET are not set` is
-expected until step 4.
+### If the game won't start in the browser
 
 If the page loads but the game won't start, try it as `localhost` through an
-SSH tunnel: `ssh -L 8380:localhost:8380 <user>@<pi-ip>`, then open
+SSH tunnel: `ssh -L 8380:localhost:8380 <user>@<nas-ip>`, then open
 `http://localhost:8380/`. Browsers allow some features only on HTTPS or
 localhost. The game shouldn't need any of them, but this rules that out.
 
-If you manage containers in **OMV's Compose plugin** instead, create a compose
-file there with the contents of `docker-compose.yml`. Change `context: .` to
-the full path of the clone (e.g. `/srv/dev-disk-by-uuid-…/appdata/dailyred`)
-and put the `.env` values (step 4) in the plugin's environment field.
-
-Stats are kept in the `dailyred-data` Docker volume. To keep them in an OMV
-shared folder instead, see the comment in `docker-compose.yml`.
+Stats are kept in a Docker volume (`dailyred-data`), so they survive
+rebuilds.
 
 ## 2. Create the Discord application
 
@@ -154,8 +157,22 @@ home IP, which is the usual setup for these proxies.
 
 ## 4. Connect it to Discord
 
-Put the app's ID and secret (step 2) on the Pi, then restart the container
-with them. It's the same image, so there's nothing to rebuild:
+Give the container the app's ID and secret (step 2). It's the same image, so
+nothing needs rebuilding.
+
+**In OMV:** Services > Compose > Files, select `dailyred`, **Edit**, tick
+**Show environment file** and put this in the **Environment** box:
+
+```
+DISCORD_CLIENT_ID=your application id
+DISCORD_CLIENT_SECRET=your client secret
+```
+
+With a Cloudflare Tunnel (option A), also add
+`CLOUDFLARE_TUNNEL_TOKEN=your tunnel token` and uncomment the `cloudflared`
+service in the file. **Save**, then press **Up**.
+
+**Over SSH:**
 
 ```sh
 cd dailyred
@@ -193,14 +210,19 @@ like reloading the website.
 
 ## Updating and backups
 
+**In OMV:** select `dailyred`, **Tools > Build** (it fetches the latest code
+from GitHub), then **Up**.
+
+**Over SSH:**
+
 ```sh
 cd dailyred
 git pull
 docker compose up -d --build      # add --profile tunnel for option A
 ```
 
-Stats survive rebuilds (they're in the volume). For a backup, stop the
-container briefly so the database is consistent:
+Stats survive rebuilds (they're in the volume). For a backup over SSH, stop
+the container briefly so the database is consistent:
 
 ```sh
 docker compose stop dailyred
@@ -239,6 +261,10 @@ docker compose start dailyred
   a dialog.
 
 ## Troubleshooting
+
+**The OMV build stops with `"git": executable file not found`.** Docker
+needs git on the NAS to fetch the code from GitHub. Install it once over SSH
+(`sudo apt install git`) and press **Up** again.
 
 **The Activity doesn't show up.** Turn on Developer Mode (owner) or
 Application Test Mode (testers), and check the server has fewer than 25

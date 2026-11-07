@@ -1,0 +1,43 @@
+# Daily Red for OpenMediaVault's Compose plugin. It builds straight from
+# GitHub, so there's nothing to download or copy onto the NAS by hand.
+#
+#   Services > Compose > Files > Add (+) > Add from URL
+#     URL:  https://raw.githubusercontent.com/malikpervez/dailyred/main/omv/dailyred.yml
+#     Name: dailyred
+#   then select it and press Up. The first build takes 10-20 minutes on a Pi.
+#   Try it in a browser: http://<nas-ip>:8380/
+#
+# Full guide: https://github.com/malikpervez/dailyred/blob/main/docs/discord-activity.md
+services:
+  dailyred:
+    build:
+      context: https://github.com/malikpervez/dailyred.git#main
+      # args:
+      #   JOBS: "2"   # fewer parallel compile jobs if a Pi with 1-2 GB RAM runs out of memory
+    image: dailyred-activity:local
+    container_name: dailyred
+    restart: unless-stopped
+    environment:
+      # Put these in this file's Environment box (Edit > Show environment file)
+      # when you connect Discord. Without them the site works in a browser.
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+    ports:
+      - "8380:8080"
+    volumes:
+      - dailyred-data:/data
+
+  # For Discord, if you use a Cloudflare Tunnel: uncomment this service and
+  # put CLOUDFLARE_TUNNEL_TOKEN in the Environment box.
+  # cloudflared:
+  #   image: cloudflare/cloudflared:2026.10.7
+  #   container_name: dailyred-tunnel
+  #   restart: unless-stopped
+  #   command: tunnel --no-autoupdate run
+  #   environment:
+  #     TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+  #   depends_on:
+  #     - dailyred
+
+volumes:
+  dailyred-data:
