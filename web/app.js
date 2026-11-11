@@ -59,6 +59,8 @@ const practiceSeed = parseSeed(new URLSearchParams(location.search).get('seed'))
 //   ?idle=detect  let mGBA find and skip idle loops (default: known games only)
 //   ?frameskip=1  draw only every 2nd frame (2 = every 3rd, ...); the game
 //                 itself still runs every frame
+//   ?scale=1      draw the game at 1x (240x160) instead of 3x; CSS scales it
+//                 up either way
 //   ?pace=timer   run the emulator's frames off a 60 Hz setTimeout instead of
 //                 requestAnimationFrame, for browsers that throttle the latter
 // e.g. ?seed=7&fps&audiosync=0 for a practice run with the counter on.
@@ -97,7 +99,9 @@ function readTuning(params) {
     core.mgba_frameskip = 'fixed_interval';
     core.mgba_frameskip_interval = String(frameskip);
   }
-  return { config, core };
+  const scale = Number(params.get('scale'));
+  const size = [1, 2, 3].includes(scale) ? scale : 3;
+  return { config, core, size: { width: 240 * size, height: 160 * size } };
 }
 
 let stats = null; // loaded in start(), once we know where they're kept
@@ -257,7 +261,7 @@ async function startRun() {
     emu = await Nostalgist.launch({
       core: 'mgba',
       element: canvas,
-      size: { width: 720, height: 480 }, // render at 3x; CSS scales it to fit
+      size: tuning.size, // 3x (720x480) unless ?scale; CSS scales it to fit
       rom: { fileName: 'dailyred.gba', fileContent: new Blob([rom]) },
       resolveCoreJs: () => files.coreJs,
       resolveCoreWasm: () => files.coreWasm,

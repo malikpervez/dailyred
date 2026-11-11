@@ -322,7 +322,7 @@ emulator needs. To try other settings, add `&audiosync=0` (the screen refresh
 paces the game instead of the audio buffer), `&latency=128` (a bigger audio
 buffer, in ms), `&vsync=0` (frames on a timer), `&idle=detect` (mGBA skips
 idle loops it finds), `&frameskip=1` (draw every 2nd frame; the game still
-runs every frame) or `&pace=timer` (a 60 Hz timer paces the game instead of
+runs every frame), `&scale=1` (draw at 240×160 instead of 720×480) or `&pace=timer` (a 60 Hz timer paces the game instead of
 the browser's animation frames, for browsers that throttle those). Example: `?seed=42&fps&frameskip=1`.
 
 **In the browser console:** `dailyRed.emulator` is the running Nostalgist
