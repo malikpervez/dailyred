@@ -59,10 +59,28 @@ const practiceSeed = parseSeed(new URLSearchParams(location.search).get('seed'))
 //   ?idle=detect  let mGBA find and skip idle loops (default: known games only)
 //   ?frameskip=1  draw only every 2nd frame (2 = every 3rd, ...); the game
 //                 itself still runs every frame
+//   ?pace=timer   run the emulator's frames off a 60 Hz setTimeout instead of
+//                 requestAnimationFrame, for browsers that throttle the latter
 // e.g. ?seed=7&fps&audiosync=0 for a practice run with the counter on.
 // (RetroArch's defaults: audio sync on, 64 ms latency, vsync on.)
 const tuning = readTuning(new URLSearchParams(location.search));
+if (new URLSearchParams(location.search).get('pace') === 'timer') paceWithTimer();
 if (new URLSearchParams(location.search).has('fps')) startFpsMeter(screen);
+
+// RetroArch's main loop asks for one frame at a time through
+// requestAnimationFrame. Hand it a 60 Hz timer instead: each call schedules
+// the callback for the next 1/60 s slot, skipping slots it has already missed
+// rather than running several frames back to back to catch up.
+function paceWithTimer() {
+  const frame = 1000 / 60;
+  let next = 0;
+  window.requestAnimationFrame = (callback) => {
+    const now = performance.now();
+    next = Math.max(next + frame, now);
+    return setTimeout(() => callback(performance.now()), next - now);
+  };
+  window.cancelAnimationFrame = (id) => clearTimeout(id);
+}
 
 function readTuning(params) {
   const config = {};
