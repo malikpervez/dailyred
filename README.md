@@ -316,8 +316,9 @@ screen with "Try again".
 (nothing saved, no daily limit). To reset your daily stats, run
 `localStorage.removeItem('dailyred-stats')` in the browser console.
 
-**Speed on phones:** add `&fps` to show the emulator's frame counter (60 is
-full speed). To try other settings, add `&audiosync=0` (the screen refresh
+**Speed on phones:** add `&fps` to show the game's speed in the corner of the
+screen (60 fps is full speed) and how many ms of each 16.7 ms frame the
+emulator needs. To try other settings, add `&audiosync=0` (the screen refresh
 paces the game instead of the audio buffer), `&latency=128` (a bigger audio
 buffer, in ms), `&vsync=0` (frames on a timer), `&idle=detect` (mGBA skips
 idle loops it finds) or `&frameskip=1` (draw every 2nd frame; the game still

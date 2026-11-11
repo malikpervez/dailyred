@@ -12,6 +12,7 @@ import {
   markBattleStarted, recordResult, settleAbandonedGame, useStatsStorage,
 } from './daily.js';
 import { inDiscord, connectDiscord, renderBoard } from './discord.js';
+import { startFpsMeter } from './fps-meter.js';
 
 const $ = (id) => document.getElementById(id);
 const app = document.querySelector('.app');
@@ -50,7 +51,8 @@ const session = {
 const practiceSeed = parseSeed(new URLSearchParams(location.search).get('seed'));
 
 // Test switches for tuning the emulator's speed on phones, also not in the UI:
-//   ?fps          show RetroArch's frame counter (60 is full speed)
+//   ?fps          show the game's speed in frames per second (60 is full speed)
+//                 and the ms the emulator spends on each frame (fps-meter.js)
 //   ?audiosync=0  don't let the audio buffer pace the game; the screen refresh does
 //   ?latency=128  audio buffer in milliseconds
 //   ?vsync=0      run frames on a timer instead of the screen refresh
@@ -60,6 +62,7 @@ const practiceSeed = parseSeed(new URLSearchParams(location.search).get('seed'))
 // e.g. ?seed=7&fps&audiosync=0 for a practice run with the counter on.
 // (RetroArch's defaults: audio sync on, 64 ms latency, vsync on.)
 const tuning = readTuning(new URLSearchParams(location.search));
+if (new URLSearchParams(location.search).has('fps')) startFpsMeter(screen);
 
 function readTuning(params) {
   const config = {};
