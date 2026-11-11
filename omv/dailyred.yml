@@ -15,6 +15,9 @@ services:
       # args:
       #   JOBS: "2"   # fewer parallel compile jobs if a Pi with 1-2 GB RAM runs out of memory
     image: dailyred-activity:local
+    # Rebuild from GitHub on every Up, so new commits actually get used. Steps
+    # that haven't changed come from the build cache, so it's quick if nothing did.
+    pull_policy: build
     container_name: dailyred
     restart: unless-stopped
     environment:
