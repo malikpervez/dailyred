@@ -498,6 +498,58 @@ img { image-rendering: pixelated; }
   .sprite.is-attacking, .sprite.is-entering { animation: none; }
 }
 
+/* Move animations (battle/fx.js) ------------------------------------------------------- */
+
+.sprite { z-index: 1; }
+.scene-snow { z-index: 1; }
+.infobox { z-index: 3; }
+
+.fx-layer, .fx-overlay, .fx-weather { position: absolute; inset: 0; pointer-events: none; }
+.fx-layer { z-index: 2; overflow: hidden; }
+.fx-overlay { z-index: 2; opacity: 0; }
+.fx-weather { z-index: 1; }
+
+.fx {
+  position: absolute;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+  will-change: transform, opacity;
+}
+
+.fx-wave {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(transparent 0%, rgb(80 140 240 / 0.75) 18%, rgb(40 100 220 / 0.85) 55%, rgb(150 200 255 / 0.6) 100%);
+}
+
+.fx-stat {
+  position: absolute;
+  background-size: 100% 24px;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+.fx-stat.is-up { background-image: linear-gradient(rgb(255 96 64 / 0.85) 0 35%, rgb(255 190 120 / 0.35) 35% 100%); }
+.fx-stat.is-down { background-image: linear-gradient(rgb(70 120 255 / 0.85) 0 35%, rgb(150 190 255 / 0.35) 35% 100%); }
+
+/* Weather, while it lasts. */
+.fx-weather[data-weather="rain"] {
+  background-image: repeating-linear-gradient(105deg, transparent 0 18px, rgb(200 220 255 / 0.55) 18px 19px);
+  background-size: 120px 120px;
+  animation: rain 0.5s linear infinite;
+}
+.fx-weather[data-weather="sun"] { background: radial-gradient(circle at 85% 0%, rgb(255 230 120 / 0.55), rgb(255 200 80 / 0.15) 60%); }
+.fx-weather[data-weather="sand"] { background: rgb(190 150 90 / 0.35); animation: sand 0.8s linear infinite; background-image: radial-gradient(2px 2px at 30px 40px, #c9a46a 50%, transparent 51%), radial-gradient(2px 2px at 90px 10px, #b88f55 50%, transparent 51%); background-size: 120px 60px; }
+.fx-weather[data-weather="hail"] { background-image: radial-gradient(3px 3px at 20px 20px, #fff 50%, transparent 51%), radial-gradient(3px 3px at 70px 60px, #eef 50%, transparent 51%); background-size: 100px 80px; animation: rain 0.7s linear infinite; }
+
+@keyframes rain { to { background-position: -40px 120px; } }
+@keyframes sand { to { background-position: 120px 20px; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .fx-weather { animation: none !important; }
+}
+
 /* Info boxes --------------------------------------------------------------------------- */
 
 .infobox {
@@ -751,6 +803,7 @@ img { image-rendering: pixelated; }
 
 .speed {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: center;
   justify-content: space-between;

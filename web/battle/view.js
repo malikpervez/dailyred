@@ -1,3 +1,5 @@
+import { createFx } from './fx.js';
+
 // The battle screen: a FireRed-style scene (RED's Pokémon top right, yours
 // bottom left, an info box for each), the message box and move menu under it,
 // and the battle log. It plays the engine's events one at a time (text types
@@ -23,6 +25,7 @@ export const spriteUrl = (num, { back = false, shiny = false } = {}) =>
 
 const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
 
+
 function infoBox(side) {
   const box = el('div', `infobox infobox-${side}`);
   box.hidden = true;
@@ -47,7 +50,7 @@ function infoBox(side) {
   return { box, name, gender, level, fill, status, balls, numbers, shown: null, hpShown: null };
 }
 
-export function createBattleView(root, { onChoose, onRun, getSpeed }) {
+export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimations = () => true }) {
   root.replaceChildren();
   root.classList.add('battle-view');
 
@@ -126,6 +129,8 @@ export function createBattleView(root, { onChoose, onRun, getSpeed }) {
   let lastState = null;
 
   const speed = () => SPEEDS[getSpeed()] ?? SPEEDS.normal;
+  const fx = createFx(scene, { sprites: { p1: youSprite, p2: foeSprite }, getScale: () => speed().anim });
+  const FX_EVENTS = new Set(['stat', 'status', 'cant', 'residual', 'heal', 'crit', 'protect', 'enter']);
 
   // Tapping the scene or the message box hurries the text along.
   for (const target of [scene, message]) {
@@ -240,20 +245,33 @@ export function createBattleView(root, { onChoose, onRun, getSpeed }) {
     else if (anim.kind === 'enter') run('is-entering', 350);
   }
 
+  // The move or effect animation for an event (fx.js), if animations are on.
+  function playFx(anim) {
+    if (!anim) return null;
+    if (anim.kind === 'weather') return fx.event(anim); // the weather overlay is shown either way
+    if (!getAnimations()) return anim.kind === 'move' ? animate({ kind: 'attack', side: anim.side }) : null;
+    if (anim.kind === 'move') return anim.miss ? animate({ kind: 'attack', side: anim.side }) : fx.move(anim).catch(() => {});
+    if (FX_EVENTS.has(anim.kind)) return fx.event(anim).catch(() => {});
+    return null;
+  }
+
   async function show(event) {
     const before = lastState;
     if (event.anim?.kind === 'faint') await animate(event.anim);
     render(event.state);
-    if (event.anim && event.anim.kind !== 'faint') animate(event.anim);
+    if (event.anim?.kind === 'hit' || event.anim?.kind === 'enter') animate(event.anim);
+    const effect = playFx(event.anim);
     if (event.turn) {
       addLog(`Turn ${event.turn}`, 'turn');
       return;
     }
     if (event.text) {
       addLog(event.text);
-      await typeText(event.text);
+      await Promise.all([typeText(event.text), effect]);
     } else if (hpOf(before, 'p1') !== hpOf(event.state, 'p1') || hpOf(before, 'p2') !== hpOf(event.state, 'p2')) {
-      await wait(speed().bar);
+      await Promise.all([wait(speed().bar), effect]);
+    } else {
+      await effect;
     }
   }
 
@@ -370,6 +388,7 @@ export function createBattleView(root, { onChoose, onRun, getSpeed }) {
         sprite.className = sprite.className.replace(/\bis-\S+/g, '').trim();
       }
       foe.box.hidden = you.box.hidden = true;
+      fx.clear();
       frame.dataset.player = name;
       showText('RED wants to battle!');
       addLog('RED wants to battle!');
@@ -390,5 +409,7 @@ export function createBattleView(root, { onChoose, onRun, getSpeed }) {
     },
     // The party left at the end, for the result: 'ok' / 'fnt' per slot.
     get state() { return lastState; },
+    // Plays one animation (worker.js animFor's format), for debugging.
+    preview: (anim) => playFx(anim),
   };
 }

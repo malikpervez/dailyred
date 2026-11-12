@@ -1,5 +1,6 @@
 // End-to-end test of the website in headless Chrome: today's page, the lead
-// picker, an official battle played to the end, practice runs, giving up, a
+// picker, an official battle played to the end (with move animations),
+// practice runs, giving up, a
 // battle left halfway (counts as a loss) and the next day's team.
 //
 //   cd tests && npm install && npm test        (CHROME_PATH=... if needed)
@@ -92,6 +93,10 @@ try {
   assert.equal(await page.textContent('.infobox-you .ib-name'), team[3]);
   assert.ok(await page.isVisible('#practice-chip'));
   await page.screenshot({ path: join(OUT, 'battle.png') });
+  assert.equal(await page.getAttribute('[data-anims="on"]', 'aria-pressed'), 'true', 'animations start on');
+  await page.click('[data-anims="off"]');
+  assert.equal(await page.evaluate(() => localStorage.getItem('dailyred-anims')), 'off');
+  await page.click('[data-anims="on"]');
   await page.click('.action:has-text("RUN")');
   await page.click('#run-dialog button[value="run"]');
   assert.equal(await playToTheEnd(page), 'RED won this time.');

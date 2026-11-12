@@ -69,6 +69,7 @@ let teams = null; // { team, red } from the engine
 let lead = 0;
 let battle = null; // { official, date, done }
 let speed = prefs.get('dailyred-speed') === 'fast' ? 'fast' : 'normal';
+let animations = prefs.get('dailyred-anims') !== 'off';
 
 function setState(state) {
   app.dataset.state = state;
@@ -303,12 +304,23 @@ const view = createBattleView($('battle-root'), {
   onChoose: (choice) => choose(choice),
   onRun: () => askToRun(),
   getSpeed: () => speed,
+  getAnimations: () => animations,
 });
 
 function renderSpeed() {
   for (const button of document.querySelectorAll('[data-speed]')) {
     button.setAttribute('aria-pressed', String(button.dataset.speed === speed));
   }
+  for (const button of document.querySelectorAll('[data-anims]')) {
+    button.setAttribute('aria-pressed', String((button.dataset.anims === 'on') === animations));
+  }
+}
+for (const button of document.querySelectorAll('[data-anims]')) {
+  button.addEventListener('click', () => {
+    animations = button.dataset.anims === 'on';
+    prefs.set('dailyred-anims', animations ? 'on' : 'off');
+    renderSpeed();
+  });
 }
 for (const button of document.querySelectorAll('[data-speed]')) {
   button.addEventListener('click', () => {
@@ -454,6 +466,9 @@ window.dailyRed = {
   get teams() { return teams; },
   get lead() { return lead; },
   setSpeed(next) { speed = next; renderSpeed(); },
+  setAnimations(on) { animations = on; renderSpeed(); },
+  // e.g. previewAnim({ kind: 'move', side: 'p1', target: 'p2', id: 'thunderbolt', type: 'Electric', category: 'Special' })
+  previewAnim: (anim) => view.preview(anim),
 };
 
 // --- Inside Discord ----------------------------------------------------------------

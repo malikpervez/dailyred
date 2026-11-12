@@ -33,7 +33,7 @@ You need Node.js 22.13+ and git.
 ```sh
 scripts/fetch-vendor.sh            # the font into web/vendor/
 (cd activity && npm ci && npm run build)   # Discord SDK + battle engine into web/vendor/
-scripts/get-sprites.sh             # the Pokémon sprites into web/sprites/ (fetches a few MB from pret/pokefirered)
+scripts/get-sprites.sh             # Pokémon sprites and animation graphics into web/sprites/ (a few MB from pret/pokefirered)
 node scripts/serve.mjs             # open http://localhost:8080
 ```
 
@@ -69,6 +69,15 @@ web/index.html + app.js            today's page, the lead picker, stats (daily.j
   the team's order, and you can switch at any time.
 - **Text speed:** Normal or Fast, remembered in the browser. Tapping the
   battle screen skips ahead.
+- **Move animations** (`web/battle/fx.js`) use FireRed's own animation
+  graphics (`web/battle/fx-sprites.js` lists them). They aren't a port of
+  FireRed's animation scripts: about 80 moves have their own short recipe
+  (Thunderbolt's lightning, Surf's wave, Earthquake's shake, Giga Drain's orbs
+  flowing back...), and every other move gets one for its type and kind
+  (contact moves lunge and hit, ranged ones fire a projectile in their type's
+  style, status moves sprinkle powder, glow or raise stats). Stat changes,
+  status conditions, healing, critical hits, Protect and weather have their
+  own effects. They can be turned off under the battle.
 
 ## Team generation
 
@@ -141,7 +150,8 @@ Pokémon and all related names, characters and game content are © Nintendo,
 Creatures Inc. and GAME FREAK inc.
 
 This repository contains Daily Red's own work. The sprites aren't in it: the
-build fetches them from pret/pokefirered's `graphics/pokemon/`. The battle
+build fetches them from pret/pokefirered's `graphics/pokemon/` and
+`graphics/battle_anims/sprites/`. The battle
 engine's packages are all MIT-licensed; `web/licenses.txt` lists every
 third-party component, and the build writes the bundled packages' license
 texts to `web/vendor/battle-worker.LICENSE.txt`. The page footer links to both.
@@ -151,12 +161,12 @@ texts to `web/vendor/battle-worker.LICENSE.txt`. The page footer links to both.
 ```
 web/                          the website (plain files, no build step except the worker)
 web/battle/                   the battle: team.js, red.js, ai.js, worker.js (bundled),
-                              engine.js and view.js (loaded by the page)
+                              engine.js, view.js and fx.js (loaded by the page)
 web/vendor/, web/sprites/     built or fetched (not in git)
 activity/                     the server (Discord sign-in, stats, server list) and build scripts:
                               build-battle.mjs, build-sdk.mjs, build-sprites.mjs
 scripts/fetch-vendor.sh       the font (pinned, checksummed)
-scripts/get-sprites.sh        pret/pokefirered's graphics/pokemon at a pinned commit → web/sprites/
+scripts/get-sprites.sh        pret/pokefirered's Pokémon and animation graphics at a pinned commit → web/sprites/
 scripts/serve.mjs             local static server
 tests/site.mjs                the site in headless Chrome
 Dockerfile, docker-compose.yml, omv/   the Discord Activity image

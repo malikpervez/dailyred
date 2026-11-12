@@ -21,8 +21,10 @@ COPY scripts/fetch-vendor.sh scripts/
 RUN scripts/fetch-vendor.sh
 COPY activity/package.json activity/package-lock.json activity/
 RUN cd activity && npm ci --no-audit --no-fund
-# The Pokémon sprites, from pret/pokefirered's graphics (a few MB of git).
+# The Pokémon sprites and move animation graphics, from pret/pokefirered's
+# graphics (a few MB of git).
 COPY activity/build-sprites.mjs activity/
+COPY web/battle/fx-sprites.js web/battle/
 COPY scripts/get-sprites.sh scripts/
 RUN scripts/get-sprites.sh /tmp/pokefirered && rm -rf /tmp/pokefirered
 COPY activity/build-sdk.mjs activity/build-battle.mjs activity/

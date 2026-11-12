@@ -129,11 +129,48 @@ function snapshot(client) {
 const STATE_LINES = new Set(['switch', 'drag', 'replace', 'faint', '-damage', '-heal', '-sethp', '-status',
   '-curestatus', '-cureteam', 'detailschange', '-transform', '-formechange']);
 
+// Moves aimed at the user or its own side (the animation plays on the user).
+const SELF_TARGETS = new Set(['self', 'adjacentAllyOrSelf', 'allySide', 'allyTeam', 'allies', 'all']);
+const toId = (text) => String(text || '').toLowerCase().replace(/^(item|ability|move):\s*/, '').replace(/[^a-z0-9]/g, '');
+
+// What the battle screen should animate for a protocol line (fx.js and the
+// sprite effects in view.js), or null.
 function animFor(args, kwArgs) {
   const side = (ident) => (ident || '').slice(0, 2);
+  const other = (s) => (s === 'p1' ? 'p2' : 'p1');
   switch (args[0]) {
-    case 'move': return { kind: 'attack', side: side(args[1]) };
-    case '-damage': return kwArgs.from ? null : { kind: 'hit', side: side(args[1]) };
+    case 'move': {
+      if (kwArgs.still) return null;
+      const move = dex.moves.get(args[2]);
+      const user = side(args[1]);
+      const self = SELF_TARGETS.has(move.target);
+      return {
+        kind: 'move',
+        side: user,
+        target: self ? user : side(args[3]) || other(user),
+        self,
+        id: move.id,
+        type: move.type,
+        category: move.category,
+        contact: Boolean(move.flags?.contact),
+        status: move.status || null,
+        boosts: Boolean(move.boosts || move.self?.boosts),
+        miss: Boolean(kwArgs.miss),
+      };
+    }
+    case '-damage': return kwArgs.from ? { kind: 'residual', side: side(args[1]), from: toId(kwArgs.from) } : { kind: 'hit', side: side(args[1]) };
+    case '-heal': return { kind: 'heal', side: side(args[1]) };
+    case '-boost': return { kind: 'stat', side: side(args[1]), up: true };
+    case '-unboost': return { kind: 'stat', side: side(args[1]), up: false };
+    case '-status': return { kind: 'status', side: side(args[1]), status: args[2] };
+    case 'cant': return { kind: 'cant', side: side(args[1]), reason: toId(args[2]) };
+    case '-activate':
+      if (/confusion/i.test(args[2])) return { kind: 'status', side: side(args[1]), status: 'confusion' };
+      if (/protect|detect/i.test(args[2])) return { kind: 'protect', side: side(args[1]) };
+      return null;
+    case '-start': return /confusion/i.test(args[2]) ? { kind: 'status', side: side(args[1]), status: 'confusion' } : null;
+    case '-crit': return { kind: 'crit', side: side(args[1]) };
+    case '-weather': return { kind: 'weather', weather: args[1] };
     case 'faint': return { kind: 'faint', side: side(args[1]) };
     case 'switch': case 'drag': return { kind: 'enter', side: side(args[1]) };
     default: return null;

@@ -6,11 +6,11 @@ Pokémon
   Creatures Inc. and GAME FREAK inc. Daily Red is a free, unofficial fan
   project, not affiliated with or endorsed by them or The Pokémon Company.
 
-Pokémon sprites (sprites/)
-  The Pokémon FireRed battle sprites, taken from pret/pokefirered
-  (https://github.com/pret/pokefirered), a community decompilation of
-  Pokémon FireRed, when the site is built. © Nintendo, Creatures Inc. and
-  GAME FREAK inc.
+Pokémon sprites and move animation graphics (sprites/)
+  The Pokémon FireRed battle sprites and battle animation graphics, taken
+  from pret/pokefirered (https://github.com/pret/pokefirered), a community
+  decompilation of Pokémon FireRed, when the site is built. © Nintendo,
+  Creatures Inc. and GAME FREAK inc.
 
 Battle engine (vendor/battle-worker.js)
   Pokémon Showdown's battle simulator and client libraries as packaged by the

@@ -1,7 +1,9 @@
 // Copies the FireRed battle sprites of all 386 Pokémon out of pret/pokefirered
-// (graphics/pokemon/, see scripts/get-sprites.sh) into web/sprites/:
+// (graphics/pokemon/, see scripts/get-sprites.sh) into web/sprites/, and the
+// move animation graphics listed in web/battle/fx-sprites.js:
 //
 //   web/sprites/front/<dex number>.png        front-shiny/, back/, back-shiny/
+//   web/sprites/fx/<name>.png                 from graphics/battle_anims/sprites/
 //
 // The source PNGs are 16-colour indexed images with colour 0 transparent, so
 // they're used as they are; the shiny versions swap in shiny.pal. Deoxys's
@@ -14,6 +16,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync, inflateSync, crc32 } from 'node:zlib';
 import { Dex } from '@pkmn/sim';
+import { FX_SPRITES } from '../web/battle/fx-sprites.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const source = process.argv[2];
@@ -139,3 +142,19 @@ for (const s of species) {
   count++;
 }
 console.log(`Wrote sprites for ${count} Pokémon to ${out}`);
+
+// --- Move animation graphics ---------------------------------------------------------
+
+const fxDir = join(source, 'graphics/battle_anims/sprites');
+mkdirSync(join(out, 'fx'), { recursive: true });
+for (const [name, fx] of Object.entries(FX_SPRITES)) {
+  const png = readFileSync(join(fxDir, `${fx.file}.png`));
+  const ihdr = readChunks(png).find((c) => c.type === 'IHDR').data;
+  const [width, height] = [ihdr.readUInt32BE(0), ihdr.readUInt32BE(4)];
+  if (width !== fx.w || height !== fx.h * fx.frames) {
+    throw new Error(`fx ${name}: ${fx.file}.png is ${width}x${height}, expected ${fx.w}x${fx.h * fx.frames}`);
+  }
+  const palette = fx.palette ? readPalette(join(fxDir, `${fx.palette}.pal`)) : null;
+  writeFileSync(join(out, 'fx', `${name}.png`), rewrite(png, { palette }));
+}
+console.log(`Wrote ${Object.keys(FX_SPRITES).length} animation sheets to ${join(out, 'fx')}`);
