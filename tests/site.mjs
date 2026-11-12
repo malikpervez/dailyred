@@ -91,11 +91,18 @@ try {
   assert.equal(await page.textContent('#your-lead-name'), team[3]);
   await page.evaluate(() => window.dailyRed.setSpeed('fast'));
 
-  step('a practice run starts with the lead, and Give up ends it unrecorded');
-  await page.click('#practice');
+  step("practice runs with today's team are locked until today's battle is done");
+  assert.ok(await page.isHidden('#practice'));
+  assert.equal(await page.textContent('#practice-locked'), "Practice runs with this team unlock after today's battle.");
+  await page.evaluate(() => document.getElementById('practice').click()); // even if the button is forced
+  assert.equal(await page.getAttribute('.app', 'data-state'), 'home');
+
+  step('the official battle starts with the lead');
+  await page.click('#play');
   await page.waitForSelector('.commands', { state: 'visible', timeout: 30000 });
+  assert.equal((await page.evaluate(() => window.dailyRed.stats)).pending, '2026-11-12');
   assert.equal(await page.textContent('.infobox-you .ib-name'), team[3]);
-  assert.ok(await page.isVisible('#practice-chip'));
+  assert.ok(await page.isHidden('#practice-chip'));
   await page.screenshot({ path: join(OUT, 'battle.png') });
   assert.equal(await page.getAttribute('[data-anims="on"]', 'aria-pressed'), 'true', 'animations start on');
 
@@ -124,18 +131,8 @@ try {
   await page.click('[data-anims="off"]');
   assert.equal(await page.evaluate(() => localStorage.getItem('dailyred-anims')), 'off');
   await page.click('[data-anims="on"]');
-  await page.click('.action:has-text("RUN")');
-  await page.click('#run-dialog button[value="run"]');
-  assert.equal(await playToTheEnd(page), 'RED won this time.');
-  assert.match(await page.textContent('#share-text'), /^Daily Red \(practice\)\nRan from RED on turn \d+\n/);
-  await page.click('#back-home');
-  let stats = await page.evaluate(() => window.dailyRed.stats);
-  assert.equal(stats.wins + stats.losses, 0, 'practice runs are not recorded');
 
   step('the official battle plays to the end and is recorded');
-  await page.click('#play');
-  await page.waitForSelector('.commands', { state: 'visible', timeout: 30000 });
-  assert.equal((await page.evaluate(() => window.dailyRed.stats)).pending, '2026-11-12');
   const title = await playToTheEnd(page);
   const won = title === 'You beat RED!';
   assert.match(await page.textContent('#share-text'), /^Daily Red No\. 12\n(Beat RED with \d left|Lost to RED \(he had \d left\))\n[🟥⬛]{6}$/u);
@@ -155,14 +152,29 @@ try {
   writeFileSync(join(OUT, 'share.png'), Buffer.from(picture.png, 'base64'));
   await page.screenshot({ path: join(OUT, 'result.png'), fullPage: true });
   await page.click('#back-home');
-  stats = await page.evaluate(() => window.dailyRed.stats);
+  let stats = await page.evaluate(() => window.dailyRed.stats);
   assert.deepEqual([stats.wins, stats.losses, stats.lastPlayed, stats.pending], [won ? 1 : 0, won ? 0 : 1, '2026-11-12', null]);
 
-  step('after the battle, today is locked until midnight (practice still works)');
+  step('after the battle, today is locked until midnight and practice unlocks');
   assert.ok(await page.isHidden('#play'));
   assert.equal(await page.textContent('#played-result'), won ? 'You beat RED today!' : 'RED won today.');
   assert.match(await page.textContent('#played-next'), /^Next battle in \d\d:\d\d:\d\d$/);
   assert.ok(await page.isVisible('#practice'));
+  assert.ok(await page.isHidden('#practice-locked'));
+
+  step('a practice run starts with the lead, and RUN ends it unrecorded');
+  await page.click('#practice');
+  await page.waitForSelector('.commands', { state: 'visible', timeout: 30000 });
+  assert.equal(await page.textContent('.infobox-you .ib-name'), team[3]);
+  assert.ok(await page.isVisible('#practice-chip'));
+  await page.click('.action:has-text("RUN")');
+  assert.equal(await page.textContent('#run-dialog-text'), 'Give up this practice run?');
+  await page.click('#run-dialog button[value="run"]');
+  assert.equal(await playToTheEnd(page), 'RED won this time.');
+  assert.match(await page.textContent('#share-text'), /^Daily Red \(practice\)\nRan from RED on turn \d+\n/);
+  await page.click('#back-home');
+  const after = await page.evaluate(() => window.dailyRed.stats);
+  assert.deepEqual([after.wins, after.losses], [stats.wins, stats.losses], 'practice runs are not recorded');
 
   step('the next day brings a new team; leaving the battle halfway counts as a loss');
   await page.clock.setSystemTime(DAY2);
@@ -226,11 +238,18 @@ try {
     "You're the only one in the November race so far, with 1 win.",
   ]);
 
-  step('?seed= shows that seed\'s team as a practice team');
+  step('?seed= shows that seed\'s team as a practice team, but not a daily team');
   await page.goto(`${server.url}/?seed=12345`);
   await page.waitForSelector('.app[data-state="home"]');
   assert.equal(await page.textContent('#day-label'), 'Practice team #12345');
   assert.ok(await page.isVisible('#practice-note'));
+  const tomorrowSeed = await page.evaluate(async () => {
+    const { dailySeed, addDays, today } = await import('./daily.js');
+    return dailySeed(addDays(today(), 1));
+  });
+  await page.goto(`${server.url}/?seed=${tomorrowSeed}`);
+  await page.waitForSelector('.app[data-state="home"]');
+  assert.match(await page.textContent('#day-label'), /^No\. 13, /, "tomorrow's team isn't open for practice");
 
   assert.deepEqual(errors, [], 'no page errors');
   console.log('All site tests passed.');

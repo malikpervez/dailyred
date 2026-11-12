@@ -4,7 +4,7 @@
 // Inside a Discord Activity, discord.js adds sign-in, stats kept on the
 // server and the "Today in this server" list.
 import {
-  today, dailySeed, dayNumber, msUntilTomorrow, loadStats, resultFor, currentStreaks,
+  today, addDays, dailySeed, dayNumber, msUntilTomorrow, loadStats, resultFor, currentStreaks,
   markBattleStarted, recordResult, settleAbandonedGame, useStatsStorage,
 } from './daily.js';
 import { inDiscord, connectDiscord, renderBoard, renderHallOfFame, standingText } from './discord.js';
@@ -25,6 +25,7 @@ const ui = {
   playedNext: $('played-next'),
   practice: $('practice'),
   practiceNote: $('practice-note'),
+  practiceLocked: $('practice-locked'),
   redLeadSprite: $('red-lead-sprite'),
   redLeadName: $('red-lead-name'),
   yourLeadSprite: $('your-lead-sprite'),
@@ -53,8 +54,14 @@ const ui = {
 };
 
 // ?seed=123 shows the team for that seed instead of today's, for testing and
-// for fun: nothing is recorded and there's no daily limit.
-const practiceSeed = parseSeed(new URLSearchParams(location.search).get('seed'));
+// for fun: nothing is recorded and there's no daily limit. Not the daily
+// teams around today, though (somewhere in the world it's already up to two
+// days later), or it would be a way to practice the real battle first.
+const practiceSeed = (() => {
+  const seed = parseSeed(new URLSearchParams(location.search).get('seed'));
+  const daily = [-2, -1, 0, 1, 2].map((d) => dailySeed(addDays(today(), d)));
+  return daily.includes(seed) ? null : seed;
+})();
 
 function parseSeed(text) {
   if (text == null || !/^\d{1,10}$/.test(String(text).trim())) return null;
@@ -242,7 +249,10 @@ function renderHome() {
   ui.play.hidden = Boolean(result);
   ui.played.hidden = !result;
   ui.practiceNote.hidden = !practiceSeed;
-  ui.practice.hidden = Boolean(practiceSeed);
+  // Today's team can only be practised once today's battle is done, so the
+  // battle that counts is everyone's first try with it.
+  ui.practice.hidden = Boolean(practiceSeed) || !result;
+  ui.practiceLocked.hidden = Boolean(practiceSeed) || Boolean(result);
   ui.play.textContent = practiceSeed ? 'Battle RED (practice)' : 'Battle RED';
   if (result) ui.playedResult.textContent = result === 'won' ? 'You beat RED today!' : 'RED won today.';
   tick();
@@ -368,6 +378,10 @@ for (const button of document.querySelectorAll('[data-speed]')) {
 }
 
 async function beginBattle({ practice }) {
+  if (practice && !practiceSeed && !resultFor(stats, date)) {
+    renderHome(); // practice unlocks after today's battle
+    return;
+  }
   const official = !practice && !practiceSeed;
   if (official) {
     // Another tab (or, in Discord, another device) may have played meanwhile.

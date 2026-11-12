@@ -65,6 +65,9 @@ web/index.html + app.js            today's page, the lead picker, stats (daily.j
   starts, so closing the page halfway is a loss (`settleAbandonedGame`).
   Giving up (RUN) is a loss too. A draw (both last Pokémon down at once)
   counts as a loss.
+- **Practice runs** with today's team unlock once today's battle is done, so
+  the battle that counts is everyone's first try with the team. `?seed=`
+  won't open the daily teams around today either.
 - **Monthly seasons:** win and play streaks start over on the 1st of each
   month (`currentStreaks` / `recordResult` in `web/daily.js`); the best win
   streak is kept for all time. In Discord the bot announces the Pokémon
@@ -141,9 +144,9 @@ cd activity && npm test            # server tests, team rules, RED's team, AI ba
 cd tests && npm install && npm test   # the site in headless Chrome (CHROME_PATH=... if needed)
 ```
 
-The site test plays a practice run (giving up), an official battle to the
-end, checks the stats, the daily lock, the next day's team and that leaving
-halfway counts as a loss. Screenshots go to `tests/output/`.
+The site test checks practice is locked, plays an official battle to the
+end, checks the stats, the daily lock, a practice run (giving up), the next
+day's team and that leaving halfway counts as a loss. Screenshots go to `tests/output/`.
 
 In the browser console, `dailyRed.teams`, `dailyRed.stats` and
 `dailyRed.setSpeed('fast')` help with debugging.
