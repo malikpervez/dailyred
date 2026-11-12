@@ -659,7 +659,7 @@ img { image-rendering: pixelated; }
 
 .message-text { margin: 0; font-size: clamp(17px, 4.6vw, 22px); line-height: 1.35; white-space: pre-wrap; }
 
-.commands, .move-info, .actions, .party {
+.commands, .actions, .party {
   border: 2px solid var(--cream-line);
   border-radius: 10px;
   color: var(--cream-ink);
@@ -684,7 +684,7 @@ img { image-rendering: pixelated; }
   gap: 8px;
   align-items: center;
   min-height: 46px;
-  padding: 6px 8px 6px 22px;
+  padding: 6px 8px 6px 20px;
   border: 0;
   border-radius: 8px;
   font: 600 clamp(15px, 4.2vw, 19px)/1.2 var(--font-pixel);
@@ -698,10 +698,19 @@ img { image-rendering: pixelated; }
 .move:hover:not(:disabled), .move:focus-visible { background: var(--cream-hover); }
 .move:hover:not(:disabled)::before, .move:focus-visible::before { content: "▶"; position: absolute; left: 6px; font-size: 13px; }
 .move:disabled { opacity: 0.45; cursor: not-allowed; }
-.move .move-type { flex: none; width: 12px; height: 12px; }
-.move-label { display: grid; gap: 2px; min-width: 0; }
+.move-label { display: grid; gap: 3px; min-width: 0; width: 100%; }
 .move-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.move-sub { display: flex; flex-wrap: wrap; gap: 0 8px; font-size: 12px; font-weight: 500; color: #6a6d75; }
+.move-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; font-size: 12px; font-weight: 500; color: #6a6d75; }
+.move-type-badge {
+  padding: 0 5px;
+  border-radius: 4px;
+  font: 600 11px/1.5 var(--font-pixel);
+  letter-spacing: 0.03em;
+  color: #fff;
+  background: var(--type, #888);
+  text-shadow: 0 1px 0 rgb(0 0 0 / 0.25);
+}
+.move .move-effect { font-size: 12px; }
 
 /* How a move hits the other Pokémon. */
 .move-effect { font-weight: 700; }
@@ -724,18 +733,6 @@ img { image-rendering: pixelated; }
   font-size: 0.7em;
   color: #6a6d75;
 }
-
-.move-info {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 16px;
-  justify-content: space-between;
-  margin-top: 8px;
-  padding: 8px 12px;
-  font-size: 15px;
-}
-
-.info-effect { color: #5c5f68; }
 
 .actions {
   display: grid;

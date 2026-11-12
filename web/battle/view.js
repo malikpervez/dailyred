@@ -89,8 +89,6 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
   const moveGrid = el('div', 'moves');
   commands.append(commandsHead, moveGrid);
 
-  const info = el('div', 'move-info');
-  info.hidden = true;
   const actions = el('div', 'actions');
   actions.hidden = true;
   const pokemonButton = el('button', 'action', 'POKéMON');
@@ -110,7 +108,7 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
   const summary = el('div', 'summary');
   summary.hidden = true;
 
-  panel.append(message, commands, info, actions, party, summary);
+  panel.append(message, commands, actions, party, summary);
 
   const frame = el('div', 'battle-frame');
   frame.append(scene, panel);
@@ -147,7 +145,7 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
   function setPanel(mode) {
     panelMode = mode;
     message.hidden = mode !== 'message';
-    commands.hidden = info.hidden = actions.hidden = mode !== 'commands';
+    commands.hidden = actions.hidden = mode !== 'commands';
     party.hidden = mode !== 'party';
     summary.hidden = mode !== 'summary';
     frame.dataset.panel = mode;
@@ -298,14 +296,6 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
 
   // --- Commands --------------------------------------------------------------------------
 
-  function describeMove(move) {
-    info.replaceChildren(
-      el('span', 'info-pp', move.maxpp != null ? `PP ${move.pp}/${move.maxpp}` : 'PP -'),
-      el('span', 'info-type', `TYPE/ ${move.type.toUpperCase()}`),
-      el('span', 'info-effect', EFFECT_LABEL[move.effect] ?? (move.category === 'Status' ? 'Status move' : '')),
-    );
-  }
-
   function showRequest() {
     const req = request;
     if (!req || req.kind === 'wait') return;
@@ -321,19 +311,25 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
       button.disabled = move.disabled;
       button.dataset.type = move.type;
       button.dataset.effect = move.effect || '';
+      // Everything about the move on the button itself (no hovering or
+      // holding needed on a phone): name; type, power and PP; how it hits.
       const label = el('span', 'move-label');
       label.append(el('span', 'move-name', move.name.toUpperCase()));
-      const sub = el('span', 'move-sub');
-      sub.append(el('span', 'move-pp', move.maxpp != null ? `PP ${move.pp}/${move.maxpp}` : ''));
-      if (EFFECT_SHORT[move.effect]) sub.append(el('span', 'move-effect', EFFECT_SHORT[move.effect]));
-      label.append(sub);
-      button.append(el('span', 'move-type'), label);
-      button.addEventListener('pointerenter', () => describeMove(move));
-      button.addEventListener('focus', () => describeMove(move));
+      const facts = el('span', 'move-sub');
+      const type = el('span', 'move-type-badge', move.type.toUpperCase());
+      type.dataset.type = move.type;
+      facts.append(type);
+      facts.append(el('span', 'move-power', move.category === 'Status' ? 'Status' : move.power ? `${move.power} pow` : '—'));
+      facts.append(el('span', 'move-pp', move.maxpp != null ? `PP ${move.pp}/${move.maxpp}` : ''));
+      label.append(facts);
+      const effect = move.category === 'Status' || !move.effect ? '' : EFFECT_SHORT[move.effect] || 'Neutral';
+      if (effect) label.append(el('span', 'move-effect', effect));
+      button.append(label);
+      button.setAttribute('aria-label', [move.name, move.type, move.category === 'Status' ? 'status move' : `${move.power ?? ''} power`,
+        move.maxpp != null ? `${move.pp} of ${move.maxpp} PP` : '', EFFECT_LABEL[move.effect] ?? ''].filter(Boolean).join(', '));
       button.addEventListener('click', () => submit(`move ${move.slot}`));
       return button;
     }));
-    describeMove(req.moves.find((m) => !m.disabled) ?? req.moves[0]);
     pokemonButton.disabled = !req.canSwitch || !req.party.some((p) => !p.active && p.status !== 'fnt');
     setPanel('commands');
   }
