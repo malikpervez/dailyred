@@ -308,6 +308,20 @@ test('the website can sign in with Discord: login, callback, a signed cookie, on
     assert.equal((await start({ ...session, 'X-Daily-Red': '1' })).status, 200);
     assert.equal((await go('/api/board?room=g:42&date=' + clock.toISOString().slice(0, 10), session)).status, 200);
 
+    // Visiting renews the 30 days (at most once a day), so regular players stay signed in.
+    assert.equal(cookieOf(await go('/api/web/session', session), 'dailyred_session'), undefined, 'not renewed on the same day');
+    const signedIn = clock;
+    try {
+      clock = new Date(signedIn.getTime() + 20 * 86400000);
+      const renewed = cookieOf(await go('/api/web/session', session), 'dailyred_session');
+      assert.match(renewed, /Max-Age=2592000/);
+      clock = new Date(signedIn.getTime() + 45 * 86400000); // 25 days after the renewal, 45 after signing in
+      assert.equal((await (await go('/api/web/session', { Cookie: renewed.split(';')[0] })).json()).user.name, 'Ash');
+      assert.equal((await (await go('/api/web/session', session)).json()).user, null, 'the old cookie ran out');
+    } finally {
+      clock = signedIn;
+    }
+
     const forged = { Cookie: session.Cookie.replace(/\.[^.]*$/, '.AAAA') };
     assert.equal((await go('/api/me', forged)).status, 401);
     const logout = await go('/auth/logout', session);

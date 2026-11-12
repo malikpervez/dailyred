@@ -58,7 +58,8 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ROOM = /^[gc]:\d{1,20}$/; // g:<server id> or c:<channel id> (DMs)
 const TOKEN_CACHE_MS = 10 * 60 * 1000;
 const MAX_SHARE_BYTES = 2 * 1024 * 1024;
-const SESSION_DAYS = 30;
+const SESSION_DAYS = 30; // renewed on each visit, so only a month without playing signs you out
+const DAY_MS = 24 * 60 * 60 * 1000;
 const SESSION_COOKIE = 'dailyred_session';
 const STATE_COOKIE = 'dailyred_signin';
 const MAX_ROOMS = 10; // servers remembered in a website session
@@ -238,9 +239,12 @@ export function createApp({
 
   const cookie = (name, value, maxAge) => `${name}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${site?.startsWith('https:') ? '; Secure' : ''}`;
 
+  const readSession = (req) => unseal(cookies(req)[SESSION_COOKIE]);
+  const sessionCookie = (session) => cookie(SESSION_COOKIE, seal({ ...session, exp: now().getTime() + SESSION_DAYS * DAY_MS }), SESSION_DAYS * 86400);
+
   // The website's signed-in player: { id, name, avatarUrl, rooms, web: true }.
   function webUser(req) {
-    const session = unseal(cookies(req)[SESSION_COOKIE]);
+    const session = readSession(req);
     return session ? { id: session.id, name: session.name, avatarUrl: session.avatarUrl, rooms: session.rooms, web: true } : null;
   }
 
@@ -282,9 +286,9 @@ export function createApp({
       .slice(0, MAX_ROOMS)
       .map((g) => ({ room: `g:${g.id}`, name: String(g.name || 'Server').slice(0, 40) }));
     const user = { id: String(me.body.id), name: me.body.global_name || me.body.username || 'Trainer', avatarUrl: avatarUrl(me.body) };
-    const session = { ...user, rooms, exp: now().getTime() + SESSION_DAYS * 86400 * 1000 };
+    const session = { ...user, rooms };
     const guild = rooms.some((r) => r.room === `g:${pending.guild}`) ? pending.guild : null;
-    redirect(res, back(guild), [clear, cookie(SESSION_COOKIE, seal(session), SESSION_DAYS * 86400)]);
+    redirect(res, back(guild), [clear, sessionCookie(session)]);
   }
 
   // A room the player may use. Website players: only their own servers.
@@ -473,6 +477,10 @@ export function createApp({
       result = { clientId: clientId || null };
     } else if (route === 'GET /api/web/session') {
       // The website: is sign-in on, and who is signed in (no Discord call).
+      // Each page load renews the session (at most once a day), so regular
+      // players stay signed in.
+      const session = readSession(req);
+      if (session && session.exp - now().getTime() < (SESSION_DAYS - 1) * DAY_MS) res.setHeader('Set-Cookie', sessionCookie(session));
       const user = webUser(req);
       result = {
         available: webSignIn,

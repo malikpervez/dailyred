@@ -337,7 +337,8 @@ The bot's **▶️ Battle RED** button (and `/dailyred`) then opens the site for
 that server instead of the Activity; the player presses **Sign in with
 Discord to battle**,
 Discord asks them to authorize Daily Red (their name, avatar and which
-servers they're in), and they're back on the page, signed in for 30 days.
+servers they're in), and they're back on the page, signed in. Each visit renews it, so they're
+only signed out after 30 days without opening the site.
 If they're in several servers with Daily Red, a menu picks which one the
 battle counts for.
 
