@@ -699,6 +699,31 @@ img { image-rendering: pixelated; }
 .move:hover:not(:disabled)::before, .move:focus-visible::before { content: "▶"; position: absolute; left: 6px; font-size: 13px; }
 .move:disabled { opacity: 0.45; cursor: not-allowed; }
 .move .move-type { flex: none; width: 12px; height: 12px; }
+.move-label { display: grid; gap: 2px; min-width: 0; }
+.move-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.move-sub { display: flex; flex-wrap: wrap; gap: 0 8px; font-size: 12px; font-weight: 500; color: #6a6d75; }
+
+/* How a move hits the other Pokémon. */
+.move-effect { font-weight: 700; }
+[data-effect="super"] .move-effect { color: #1d8a45; }
+[data-effect="weak"] .move-effect { color: #c0661a; }
+[data-effect="none"] .move-effect { color: #b23a3a; }
+[data-effect="normal"] .move-effect { color: #6a6d75; font-weight: 500; }
+.move[data-effect="super"] { box-shadow: inset 3px 0 0 #1d8a45; }
+.move[data-effect="weak"] { box-shadow: inset 3px 0 0 #d98a3a; }
+.move[data-effect="none"] { box-shadow: inset 3px 0 0 #b23a3a; }
+
+/* RED's info box opens his Pokémon's summary while you choose. */
+.battle-frame[data-panel="commands"] .infobox-foe,
+.battle-frame[data-panel="party"] .infobox-foe { cursor: pointer; }
+.battle-frame[data-panel="commands"] .infobox-foe::after {
+  content: "ⓘ";
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  font-size: 0.7em;
+  color: #6a6d75;
+}
 
 .move-info {
   display: flex;
@@ -768,6 +793,64 @@ img { image-rendering: pixelated; }
 .party-hp .hp-fill { transition: none; }
 .party-tag { font-size: 12px; color: #5c5f68; }
 .party-cancel { width: 100%; }
+
+/* Summary --------------------------------------------------------------------------------- */
+
+.summary {
+  padding: 10px 12px 12px;
+  border: 2px solid var(--cream-line);
+  border-radius: 10px;
+  color: var(--cream-ink);
+  background: var(--cream);
+}
+
+.sum-head { display: flex; gap: 10px; align-items: center; }
+.sum-sprite { flex: none; width: 64px; height: 64px; border-radius: 10px; background: #fffdf2; }
+.sum-title { display: grid; flex: 1; gap: 4px; min-width: 0; }
+.sum-name { display: flex; flex-wrap: wrap; gap: 0 6px; align-items: baseline; margin: 0; font-size: 19px; font-weight: 700; }
+.sum-owner { color: var(--red); }
+.sum-level { margin-left: auto; font-weight: 500; }
+.sum-types { display: flex; gap: 4px; }
+.sum-hp { margin-left: 6px; font-size: 14px; white-space: nowrap; }
+.summary .hp-track { height: 8px; }
+
+.sum-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 10px 0 0; }
+.sum-facts div { min-width: 0; }
+.sum-facts dt { font-size: 12px; color: #6a6d75; }
+.sum-facts dd { margin: 0; overflow: hidden; font-size: 15px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+
+.sum-note { margin: 10px 0 4px; font-size: 13px; color: #6a6d75; }
+
+.sum-moves { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+
+.sum-move {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  grid-template-areas: "type name pp" "type detail effect";
+  column-gap: 8px;
+  align-items: center;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: #fffdf2;
+}
+
+.sum-move .move-type { grid-area: type; width: 12px; height: 12px; }
+.sum-move-name { grid-area: name; overflow: hidden; font-size: 16px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+.sum-move-pp { grid-area: pp; font-size: 13px; }
+.sum-move-detail { grid-area: detail; font-size: 12px; color: #6a6d75; }
+.sum-move .move-effect { grid-area: effect; font-size: 12px; text-align: right; }
+.sum-move[data-effect="super"] { box-shadow: inset 3px 0 0 #1d8a45; }
+.sum-move[data-effect="weak"] { box-shadow: inset 3px 0 0 #d98a3a; }
+.sum-move[data-effect="none"] { box-shadow: inset 3px 0 0 #b23a3a; }
+
+.sum-stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; margin: 10px 0 0; text-align: center; }
+.sum-stats dt { font-size: 11px; color: #6a6d75; }
+.sum-stats dd { margin: 0; font-size: 15px; font-weight: 700; }
+
+.sum-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.sum-buttons .action:only-child { grid-column: span 2; }
+.sum-shift:not(:disabled) { color: #fff; background: var(--red); border-color: var(--red-deep); }
+.sum-shift:not(:disabled):hover { background: var(--red-deep); }
 
 /* Battle log and end ------------------------------------------------------------------------ */
 

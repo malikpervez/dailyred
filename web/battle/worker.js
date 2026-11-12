@@ -112,14 +112,19 @@ function pokemonState(mon, own) {
     maxhp: mon.maxhp,
     // RED's HP is only known as a percentage (maxhp 100), like on the GBA.
     exact: own,
-    status: mon.fainted ? 'fnt' : mon.status || '',
+    status: mon.status || '',
   };
 }
 
+// The screen as the player sees it. A Pokémon knocked out stays on screen at
+// 0 HP until its "fainted!" line (the client clears it from active then), so
+// its HP bar drains all the way first.
 function snapshot(client) {
   const side = (s, own) => {
-    const active = s.active[0] && !s.active[0].fainted ? pokemonState(s.active[0], own) : null;
-    const party = s.team.map((p) => (p.fainted || p.hp === 0 ? 'fnt' : p.status ? 'status' : 'ok'));
+    const active = s.active[0] ? pokemonState(s.active[0], own) : null;
+    // Only `fainted` counts: the client starts the bench it learns from the
+    // first request at 0 HP until it sees their real HP.
+    const party = s.team.map((p) => (p.fainted ? 'fnt' : p.status ? 'status' : 'ok'));
     while (party.length < 6) party.push('unknown');
     return { name: s.name, active, party };
   };
@@ -177,30 +182,67 @@ function animFor(args, kwArgs) {
   }
 }
 
+// A Pokémon's moves for the menus: type, power, PP and how each hits `foe`.
+function movesOf(mon, foe) {
+  return mon.moveSlots.map((slot) => {
+    const info = dex.moves.get(slot.id);
+    const type = info.id === 'hiddenpower' ? mon.hpType || info.type : info.type;
+    const category = info.category === 'Status' ? 'Status' : isPhysicalType(type) ? 'Physical' : 'Special';
+    return {
+      name: info.id === 'hiddenpower' ? `Hidden Power ${type}` : info.name,
+      type,
+      category,
+      power: info.basePower || (info.damage ? 'Lv' : null),
+      accuracy: info.accuracy === true ? null : info.accuracy,
+      pp: slot.pp,
+      maxpp: slot.maxpp,
+      desc: info.shortDesc,
+      effect: category === 'Status' ? '' : effectiveness(type, foe),
+    };
+  });
+}
+
+// Everything the summary screen shows about one of the simulator's Pokémon.
+function details(mon, foe, own) {
+  const item = mon.item ? dex.items.get(mon.item) : null;
+  const ability = mon.getAbility();
+  return {
+    species: mon.species.name,
+    num: mon.species.num,
+    shiny: Boolean(mon.set.shiny),
+    level: mon.level,
+    gender: mon.gender || '',
+    types: mon.getTypes(),
+    item: item?.name ?? '',
+    itemDesc: item?.shortDesc ?? '',
+    ability: ability.name,
+    abilityDesc: ability.shortDesc,
+    nature: mon.set.nature,
+    // RED's exact HP shows as a percentage, like in his info box.
+    hp: own ? mon.hp : Math.ceil((mon.hp / mon.maxhp) * 100),
+    maxhp: own ? mon.maxhp : 100,
+    status: mon.fainted ? 'fnt' : mon.status || '',
+    stats: { hp: mon.maxhp, ...mon.storedStats },
+    moves: movesOf(mon, foe),
+  };
+}
+
 function summarizeRequest(request) {
   if (!request || request.wait) return { kind: 'wait' };
   const battle = current.stream.battle;
-  const team = battle.p1.pokemon;
-  const party = request.side.pokemon.map((p, i) => {
-    const mon = team[i]; // request order = the simulator's party order
-    return {
-      slot: i + 1,
-      species: p.speciesForme,
-      num: dex.species.get(p.speciesForme).num,
-      shiny: Boolean(p.shiny),
-      level: p.level,
-      gender: p.gender || '',
-      hp: p.hp,
-      maxhp: p.maxhp,
-      status: p.fainted ? 'fnt' : p.status || '',
-      active: Boolean(p.active),
-      moves: mon ? mon.moveSlots.map((m) => ({ name: m.move, pp: m.pp, maxpp: m.maxpp })) : [],
-    };
-  });
-  if (request.forceSwitch) return { kind: 'switch', forced: true, party };
+  const team = battle.p1.pokemon; // request order = the simulator's party order
+  const foe = battle.p2.active[0] && !battle.p2.active[0].fainted ? battle.p2.active[0] : null;
+  const yours = battle.p1.active[0];
+  const party = request.side.pokemon.map((p, i) => ({
+    slot: i + 1,
+    active: Boolean(p.active),
+    ...details(team[i], foe, true),
+  }));
+  // RED's Pokémon on the field, with how its moves hit yours.
+  const foeInfo = foe ? details(foe, yours && !yours.fainted ? yours : null, false) : null;
+  if (request.forceSwitch) return { kind: 'switch', forced: true, party, foe: foeInfo };
   const active = request.active[0];
   const activeMon = battle.p1.active[0];
-  const foe = battle.p2.active[0];
   const moves = active.moves.map((m, i) => {
     const info = dex.moves.get(m.move.replace(/ \d+$/, ''));
     const type = info.id.startsWith('hiddenpower') ? activeMon.hpType || info.type : info.type;
@@ -224,6 +266,7 @@ function summarizeRequest(request) {
     moves,
     canSwitch: !active.trapped && !active.maybeTrapped,
     party,
+    foe: foeInfo,
   };
 }
 

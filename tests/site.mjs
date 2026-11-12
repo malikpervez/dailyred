@@ -50,7 +50,8 @@ const DAY2 = new Date('2026-11-13T10:00:00');
 async function playToTheEnd(page) {
   for (let i = 0; i < 2000; i++) {
     if (await page.isVisible('#battle-done')) break;
-    if (await page.isVisible('.party')) await page.click('.party-mon:not(:disabled)');
+    if (await page.isVisible('.summary')) await page.click('.sum-shift:not(:disabled)');
+    else if (await page.isVisible('.party')) await page.click('.party-mon:not(:disabled)');
     else if (await page.isVisible('.commands')) await page.click('.move:not(:disabled)');
     else await page.waitForTimeout(25);
   }
@@ -94,6 +95,29 @@ try {
   assert.ok(await page.isVisible('#practice-chip'));
   await page.screenshot({ path: join(OUT, 'battle.png') });
   assert.equal(await page.getAttribute('[data-anims="on"]', 'aria-pressed'), 'true', 'animations start on');
+
+  step('moves show how they hit RED\'s Pokémon; POKéMON shows a summary with SHIFT');
+  const effects = await page.$$eval('.move', (buttons) => buttons.map((b) => b.dataset.effect));
+  assert.ok(effects.every((e) => ['', 'normal', 'super', 'weak', 'none'].includes(e)), String(effects));
+  assert.ok(effects.some((e) => e !== ''), 'at least one attack is rated');
+  await page.click('.action:has-text("POKéMON")');
+  await page.locator('.party-mon').nth(1).click();
+  assert.ok(await page.isVisible('.summary'));
+  assert.equal(await page.textContent('.sum-name'), `${team[0]}${await page.textContent('.sum-gender')}Lv100`);
+  assert.equal(await page.locator('.sum-move').count(), (await page.evaluate(() => window.dailyRed.teams.team[0].moves.length)));
+  assert.ok((await page.textContent('.sum-facts')).includes('ITEM'));
+  assert.equal(await page.textContent('.sum-shift'), 'SHIFT');
+  await page.click('.sum-buttons .action:has-text("BACK")');
+  assert.ok(await page.isVisible('.party'));
+  await page.locator('.party-mon').nth(1).click();
+  await page.click('.sum-shift');
+  await page.waitForSelector('.commands', { state: 'visible', timeout: 30000 });
+  assert.equal(await page.textContent('.infobox-you .ib-name'), team[0], 'SHIFT sent the Pokémon out');
+  await page.click('.infobox-foe');
+  assert.equal(await page.textContent('.sum-owner'), "RED's ");
+  assert.ok(await page.isHidden('.sum-shift'));
+  await page.click('.sum-buttons .action:has-text("BACK")');
+  assert.ok(await page.isVisible('.commands'));
   await page.click('[data-anims="off"]');
   assert.equal(await page.evaluate(() => localStorage.getItem('dailyred-anims')), 'off');
   await page.click('[data-anims="on"]');

@@ -12,6 +12,8 @@ const SPEEDS = {
 
 const STATUS_LABEL = { par: 'PAR', slp: 'SLP', psn: 'PSN', tox: 'PSN', brn: 'BRN', frz: 'FRZ', fnt: 'FNT' };
 const EFFECT_LABEL = { super: 'Super effective', weak: 'Not very effective', none: 'No effect', normal: 'Normal damage' };
+// Shorter, for the move buttons.
+const EFFECT_SHORT = { super: 'Effective', weak: 'Weak', none: 'No effect', normal: '' };
 
 const el = (tag, className, text) => {
   const node = document.createElement(tag);
@@ -104,7 +106,11 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
   partyCancel.type = 'button';
   party.append(partyHead, partyList, partyCancel);
 
-  panel.append(message, commands, info, actions, party);
+  // One Pokémon's summary: moves, item, ability, stats (yours or RED's).
+  const summary = el('div', 'summary');
+  summary.hidden = true;
+
+  panel.append(message, commands, info, actions, party, summary);
 
   const frame = el('div', 'battle-frame');
   frame.append(scene, panel);
@@ -137,10 +143,14 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
     target.addEventListener('click', () => skip?.());
   }
 
+  let panelMode = 'message';
   function setPanel(mode) {
+    panelMode = mode;
     message.hidden = mode !== 'message';
     commands.hidden = info.hidden = actions.hidden = mode !== 'commands';
     party.hidden = mode !== 'party';
+    summary.hidden = mode !== 'summary';
+    frame.dataset.panel = mode;
   }
 
   function showText(text) {
@@ -195,6 +205,7 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
     boxParts.gender.dataset.gender = mon.gender;
     boxParts.level.textContent = `Lv${mon.level}`;
     const share = mon.maxhp ? Math.max(0, Math.min(1, mon.hp / mon.maxhp)) : 0;
+    boxParts.fill.style.transitionDuration = `${speed().bar}ms`;
     boxParts.fill.style.width = `${share * 100}%`;
     boxParts.fill.dataset.level = share > 0.5 ? 'high' : share > 0.2 ? 'mid' : 'low';
     boxParts.status.textContent = STATUS_LABEL[mon.status] ?? '';
@@ -309,7 +320,14 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
       button.type = 'button';
       button.disabled = move.disabled;
       button.dataset.type = move.type;
-      button.append(el('span', 'move-type'), el('span', 'move-name', move.name.toUpperCase()));
+      button.dataset.effect = move.effect || '';
+      const label = el('span', 'move-label');
+      label.append(el('span', 'move-name', move.name.toUpperCase()));
+      const sub = el('span', 'move-sub');
+      sub.append(el('span', 'move-pp', move.maxpp != null ? `PP ${move.pp}/${move.maxpp}` : ''));
+      if (EFFECT_SHORT[move.effect]) sub.append(el('span', 'move-effect', EFFECT_SHORT[move.effect]));
+      label.append(sub);
+      button.append(el('span', 'move-type'), label);
       button.addEventListener('pointerenter', () => describeMove(move));
       button.addEventListener('focus', () => describeMove(move));
       button.addEventListener('click', () => submit(`move ${move.slot}`));
@@ -344,13 +362,111 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
       text.append(top, hpRow);
       const tag = el('span', 'party-tag', p.status === 'fnt' ? 'FNT' : p.active ? 'IN BATTLE' : STATUS_LABEL[p.status] ?? '');
       button.append(icon, text, tag);
-      button.addEventListener('click', () => submit(`switch ${p.slot}`));
+      button.addEventListener('click', () => showSummary(p, { forced, canShift: forced || req.canSwitch }));
       item.append(button);
       return item;
     }));
     partyCancel.hidden = forced;
     setPanel('party');
   }
+
+  // A Pokémon's summary. Yours: moves (with how they'd hit RED's Pokémon),
+  // item, ability, stats, and SHIFT to send it out. RED's: the same, with how
+  // its moves would hit yours.
+  function showSummary(mon, { foe = false, forced = false, canShift = false } = {}) {
+    const back = () => (foe ? showRequest() : showParty(request, forced));
+    const head = el('div', 'sum-head');
+    const icon = el('img', 'sum-sprite');
+    icon.src = spriteUrl(mon.num, { shiny: mon.shiny });
+    icon.alt = '';
+    icon.width = icon.height = 64;
+    const title = el('div', 'sum-title');
+    const name = el('p', 'sum-name');
+    if (foe) name.append(el('span', 'sum-owner', "RED's "));
+    name.append(mon.species);
+    const gender = el('span', 'sum-gender', mon.gender === 'M' ? '♂' : mon.gender === 'F' ? '♀' : '');
+    gender.dataset.gender = mon.gender;
+    name.append(gender, el('span', 'sum-level', `Lv${mon.level}`));
+    const types = el('span', 'sum-types');
+    for (const type of mon.types) {
+      const badge = el('span', 'type-badge', type);
+      badge.dataset.type = type;
+      types.append(badge);
+    }
+    const hp = el('div', 'hp');
+    const track = el('div', 'hp-track');
+    const fill = el('div', 'hp-fill');
+    const share = mon.maxhp ? mon.hp / mon.maxhp : 0;
+    fill.style.width = `${share * 100}%`;
+    fill.dataset.level = share > 0.5 ? 'high' : share > 0.2 ? 'mid' : 'low';
+    fill.style.transition = 'none';
+    track.append(fill);
+    hp.append(el('span', 'hp-label', 'HP'), track,
+      el('span', 'sum-hp', mon.status === 'fnt' ? 'FNT' : foe ? `${mon.hp}%` : `${mon.hp}/${mon.maxhp}`));
+    title.append(name, types, hp);
+    head.append(icon, title);
+
+    const facts = el('dl', 'sum-facts');
+    for (const [label, value, hint] of [['ITEM', mon.item || 'None', mon.itemDesc], ['ABILITY', mon.ability, mon.abilityDesc], ['NATURE', mon.nature]]) {
+      const row = el('div');
+      const dd = el('dd', '', value);
+      if (hint) dd.title = hint;
+      row.append(el('dt', '', label), dd);
+      facts.append(row);
+    }
+
+    const against = request?.foe && !foe ? `RED's ${request.foe.species}` : request?.party?.find((p) => p.active)?.species;
+    const note = el('p', 'sum-note', against ? `Effectiveness against ${against}` : '');
+    const moves = el('ul', 'sum-moves');
+    for (const move of mon.moves) {
+      const row = el('li', 'sum-move');
+      row.dataset.type = move.type;
+      row.dataset.effect = move.effect || '';
+      row.title = move.desc ?? '';
+      const detail = [move.type, move.category === 'Status' ? 'Status' : `${move.power ?? '—'} ${move.category}`];
+      if (move.accuracy) detail.push(`${move.accuracy}% acc`);
+      row.append(
+        el('span', 'move-type'),
+        el('span', 'sum-move-name', move.name.toUpperCase()),
+        el('span', 'sum-move-pp', foe ? '' : `PP ${move.pp}/${move.maxpp}`),
+        el('span', 'sum-move-detail', detail.join(' · ')),
+        el('span', 'move-effect', move.category === 'Status' ? '' : EFFECT_LABEL[move.effect] ?? ''),
+      );
+      moves.append(row);
+    }
+
+    const stats = el('dl', 'sum-stats');
+    for (const [key, label] of [['hp', 'HP'], ['atk', 'ATK'], ['def', 'DEF'], ['spa', 'SP.ATK'], ['spd', 'SP.DEF'], ['spe', 'SPEED']]) {
+      const row = el('div');
+      row.append(el('dt', '', label), el('dd', '', String(mon.stats[key])));
+      stats.append(row);
+    }
+
+    const buttons = el('div', 'sum-buttons');
+    if (!foe) {
+      const shift = el('button', 'action sum-shift', mon.status === 'fnt' ? 'FAINTED' : mon.active ? 'IN BATTLE' : 'SHIFT');
+      shift.type = 'button';
+      shift.disabled = mon.active || mon.status === 'fnt' || !canShift;
+      shift.addEventListener('click', () => submit(`switch ${mon.slot}`));
+      buttons.append(shift);
+    }
+    const backButton = el('button', 'action', foe ? 'BACK' : 'BACK');
+    backButton.type = 'button';
+    backButton.addEventListener('click', back);
+    buttons.append(backButton);
+
+    summary.replaceChildren(head, facts, note, moves, stats, buttons);
+    setPanel('summary');
+    summary.scrollIntoView({ block: 'nearest' });
+  }
+
+  // Tapping RED's info box shows his Pokémon's summary while choosing.
+  foe.box.addEventListener('click', (event) => {
+    if (!request?.foe || (panelMode !== 'commands' && panelMode !== 'party')) return;
+    event.stopPropagation();
+    showSummary(request.foe, { foe: true });
+  });
+  foe.box.title = "Tap to see RED's Pokémon";
 
   pokemonButton.addEventListener('click', () => request && showParty(request, false));
   partyCancel.addEventListener('click', () => showRequest());

@@ -67,6 +67,11 @@ web/index.html + app.js            today's page, the lead picker, stats (daily.j
   counts as a loss.
 - **The lead** is remembered per day in the browser. The other five follow in
   the team's order, and you can switch at any time.
+- **In battle**, each move button says how it hits RED's Pokémon (Effective,
+  Weak or No effect, by type). POKéMON lists your party; tapping one shows
+  its summary (moves with type, power, PP and effectiveness, held item,
+  ability, nature, stats) with SHIFT to send it out. Tapping RED's info box
+  shows his Pokémon's summary, with how its moves hit yours.
 - **Text speed:** Normal or Fast, remembered in the browser. Tapping the
   battle screen skips ahead.
 - **Move animations** (`web/battle/fx.js`) use FireRed's own animation
