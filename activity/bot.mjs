@@ -19,8 +19,8 @@
 //   - Daily reminders: players who press "Reminders" get mentioned at
 //     REMINDER_TIME (17:00 by default) on days they haven't played yet.
 //   - Buttons on all of them: "Battle RED" launches the Activity,
-//     "Leaderboard" shows the leaderboard and Hall of Fame to whoever pressed
-//     it, "Reminders" turns their reminder on or off. Discord sends button
+//     "Leaderboard" posts the leaderboard and Hall of Fame in the channel
+//     (replacing the last one), "Reminders" turns their reminder on or off. Discord sends button
 //     presses to POST /api/interactions (app.mjs), checked with the app's
 //     public key.
 //
@@ -118,6 +118,7 @@ export function createBot({
   publicUrl = null,
   fetch = globalThis.fetch,
   now = () => new Date(),
+  followUpDelay = 1500, // ms to wait before looking up a just-posted leaderboard
   api = API,
   log = console,
 }) {
@@ -467,46 +468,121 @@ export function createBot({
   const hallLines = (guildId, limit) => hallOfFame(guildId).slice(0, limit)
     .map(({ month, masters }) => `**${shortMonth(month)}** ${masters.map((m) => `<@${m.playerId}>`).join(' & ')} (${plural(masters[0].wins, 'win')})`);
 
-  function leaderboardMessage(guildId) {
-    const { date } = zonedNow();
+  // Lines for an embed field, cut to Discord's 1024-character limit.
+  function fieldValue(lines) {
+    const out = [...lines];
+    let more = 0;
+    while (out.length > 1 && out.join('\n').length > 1000) {
+      out.pop();
+      more++;
+    }
+    if (more) out.push(`…and ${more} more`);
+    return out.join('\n');
+  }
+
+  // Where `id` is in the month's race, e.g. "<@3> is 3rd, 2 wins behind <@1>."
+  function standingLine(race, id) {
+    const i = race.findIndex((p) => p.id === id);
+    if (i < 0) return `<@${id}> hasn't battled RED this month yet.`;
+    const me = race[i];
+    if (race.length === 1) return `<@${id}> is the only one in the race so far.`;
+    if (i === 0) {
+      const gap = me.monthWins - race[1].monthWins;
+      return gap > 0 ? `<@${id}> leads, ${plural(gap, 'win')} ahead of <@${race[1].id}>.` : `<@${id}> leads on tiebreaks.`;
+    }
+    const gap = race[0].monthWins - me.monthWins;
+    const place = `${i + 1}${{ 1: 'st', 2: 'nd', 3: 'rd' }[(i + 1) % 100 > 10 && (i + 1) % 100 < 14 ? 0 : (i + 1) % 10] ?? 'th'}`;
+    return gap > 0
+      ? `<@${id}> is ${place}, ${plural(gap, 'win')} behind <@${race[0].id}>.`
+      : `<@${id}> is ${place}, level on wins with <@${race[0].id}> but behind on tiebreaks.`;
+  }
+
+  // The leaderboard in sections: the month's Master race (with how each
+  // player did today), win streaks, all time and the Hall of Fame. `viewer`:
+  // who pressed the button, to say where they stand. `showToday`: off for the
+  // Monday post, which goes out before anyone has played that day.
+  function boardEmbed(guildId, date, { title, viewer = null, showToday = true }) {
+    const room = `g:${guildId}`;
+    const month = date.slice(0, 7);
     const crowned = crownedOn(guildId, date);
-    const rows = leaderboard(`g:${guildId}`, date).slice(0, 15);
-    const lines = rows.map((p, i) => `**${i + 1}.** ${who(p.id, crowned)} 🏆 ${p.monthWins} this month · 🔥 ${p.winStreak} · best ${p.bestWinStreak} · ${p.wins}W ${p.losses}L (${p.winRate}%)`);
-    const hall = hallLines(guildId, 12);
-    if (hall.length) lines.push('', '🏛️ **Hall of Fame**', ...hall);
+    const rows = leaderboard(room, date);
+    const { results, players } = dayResults(room, date);
+    const battling = new Set(players.filter((p) => !results.has(p.id) && p.stats.pending === date).map((p) => p.id));
+    const today = (id) => {
+      const r = results.get(id);
+      if (!r) return battling.has(id) ? '⚔️ battling' : '⏳ not yet';
+      return r.won ? '✅ beat RED today' : r.gaveUp ? '🏃 ran today' : '❌ lost today';
+    };
+
+    const [y, m] = month.split('-').map(Number);
+    const daysLeft = new Date(Date.UTC(y, m, 0)).getUTCDate() - Number(date.slice(8));
+    const intro = [
+      `${daysLeft === 0 ? `Last day of ${monthName(month)}` : `${plural(daysLeft, 'day')} left`} · most wins becomes Pokémon Master`,
+    ];
+    if (crowned.size) intro.push(`👑 Reigning Master: ${[...crowned].map((id) => `<@${id}>`).join(' & ')}`);
+
+    const race = rows.filter((p) => p.monthWins + p.monthLosses > 0);
+    const fields = [{
+      name: '🏆 Master race',
+      value: race.length
+        ? fieldValue(race.map((p, i) => `${rank(i)} ${who(p.id, crowned)} · **${p.monthWins}W** ${p.monthLosses}L${showToday ? ` · ${today(p.id)}` : ''}`))
+        : `Nobody has battled RED yet in ${monthName(month)}.`,
+    }];
+    const streaks = rows.filter((p) => p.winStreak > 0).sort((a, b) => b.winStreak - a.winStreak || b.bestWinStreak - a.bestWinStreak).slice(0, 5);
+    if (streaks.length) {
+      fields.push({ name: '🔥 Win streaks', value: streaks.map((p) => `<@${p.id}> **${p.winStreak}** (best ${p.bestWinStreak})`).join(' · ') });
+    }
+    const allTime = [...rows].filter((p) => p.wins > 0).sort((a, b) => b.wins - a.wins || b.winRate - a.winRate).slice(0, 5);
+    if (allTime.length) {
+      fields.push({ name: '📈 All time', value: allTime.map((p) => `<@${p.id}> **${p.wins}W** ${p.winRate}%`).join(' · ') });
+    }
+    if (viewer && race.length) fields.push({ name: '➡️ Standing', value: standingLine(race, viewer) });
+    const hall = hallLines(guildId, 6);
+    if (hall.length) fields.push({ name: '🏛️ Hall of Fame', value: hall.join('\n') });
+
     return {
-      flags: 64, // only the person who pressed the button sees it
-      embeds: [{
-        color: RED,
-        title: `Daily Red leaderboard · ${monthLabel(date.slice(0, 7))}`,
-        description: lines.join('\n') || 'Nobody here has battled RED yet.',
-        footer: { text: 'Most wins this month becomes the Pokémon Master of the Month' },
-      }],
+      color: RED,
+      title,
+      description: rows.length ? intro.join('\n') : 'Nobody here has battled RED yet.',
+      fields: rows.length ? fields : [],
+      thumbnail,
+      footer: { text: `Daily Red No. ${dayNumber(date)} · press Leaderboard any time for the latest` },
+    };
+  }
+
+  // The Leaderboard button: posted for everyone in the channel.
+  function leaderboardMessage(guildId, viewer = null) {
+    const { date } = zonedNow();
+    return {
+      embeds: [boardEmbed(guildId, date, { title: `Daily Red leaderboard · ${monthLabel(date.slice(0, 7))}`, viewer })],
+      components: buttons('Battle RED'),
       allowed_mentions: { parse: [] },
     };
   }
 
-  // Mondays: the month's standings so far, for everyone.
+  // After the button's leaderboard is posted: the one before it in the server
+  // is deleted, so the channel only ever has the latest.
+  async function replaceOldBoard(guildId, interactionToken) {
+    if (!posting) return;
+    try {
+      await new Promise((ok) => setTimeout(ok, followUpDelay)); // Discord needs a moment to post it
+      const posted = await discord('GET', `/webhooks/${clientId}/${interactionToken}/messages/@original`);
+      const previous = JSON.parse(store.getSetting(`board:${guildId}`) ?? 'null');
+      store.setSetting(`board:${guildId}`, JSON.stringify({ channelId: posted.channel_id, messageId: posted.id }));
+      if (previous && previous.messageId !== posted.id) {
+        await discord('DELETE', `/channels/${previous.channelId}/messages/${previous.messageId}`).catch((err) => {
+          if (err.status !== 404) throw err;
+        });
+      }
+    } catch (err) {
+      log.warn(`Daily Red bot couldn't tidy up the old leaderboard in server ${guildId}: ${err.message}`);
+    }
+  }
+
+  // Mondays: the same leaderboard, for everyone.
   function weeklyMessage(guildId, date) {
-    const crowned = crownedOn(guildId, date);
-    const rows = leaderboard(`g:${guildId}`, date);
-    const race = rows.filter((p) => p.monthWins + p.monthLosses > 0).slice(0, 10);
-    const lines = race.length
-      ? race.map((p, i) => `${rank(i)} ${who(p.id, crowned)} ${p.monthWins}W ${p.monthLosses}L this month · 🔥 ${p.winStreak}`)
-      : [`Nobody has battled RED yet in ${monthName(date.slice(0, 7))}.`];
-    const streaks = [...rows].filter((p) => p.winStreak > 0).sort((a, b) => b.winStreak - a.winStreak).slice(0, 3);
-    if (streaks.length) lines.push('', `🔥 Longest win streaks: ${streaks.map((p) => `<@${p.id}> ${p.winStreak}`).join(' · ')}`);
-    const allTime = [...rows].sort((a, b) => b.wins - a.wins || b.winRate - a.winRate).slice(0, 3).filter((p) => p.wins > 0);
-    if (allTime.length) lines.push(`📈 Most wins ever: ${allTime.map((p) => `<@${p.id}> ${p.wins}`).join(' · ')}`);
-    if (crowned.size) lines.push(`👑 Reigning Master: ${[...crowned].map((id) => `<@${id}>`).join(' & ')}`);
     return {
-      embeds: [{
-        color: RED,
-        title: `📊 Weekly leaderboard · ${monthLabel(date.slice(0, 7))}`,
-        description: lines.join('\n'),
-        thumbnail,
-        footer: { text: 'Most wins this month becomes the Pokémon Master of the Month' },
-      }],
+      embeds: [boardEmbed(guildId, date, { title: `📊 Weekly leaderboard · ${monthLabel(date.slice(0, 7))}`, showToday: false })],
       components: buttons('Battle RED'),
       allowed_mentions: { parse: [] },
     };
@@ -615,7 +691,11 @@ export function createBot({
   function interaction(body) {
     if (body.type === 1) return { type: 1 }; // PING
     const id = body.data?.custom_id ?? body.data?.name;
-    if (body.type === 3 && id === BOARD_BUTTON && body.guild_id) return { type: 4, data: leaderboardMessage(body.guild_id) };
+    if (body.type === 3 && id === BOARD_BUTTON && body.guild_id) {
+      const viewer = body.member?.user?.id ?? body.user?.id;
+      if (body.token) replaceOldBoard(body.guild_id, body.token);
+      return { type: 4, data: leaderboardMessage(body.guild_id, viewer ? String(viewer) : null) };
+    }
     if (body.type === 3 && id === PLAY_BUTTON) return { type: 12 }; // LAUNCH_ACTIVITY
     if (body.type === 3 && id === REMIND_BUTTON && body.guild_id) {
       const userId = body.member?.user?.id ?? body.user?.id;

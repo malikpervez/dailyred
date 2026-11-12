@@ -29,6 +29,8 @@ function fakeDiscord({ channels = [{ id: 'c-rules', type: 0, name: 'rules' }, { 
     if (path === `/guilds/${GUILD}/channels`) return json(200, channels);
     if (path === `/guilds/${GUILD}`) return json(200, { id: GUILD, system_channel_id: systemChannel });
     if (path === '/users/@me/guilds') return json(200, [{ id: GUILD, name: 'Test server' }]);
+    const original = /^\/webhooks\/999\/([^/]+)\/messages\/@original$/.exec(path);
+    if (original) return json(200, { id: `orig-${original[1]}`, channel_id: 'c-general' });
     let m = /^\/channels\/([^/]+)\/messages$/.exec(path);
     if (m && init.method === 'POST') {
       const id = `m${nextId++}`;
@@ -59,7 +61,7 @@ function fakeDiscord({ channels = [{ id: 'c-rules', type: 0, name: 'rules' }, { 
 
 function setup({ discord = fakeDiscord(), clock = new Date('2026-11-12T15:00:00Z'), publicKey = null } = {}) {
   const store = openStore(':memory:');
-  const bot = createBot({ token: 'bot-token', clientId: '999', publicKey, store, fetch: discord.fetch, now: () => clock, log: quiet });
+  const bot = createBot({ token: 'bot-token', clientId: '999', publicKey, store, fetch: discord.fetch, now: () => clock, log: quiet, followUpDelay: 0 });
   const player = (id, name, stats = {}) => {
     store.savePlayer({ id, name, avatarUrl: '', stats: { ...EMPTY, ...stats } });
     store.joinRoom(`g:${GUILD}`, id);
@@ -175,7 +177,7 @@ test('the recap goes out once, at 6:00 in New York, with yesterday ranked', asyn
   assert.equal(discord.posts().length, 1, 'only once');
 });
 
-test('buttons: signed requests only; Battle RED launches the Activity; Leaderboard is private', async () => {
+test('buttons: signed requests only; Battle RED launches the Activity; Leaderboard is for everyone', async () => {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const rawKey = publicKey.export({ format: 'der', type: 'spki' }).subarray(12).toString('hex');
   const discord = fakeDiscord();
@@ -200,12 +202,13 @@ test('buttons: signed requests only; Battle RED launches the Activity; Leaderboa
 
     const board = await (await send({ type: 3, guild_id: GUILD, data: { custom_id: 'dailyred:board' } })).json();
     assert.equal(board.type, 4);
-    assert.equal(board.data.flags, 64);
+    assert.equal(board.data.flags, undefined, 'everyone in the channel sees it');
     assert.equal(board.data.embeds[0].title, 'Daily Red leaderboard · November 2026');
-    assert.equal(board.data.embeds[0].description, [
-      '**1.** <@1> 🏆 0 this month · 🔥 6 · best 9 · 6W 2L (75%)',
-      '**2.** <@2> 🏆 0 this month · 🔥 0 · best 2 · 1W 3L (25%)',
-    ].join('\n'));
+    assert.deepEqual(board.data.embeds[0].fields, [
+      { name: '🏆 Master race', value: 'Nobody has battled RED yet in November.' },
+      { name: '🔥 Win streaks', value: '<@1> **6** (best 9)' },
+      { name: '📈 All time', value: '<@1> **6W** 75% · <@2> **1W** 25%' },
+    ]);
 
     // With the key set, cards get the buttons.
     player('3', 'Brock', { pending: '2026-11-12' });
@@ -327,13 +330,13 @@ test("last month's Master wears a 👑 all month and joins the Hall of Fame", as
   assert.match(description(discord.posts().at(-1)), /^<@1> 👑 \*\*Beat RED\*\* with 3 left/);
 
   const board = bot.interaction({ type: 3, guild_id: GUILD, data: { custom_id: 'dailyred:board' } });
-  assert.equal(board.data.embeds[0].description, [
-    '**1.** <@1> 👑 🏆 1 this month · 🔥 1 · best 1 · 3W 0L (100%)',
-    '**2.** <@2> 🏆 0 this month · 🔥 0 · best 0 · 1W 0L (100%)',
-    '',
-    '🏛️ **Hall of Fame**',
-    '**Oct 2026** <@1> (2 wins)',
-  ].join('\n'));
+  assert.equal(board.data.embeds[0].description, '18 days left · most wins becomes Pokémon Master\n👑 Reigning Master: <@1>');
+  assert.deepEqual(board.data.embeds[0].fields, [
+    { name: '🏆 Master race', value: '🥇 <@1> 👑 · **1W** 0L · ✅ beat RED today' },
+    { name: '🔥 Win streaks', value: '<@1> **1** (best 1)' },
+    { name: '📈 All time', value: '<@1> **3W** 100% · <@2> **1W** 100%' },
+    { name: '🏛️ Hall of Fame', value: '**Oct 2026** <@1> (2 wins)' },
+  ]);
 
   // The crown is only for the month after: in December it's November's Master.
   setClock(new Date('2026-12-05T15:00:00Z'));
@@ -365,13 +368,12 @@ test('Mondays at 6:00 the weekly leaderboard follows the recap, once', async () 
   const [recap, weekly] = discord.posts();
   assert.equal(recap.body.embeds[0].title, "Yesterday's results · Daily Red No. 15");
   assert.equal(weekly.body.embeds[0].title, '📊 Weekly leaderboard · November 2026');
-  assert.equal(description(weekly), [
-    '🥇 <@1> 2W 1L this month · 🔥 2',
-    '🥈 <@2> 1W 1L this month · 🔥 0',
-    '',
-    '🔥 Longest win streaks: <@1> 2',
-    '📈 Most wins ever: <@1> 3 · <@2> 1',
-  ].join('\n'));
+  assert.equal(description(weekly), '14 days left · most wins becomes Pokémon Master');
+  assert.deepEqual(weekly.body.embeds[0].fields, [
+    { name: '🏆 Master race', value: '🥇 <@1> · **2W** 1L\n🥈 <@2> · **1W** 1L' },
+    { name: '🔥 Win streaks', value: '<@1> **2** (best 2)' },
+    { name: '📈 All time', value: '<@1> **3W** 75% · <@2> **1W** 33%' },
+  ]);
   await bot.tick();
   assert.equal(discord.posts().length, 2, 'only once');
 });
@@ -452,4 +454,32 @@ test('when a battle finishes and the card has scrolled up, it moves back to the 
   } finally {
     server.close();
   }
+});
+
+test('the Leaderboard button shows today and where the presser stands, and replaces the last one', async () => {
+  const { store, bot, discord, player } = setup({ clock: new Date('2026-11-12T15:00:00Z') });
+  player('1', 'Ash', { wins: 2, winStreak: 2, dayStreak: 2, lastPlayed: '2026-11-12', lastResult: 'won' });
+  player('2', 'Misty', { losses: 1, dayStreak: 1, lastPlayed: '2026-11-12', lastResult: 'lost' });
+  player('3', 'Brock', { wins: 1, winStreak: 1, lastPlayed: '2026-11-11', lastResult: 'won', pending: '2026-11-12' });
+  for (const [id, date, won, gaveUp] of [['1', '2026-11-11', true], ['1', '2026-11-12', true], ['3', '2026-11-11', true], ['2', '2026-11-12', false, true]]) {
+    store.saveResult({ playerId: id, date, won, monsLeft: won ? 3 : 6, redLeft: won ? 0 : 6, turns: won ? 20 : 2, gaveUp });
+  }
+  const press = (token, userId) => bot.interaction({ type: 3, guild_id: GUILD, token, member: { user: { id: userId } }, data: { custom_id: 'dailyred:board' } });
+  const settle = () => new Promise((ok) => setTimeout(ok, 30));
+
+  const board = press('tok1', '3');
+  assert.deepEqual(board.data.embeds[0].fields.find((f) => f.name === '🏆 Master race').value.split('\n'), [
+    '🥇 <@1> · **2W** 0L · ✅ beat RED today',
+    '🥈 <@3> · **1W** 0L · ⚔️ battling',
+    '🥉 <@2> · **0W** 1L · 🏃 ran today',
+  ]);
+  assert.equal(board.data.embeds[0].fields.find((f) => f.name === '➡️ Standing').value, '<@3> is 2nd, 1 win behind <@1>.');
+  assert.deepEqual(board.data.allowed_mentions, { parse: [] }, 'nobody is pinged');
+  await settle();
+  assert.equal(discord.deletes().length, 0, 'nothing to replace the first time');
+
+  const again = press('tok2', '1');
+  assert.equal(again.data.embeds[0].fields.find((f) => f.name === '➡️ Standing').value, '<@1> leads, 1 win ahead of <@3>.');
+  await settle();
+  assert.deepEqual(discord.deletes().map((d) => d.path), ['/channels/c-general/messages/orig-tok1']);
 });

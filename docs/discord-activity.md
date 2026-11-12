@@ -238,16 +238,19 @@ The bot posts these in each server's **#general**:
   (the best win streak is kept). The Master wears a 👑 next to their name all
   the next month (card, recap, leaderboards) and joins the server's **Hall of
   Fame**.
-- **The weekly leaderboard**: every Monday right after the recap, the month's
-  standings so far, the longest win streaks, the most wins ever and the
-  reigning Master.
+- **The weekly leaderboard**: every Monday right after the recap, the same
+  leaderboard as the button: the month's standings so far, win streaks, all
+  time and the reigning Master.
 - **Reminders** (opt-in): at 5:00 PM Eastern, one message mentioning the
   players who asked for it and haven't battled yet that day. Nobody else is
   pinged, and there's no message if everyone who asked has played.
 
 They have a **Battle RED** button that opens the Activity, a **Leaderboard**
-button that shows the server's leaderboard and Hall of Fame to whoever presses
-it, and a **🔔 Reminders** button that turns that person's reminder on or off
+button and a **🔔 Reminders** button. **Leaderboard** posts the server's
+leaderboard in the channel for everyone: the month's Master race with how each
+player did today, win streaks, all-time wins, where the person who pressed it
+stands, and the Hall of Fame. The previous one is deleted, so the channel only
+ever has the latest. **🔔 Reminders** turns that person's reminder on or off
 (also a checkbox under the board in the Activity). Apart from reminders,
 mentions in the messages never ping anyone.
 
