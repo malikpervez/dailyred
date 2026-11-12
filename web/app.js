@@ -281,6 +281,9 @@ for (const button of document.querySelectorAll('[data-board]')) {
     boardTab = button.dataset.board;
     for (const b of document.querySelectorAll('[data-board]')) b.setAttribute('aria-pressed', String(b === button));
     renderBoard(ui.boardList, boardPlayers, boardTab);
+    if (boardPlayers.length) {
+      ui.boardNote.textContent = boardTab === 'month' ? 'Most wins this month becomes the Pokémon Master of the Month. Streaks start over on the 1st.' : '';
+    }
   });
 }
 
@@ -291,7 +294,8 @@ async function refreshBoard() {
     const { players } = await discord.board(today());
     boardPlayers = players;
     renderBoard(ui.boardList, players, boardTab);
-    ui.boardNote.textContent = players.length ? '' : 'Nobody has played here yet. Be the first to battle RED!';
+    ui.boardNote.textContent = !players.length ? 'Nobody has played here yet. Be the first to battle RED!'
+      : boardTab === 'month' ? 'Most wins this month becomes the Pokémon Master of the Month. Streaks start over on the 1st.' : '';
   } catch (err) {
     console.warn("Couldn't load today's players", err);
   }

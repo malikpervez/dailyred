@@ -65,6 +65,10 @@ web/index.html + app.js            today's page, the lead picker, stats (daily.j
   starts, so closing the page halfway is a loss (`settleAbandonedGame`).
   Giving up (RUN) is a loss too. A draw (both last Pokémon down at once)
   counts as a loss.
+- **Monthly seasons:** win and play streaks start over on the 1st of each
+  month (`currentStreaks` / `recordResult` in `web/daily.js`); the best win
+  streak is kept for all time. In Discord the bot announces the Pokémon
+  Master of the Month that morning.
 - **The lead** is remembered per day in the browser. The other five follow in
   the team's order, and you can switch at any time.
 - **In battle**, each move button says how it hits RED's Pokémon (Effective,
@@ -143,9 +147,10 @@ In the browser console, `dailyRed.teams`, `dailyRed.stats` and
 
 Daily Red can also run inside Discord as an Activity, with Discord sign-in,
 stats that follow you across devices, a "Today in this server" board with
-Today / Streaks / All time tabs, and (with the bot) a live card in #general
-that fills in as people play plus a recap of yesterday every morning at 6:00
-Eastern, like Wordle. It's
+Today / This month / Streaks / All time tabs, and (with the bot) a live card
+in #general that fills in as people play, a recap of yesterday every morning
+at 6:00 Eastern like Wordle, and the Pokémon Master of the Month (most wins)
+on the 1st. It's
 one Docker image that runs on an x86_64 or arm64 machine, e.g. a Raspberry Pi
 NAS, and builds in a minute or two. Setup:
 [docs/discord-activity.md](docs/discord-activity.md).

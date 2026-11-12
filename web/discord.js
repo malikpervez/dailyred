@@ -111,6 +111,16 @@ const TABS = {
     badge: (p) => TODAY_LABEL[p.today] ?? 'Not yet',
     squares: (p) => squares(p.result?.monsLeft),
   },
+  month: {
+    // The Pokémon Master of the Month race: most wins, then fewer losses,
+    // more Pokémon left, fewer turns (the same order as the bot's).
+    sort: (a, b) => b.monthWins - a.monthWins || a.monthLosses - b.monthLosses
+      || b.monthLeft - a.monthLeft || a.monthTurns - b.monthTurns,
+    filter: (p) => p.monthWins + p.monthLosses > 0,
+    detail: (p) => `🔥 ${p.winStreak} win streak · ${p.monthWins + p.monthLosses} played this month`,
+    badge: (p) => `🏆 ${p.monthWins}W ${p.monthLosses}L`,
+    squares: () => '',
+  },
   streaks: {
     sort: (a, b) => b.winStreak - a.winStreak || b.bestWinStreak - a.bestWinStreak || b.wins - a.wins,
     detail: (p) => `Best ${p.bestWinStreak} · ${p.dayStreak ? `${p.dayStreak}-day play streak` : 'No play streak'}`,
@@ -129,7 +139,7 @@ const TABS = {
 // go in as text.
 export function renderBoard(list, players, tab = 'today') {
   const view = TABS[tab] ?? TABS.today;
-  const shown = view.sort ? players.filter((p) => p.played > 0).sort(view.sort) : players;
+  const shown = view.sort ? players.filter(view.filter ?? ((p) => p.played > 0)).sort(view.sort) : players;
   list.dataset.tab = tab;
   list.replaceChildren(...shown.map((p, i) => {
     const row = document.createElement('li');

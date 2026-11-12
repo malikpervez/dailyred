@@ -83,14 +83,20 @@ function save(stats) {
   }
 }
 
+// Streaks run within a calendar month: on the 1st everyone starts over (the
+// Discord bot announces the Pokémon Master of the Month that morning). The
+// best win streak is kept for all time.
+export const sameMonth = (a, b) => Boolean(a && b) && a.slice(0, 7) === b.slice(0, 7);
+
 // Today's result ('won' / 'lost'), or null if today's battle isn't done.
 export function resultFor(stats, date) {
   return stats.lastPlayed === date ? stats.lastResult : null;
 }
 
-// Streaks as they stand on `date`: missing a day breaks them.
+// Streaks as they stand on `date`: missing a day breaks them, and they start
+// over at the start of each month.
 export function currentStreaks(stats, date) {
-  const alive = stats.lastPlayed === date || stats.lastPlayed === addDays(date, -1);
+  const alive = (stats.lastPlayed === date || stats.lastPlayed === addDays(date, -1)) && sameMonth(stats.lastPlayed, date);
   return { winStreak: alive ? stats.winStreak : 0, dayStreak: alive ? stats.dayStreak : 0 };
 }
 
@@ -104,7 +110,7 @@ export function markBattleStarted(stats, date) {
 
 export function recordResult(stats, date, won) {
   if (stats.lastPlayed === date) return;
-  const consecutive = stats.lastPlayed === addDays(date, -1);
+  const consecutive = stats.lastPlayed === addDays(date, -1) && sameMonth(stats.lastPlayed, date);
   stats.dayStreak = consecutive ? stats.dayStreak + 1 : 1;
   if (won) {
     stats.wins++;

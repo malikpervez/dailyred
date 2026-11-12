@@ -12,8 +12,9 @@ the same game as the website. On top of that, inside Discord:
   today's result (Beat RED / Lost to RED / Battling RED / Not yet) and their streaks.
 - **Your Discord status** shows how today's battle went, e.g. "Beat RED today".
 - **With the bot (step 6), in #general:** a live card for the day that fills in
-  as people play (result, Pokémon left, turns, streak), and a recap of
-  yesterday every morning at 6:00 Eastern with a leaderboard, like Wordle.
+  as people play (result, Pokémon left, turns, streak), a recap of yesterday
+  every morning at 6:00 Eastern with a leaderboard, like Wordle, and the
+  Pokémon Master of the Month (most wins) on the 1st.
 
 It all runs in one Docker container on your own machine, here a Raspberry Pi
 running OpenMediaVault. The container bundles the battle engine and fetches
@@ -222,8 +223,14 @@ The bot posts two kinds of message in each server's **#general**:
   result, how many Pokémon they had left, turns and streak, with 🟥⬛ squares.
   Nobody's team or lead is shown.
 - **The morning recap**: at 6:00 AM Eastern, yesterday's results ranked (wins
-  first, then Pokémon left, then fewest turns), win streak leaders, how many
-  days in a row the server has played, and who didn't play.
+  first, then Pokémon left, then fewest turns), win streak leaders, the
+  month's Master race, how many days in a row the server has played, and who
+  didn't play.
+- **Pokémon Master of the Month**: on the 1st, right after the recap, the
+  player with the most wins last month, with the runners-up. Ties go to fewer
+  losses, then more Pokémon left over the month, then fewer turns; if it's
+  still a tie they share the title. Everyone's streaks start over that day
+  (the best win streak is kept).
 
 Both have a **Battle RED** button that opens the Activity and a **Leaderboard**
 button that shows the server's leaderboard to whoever presses it. Mentions in

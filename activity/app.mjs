@@ -252,6 +252,7 @@ export function createApp({
     const room = checkRoom(query.get('room'), { required: true });
     const date = checkDate(query.get('date'));
     const results = store.roomResults(room, date);
+    const month = store.monthTotals(room, date.slice(0, 7)); // the Master of the Month race
     const players = store.roomPlayers(room).map(({ id, name, avatarUrl, stats }) => {
       const full = { ...EMPTY, ...stats };
       const result = resultFor(full, date);
@@ -262,6 +263,8 @@ export function createApp({
         bestWinStreak: Math.max(full.bestWinStreak || 0, full.winStreak),
         played, winRate: played ? Math.round((full.wins / played) * 100) : 0,
         result: result ? results.get(id) ?? { won: result === 'won' } : null,
+        monthWins: month.get(id)?.wins ?? 0, monthLosses: month.get(id)?.losses ?? 0,
+        monthLeft: month.get(id)?.monsLeft ?? 0, monthTurns: month.get(id)?.turns ?? 0,
         you: id === user.id,
       };
     });

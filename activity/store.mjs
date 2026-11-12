@@ -7,7 +7,8 @@
 //                 for the "Today in this server" list
 //   results       each player's daily result: won, Pokémon left, RED's left, turns
 //   cards         the bot's live card for each server and day (bot.mjs)
-//   recaps        which morning recaps have been posted
+//   recaps        which morning recaps (date) and monthly announcements
+//                 ('month:YYYY-MM') have been posted
 //   settings      small things the server remembers (key/value)
 import { DatabaseSync } from 'node:sqlite';
 
@@ -89,6 +90,18 @@ export function openStore(file) {
     SELECT DISTINCT rp.room FROM results r JOIN room_players rp ON rp.player_id = r.player_id
     WHERE r.date = ? AND rp.room LIKE 'g:%'
   `);
+  // A month's totals per player in a room (dates 'YYYY-MM-01' to 'YYYY-MM-31').
+  const monthTotals = db.prepare(`
+    SELECT r.player_id, SUM(r.won) AS wins, SUM(1 - r.won) AS losses,
+      SUM(CASE WHEN r.won = 1 THEN COALESCE(r.mons_left, 0) ELSE 0 END) AS mons_left,
+      SUM(COALESCE(r.turns, 0)) AS turns, COUNT(*) AS played
+    FROM results r JOIN room_players rp ON rp.player_id = r.player_id
+    WHERE rp.room = ? AND r.date >= ? AND r.date <= ? GROUP BY r.player_id
+  `);
+  const roomsInMonth = db.prepare(`
+    SELECT DISTINCT rp.room FROM results r JOIN room_players rp ON rp.player_id = r.player_id
+    WHERE r.date >= ? AND r.date <= ? AND rp.room LIKE 'g:%'
+  `);
   const getCard = db.prepare('SELECT channel_id, message_id FROM cards WHERE guild_id = ? AND date = ?');
   const putCard = db.prepare(`
     INSERT INTO cards (guild_id, date, channel_id, message_id) VALUES (?, ?, ?, ?)
@@ -126,6 +139,11 @@ export function openStore(file) {
     // Players in the room with a result from `from` up to (not including) `to`.
     recentPlayers: (room, from, to) => recentPlayers.all(room, from, to).map((row) => row.player_id),
     roomsWithResults: (date) => roomsWithResults.all(date).map((row) => row.room),
+    // Map of player id -> { wins, losses, monsLeft, turns, played } for a month ('YYYY-MM').
+    monthTotals: (room, month) => new Map(monthTotals.all(room, `${month}-01`, `${month}-31`).map((row) => [row.player_id, {
+      wins: Number(row.wins), losses: Number(row.losses), monsLeft: Number(row.mons_left), turns: Number(row.turns), played: Number(row.played),
+    }])),
+    roomsInMonth: (month) => roomsInMonth.all(`${month}-01`, `${month}-31`).map((row) => row.room),
 
     getCard: (guildId, date) => {
       const row = getCard.get(guildId, date);

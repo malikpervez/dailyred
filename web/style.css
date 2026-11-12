@@ -969,7 +969,8 @@ img { image-rendering: pixelated; }
 }
 
 .board-row:last-child { border-bottom: none; }
-.board-tabs { margin: 4px 0 10px; }
+.board-tabs { margin: 4px 0 10px; max-width: 100%; overflow-x: auto; }
+.board-tabs button { padding: 4px 11px; font-size: 14px; white-space: nowrap; }
 .board-row { grid-template-areas: "avatar name today" "avatar streak today" "avatar squares today"; }
 .board-squares { grid-area: squares; font-size: 13px; letter-spacing: 1px; }
 .board-squares:empty { display: none; }

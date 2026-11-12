@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { createBot, compareResults } from '../bot.mjs';
+import { createBot, compareResults, compareMonths } from '../bot.mjs';
 import { createApp } from '../app.mjs';
 import { openStore } from '../store.mjs';
 import { EMPTY } from '../../web/daily.js';
@@ -142,6 +142,7 @@ test('the recap goes out once, at 6:00 in New York, with yesterday ranked', asyn
     '⬛⬛⬛⬛⬛⬛',
     '',
     '🔥 Win streaks: <@1> 6 · <@2> 2',
+    '🏆 November Master race: <@1> 2 · <@2> 1 · <@4> 1',
     "💤 Didn't play: <@4>",
   ].join('\n'));
 
@@ -175,9 +176,10 @@ test('buttons: signed requests only; Battle RED launches the Activity; Leaderboa
     const board = await (await send({ type: 3, guild_id: GUILD, data: { custom_id: 'dailyred:board' } })).json();
     assert.equal(board.type, 4);
     assert.equal(board.data.flags, 64);
+    assert.equal(board.data.embeds[0].title, 'Daily Red leaderboard · November 2026');
     assert.equal(board.data.embeds[0].description, [
-      '**1.** <@1> 🔥 6 · best 9 · 6W 2L (75%)',
-      '**2.** <@2> 🔥 0 · best 2 · 1W 3L (25%)',
+      '**1.** <@1> 🏆 0 this month · 🔥 6 · best 9 · 6W 2L (75%)',
+      '**2.** <@2> 🏆 0 this month · 🔥 0 · best 2 · 1W 3L (25%)',
     ].join('\n'));
 
     // With the key set, cards get the buttons.
@@ -188,4 +190,57 @@ test('buttons: signed requests only; Battle RED launches the Activity; Leaderboa
   } finally {
     server.close();
   }
+});
+
+test('on the 1st, after the recap, the Pokémon Master of the Month is announced once', async () => {
+  const { store, bot, discord, player, setClock } = setup({ clock: new Date('2026-12-01T10:59:00Z') }); // 5:59 AM EST
+  player('1', 'Ash', { wins: 3, losses: 1, lastPlayed: '2026-11-30', lastResult: 'won' });
+  player('2', 'Misty', { wins: 3, losses: 2, lastPlayed: '2026-11-30', lastResult: 'won' });
+  player('3', 'Brock', { wins: 1, losses: 0, lastPlayed: '2026-11-20', lastResult: 'won' });
+  const day = (id, date, won, monsLeft = won ? 2 : 0) => store.saveResult({ playerId: id, date, won, monsLeft, redLeft: won ? 0 : 2, turns: 20 });
+  ['2026-11-27', '2026-11-28', '2026-11-30'].forEach((d) => day('1', d, true));
+  day('1', '2026-11-29', false);
+  ['2026-11-26', '2026-11-29', '2026-11-30'].forEach((d) => day('2', d, true));
+  ['2026-11-27', '2026-11-28'].forEach((d) => day('2', d, false));
+  day('3', '2026-11-20', true);
+  day('1', '2026-10-31', true); // October doesn't count
+
+  await bot.tick();
+  assert.equal(discord.posts().length, 0);
+  setClock(new Date('2026-12-01T11:00:00Z')); // 6:00 AM EST
+  await bot.tick();
+  const [recap, month] = discord.posts();
+  assert.equal(recap.body.embeds[0].title, "Yesterday's results · Daily Red No. 30");
+  assert.equal(month.path, '/channels/c-general/messages');
+  assert.equal(month.body.embeds[0].title, '🏆 Pokémon Master of November 2026');
+  assert.equal(description(month), [
+    '<@1> is the Pokémon Master of November with **3 wins**, 1 loss (75%)!',
+    '',
+    '🥈 <@2> 3 wins, 2 losses',
+    '🥉 <@3> 1 win, 0 losses',
+    '',
+    "Everyone's streaks start over today. Good luck in December!",
+  ].join('\n'));
+  assert.equal(month.body.embeds[0].footer.text, '3 trainers battled RED 10 times in November');
+
+  await bot.tick();
+  assert.equal(discord.posts().length, 2, 'only once');
+});
+
+test('ties for Master: fewer losses, more Pokémon left, fewer turns, then co-Masters', () => {
+  const x = (wins, losses, monsLeft, turns) => ({ wins, losses, monsLeft, turns });
+  assert.ok(compareMonths(x(5, 1, 10, 90), x(5, 2, 20, 50)) < 0);
+  assert.ok(compareMonths(x(5, 1, 20, 90), x(5, 1, 10, 50)) < 0);
+  assert.ok(compareMonths(x(5, 1, 10, 50), x(5, 1, 10, 90)) < 0);
+  assert.equal(compareMonths(x(5, 1, 10, 50), x(5, 1, 10, 50)), 0);
+});
+
+test('a tie all the way down makes co-Masters', async () => {
+  const { store, bot, discord, player } = setup({ clock: new Date('2026-12-01T12:00:00Z') });
+  player('1', 'Ash');
+  player('2', 'Misty');
+  for (const id of ['1', '2']) store.saveResult({ playerId: id, date: '2026-11-15', won: true, monsLeft: 3, redLeft: 0, turns: 20 });
+  await bot.tick();
+  const month = discord.posts().find((p) => p.body.embeds[0].title.startsWith('🏆'));
+  assert.match(description(month), /^It's a tie! <@1> and <@2> share Pokémon Master of November with \*\*1 win\*\*, 0 losses \(100%\) each\./);
 });

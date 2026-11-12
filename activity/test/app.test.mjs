@@ -163,6 +163,7 @@ test("the board lists the server's players, today's results first", async () => 
   // How Ash's battle went, for the board's squares and the leaderboard tabs.
   assert.deepEqual(players[0].result, { won: true, monsLeft: 4, redLeft: 0, turns: 18 });
   assert.deepEqual([players[0].bestWinStreak, players[0].played, players[0].winRate], [1, 1, 100]);
+  assert.deepEqual([players[0].monthWins, players[0].monthLosses, players[1].monthWins], [1, 0, 0]);
   assert.equal(players[1].result, null);
 
   // Other servers have their own lists.
