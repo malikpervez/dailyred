@@ -50,9 +50,12 @@ const DAY2 = new Date('2026-11-13T10:00:00');
 async function playToTheEnd(page) {
   for (let i = 0; i < 2000; i++) {
     if (await page.isVisible('#battle-done')) break;
-    if (await page.isVisible('.summary')) await page.click('.sum-shift:not(:disabled)');
-    else if (await page.isVisible('.party')) await page.click('.party-mon:not(:disabled)');
-    else if (await page.isVisible('.commands')) await page.click('.move:not(:disabled)');
+    // The screen can move on between the check and the click (the next
+    // message starts), so clicks give up quickly and the loop looks again.
+    const quick = { timeout: 1500 };
+    if (await page.isVisible('.summary')) await page.click('.sum-shift:not(:disabled)', quick).catch(() => {});
+    else if (await page.isVisible('.party')) await page.click('.party-mon:not(:disabled)', quick).catch(() => {});
+    else if (await page.isVisible('.commands')) await page.click('.move:not(:disabled)', quick).catch(() => {});
     else await page.waitForTimeout(25);
   }
   await page.waitForSelector('#battle-done', { state: 'visible', timeout: 5000 });
