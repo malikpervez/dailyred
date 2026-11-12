@@ -20,7 +20,7 @@
 // It only uses Discord's HTTP API with the bot token (plus one Gateway login,
 // which Discord requires before a bot's first message).
 import { createPublicKey, verify } from 'node:crypto';
-import { EMPTY, addDays, currentStreaks, dayNumber } from '../web/daily.js';
+import { EMPTY, addDays, currentStreaks, dayNumber, resultFor } from '../web/daily.js';
 
 const API = 'https://discord.com/api/v10';
 const RED = 0xd63a3a;
@@ -112,6 +112,7 @@ export function createBot({
   const channels = new Map(); // guild id -> { id, until } or { missing, until }
   const queues = new Map(); // guild:date -> promise, so card edits don't race
   const failedRecaps = new Map(); // guild:date -> time of the last failed try
+  let serverCache = null;
   let timer = null;
 
   // --- Discord HTTP API --------------------------------------------------------------
@@ -162,10 +163,21 @@ export function createBot({
 
   // --- The live card --------------------------------------------------------------------
 
-  function cardMessage(guildId, date) {
-    const room = `g:${guildId}`;
+  // The room's players and their results on `date`. Battles saved before
+  // results were kept per day only have won/lost (from the player's stats).
+  function dayResults(room, date) {
     const results = store.roomResults(room, date);
     const players = store.roomPlayers(room).map((p) => ({ ...p, stats: { ...EMPTY, ...p.stats } }));
+    for (const p of players) {
+      const result = resultFor(p.stats, date);
+      if (result && !results.has(p.id)) results.set(p.id, { won: result === 'won', monsLeft: null, redLeft: null, turns: null });
+    }
+    return { results, players };
+  }
+
+  function cardMessage(guildId, date) {
+    const room = `g:${guildId}`;
+    const { results, players } = dayResults(room, date);
     const finished = players.filter((p) => results.has(p.id))
       .sort((a, b) => compareResults(results.get(a.id), results.get(b.id)));
     const battling = players.filter((p) => !results.has(p.id) && p.stats.pending === date);
@@ -210,12 +222,23 @@ export function createBot({
       if (!channelId) return;
       const posted = await discord('POST', `/channels/${channelId}/messages`, message);
       store.saveCard(guildId, date, channelId, posted.id);
+      log.log(`Daily Red bot posted the card for ${date} in server ${guildId}.`);
     };
     const next = (queues.get(queueKey) ?? Promise.resolve()).then(run)
       .catch((err) => log.warn(`Daily Red bot couldn't update the card for server ${guildId}: ${err.message}`));
     queues.set(queueKey, next);
     next.finally(() => { if (queues.get(queueKey) === next) queues.delete(queueKey); });
     return next;
+  }
+
+  // Posts the day's card if there isn't one yet and someone in the server has
+  // played or is battling (e.g. when the Activity is opened after a battle
+  // that happened before the bot was set up).
+  function ensureCard(guildId, date) {
+    if (!posting || store.getCard(guildId, date)) return Promise.resolve();
+    const { results, players } = dayResults(`g:${guildId}`, date);
+    if (!results.size && !players.some((p) => p.stats.pending === date)) return Promise.resolve();
+    return updateCard(guildId, date);
   }
 
   // --- The morning recap -----------------------------------------------------------------
@@ -242,8 +265,7 @@ export function createBot({
 
   function recapMessage(guildId, date) {
     const room = `g:${guildId}`;
-    const results = store.roomResults(room, date);
-    const players = store.roomPlayers(room).map((p) => ({ ...p, stats: { ...EMPTY, ...p.stats } }));
+    const { results, players } = dayResults(room, date);
     const finished = players.filter((p) => results.has(p.id))
       .sort((a, b) => compareResults(results.get(a.id), results.get(b.id)));
     const left = players.filter((p) => !results.has(p.id) && p.stats.pending === date);
@@ -450,8 +472,16 @@ export function createBot({
     if (store.getSetting('gateway_identified') || typeof WebSocket !== 'function') return;
     await new Promise((resolve) => {
       const ws = new WebSocket('wss://gateway.discord.gg/?v=10&encoding=json');
-      const done = () => { clearTimeout(timeout); try { ws.close(); } catch { /* already closed */ } resolve(); };
-      const timeout = setTimeout(done, 15000);
+      let finished = false;
+      const done = (problem) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timeout);
+        if (problem && !store.getSetting('gateway_identified')) log.warn(`Daily Red bot couldn't log in to Discord's Gateway (${problem}); it will try again on the next start.`);
+        try { ws.close(); } catch { /* already closed */ }
+        resolve();
+      };
+      const timeout = setTimeout(() => done('no answer in 15 s'), 15000);
       ws.addEventListener('message', (event) => {
         const msg = JSON.parse(event.data);
         if (msg.op === 10) {
@@ -461,17 +491,17 @@ export function createBot({
           log.log(`Daily Red bot logged in as ${msg.d.user.username}.`);
           done();
         } else if (msg.op === 9) {
-          log.warn('Daily Red bot: Discord rejected the bot token (DISCORD_BOT_TOKEN).');
-          done();
+          done('Discord rejected the bot token, DISCORD_BOT_TOKEN');
         }
       });
-      ws.addEventListener('error', done);
-      ws.addEventListener('close', done);
+      ws.addEventListener('error', () => done('connection error'));
+      ws.addEventListener('close', (event) => done(`closed, code ${event.code}`));
     });
   }
 
   return {
     updateCard,
+    ensureCard,
     tick,
     leaderboard,
     verifyRequest,
@@ -487,6 +517,20 @@ export function createBot({
       channel: `#${channelName}`,
       recap: `${recapTime} ${recapTimeZone}`,
     }),
+    // How many servers the bot has been added to (null if it can't tell).
+    async servers() {
+      if (!posting) return null;
+      if (serverCache && serverCache.until > Date.now()) return serverCache.count;
+      try {
+        const guilds = await discord('GET', '/users/@me/guilds');
+        serverCache = { count: guilds.length, until: Date.now() + 60 * 1000 };
+        return guilds.length;
+      } catch (err) {
+        log.warn(`Daily Red bot couldn't list its servers: ${err.message}`);
+        return null;
+      }
+    },
+    get loggedIn() { return Boolean(store.getSetting('gateway_identified')); },
     async start() {
       if (!posting) return;
       await identifyOnce().catch((err) => log.warn(`Daily Red bot login failed: ${err.message}`));

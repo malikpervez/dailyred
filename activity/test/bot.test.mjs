@@ -25,6 +25,7 @@ function fakeDiscord({ channels = [{ id: 'c-rules', type: 0, name: 'rules' }, { 
     if (noAccess) return json(403, { message: 'Missing Access' });
     if (path === `/guilds/${GUILD}/channels`) return json(200, channels);
     if (path === `/guilds/${GUILD}`) return json(200, { id: GUILD, system_channel_id: systemChannel });
+    if (path === '/users/@me/guilds') return json(200, [{ id: GUILD, name: 'Test server' }]);
     let m = /^\/channels\/([^/]+)\/messages$/.exec(path);
     if (m && init.method === 'POST') return json(200, { id: `m${nextId++}`, channel_id: m[1] });
     m = /^\/channels\/([^/]+)\/messages\/([^/]+)$/.exec(path);
@@ -258,4 +259,17 @@ test('the public key may be pasted with spaces, quotes or capitals; a wrong one 
   assert.equal(wrong.canVerify, false);
   assert.equal(wrong.status().publicKey, 'invalid');
   assert.equal(make(null).status().publicKey, 'missing');
+});
+
+test("opening the Activity posts today's card if someone already played, including battles from before the bot", async () => {
+  const { bot, discord, player } = setup();
+  player('1', 'Ash', { wins: 1, winStreak: 1, dayStreak: 1, lastPlayed: '2026-11-12', lastResult: 'won' }); // no results row
+  await bot.ensureCard(GUILD, '2026-11-12');
+  assert.equal(discord.posts().length, 1);
+  assert.equal(description(discord.posts()[0]), '<@1> **Beat RED**');
+  await bot.ensureCard(GUILD, '2026-11-12');
+  assert.equal(discord.posts().length + discord.edits().length, 1, 'only when there is no card yet');
+  await bot.ensureCard(GUILD, '2026-11-13');
+  assert.equal(discord.posts().length, 1, 'nobody has played on the 13th');
+  assert.equal(await bot.servers(), 1);
 });

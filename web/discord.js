@@ -5,6 +5,8 @@
 // browser, lists who in the server has played today, and sets the player's
 // Discord status. Opened any other way, the page doesn't load any of it.
 
+import { today } from './daily.js';
+
 export const inDiscord = new URLSearchParams(location.search).has('frame_id');
 
 // The OAuth2 scopes the activity asks for: who you are, and your status line.
@@ -38,7 +40,7 @@ export async function connectDiscord() {
   const room = sdk.guildId ? `g:${sdk.guildId}` : sdk.channelId ? `c:${sdk.channelId}` : null;
   const call = (method, path, body) => request(method, path, body, token);
 
-  const { user, stats: serverStats } = await call('GET', `api/me?settle=1${room ? `&room=${room}` : ''}`);
+  const { user, stats: serverStats } = await call('GET', `api/me?settle=1&date=${today()}${room ? `&room=${room}` : ''}`);
   let cached = serverStats;
   let reports = Promise.resolve();
   let lastPresence = '';

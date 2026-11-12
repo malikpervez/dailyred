@@ -210,6 +210,14 @@ export function createApp({
     store.savePlayer(player);
     const room = checkRoom(query.get('room'));
     if (room) store.joinRoom(room, user.id);
+    // Opening the Activity in a server puts up today's card if it's missing.
+    if (bot && room?.startsWith('g:') && query.get('date')) {
+      try {
+        bot.ensureCard(room.slice(2), checkDate(query.get('date')));
+      } catch {
+        // a bad date from the page shouldn't stop it signing in
+      }
+    }
     return { user, stats: player.stats };
   }
 
@@ -293,8 +301,12 @@ export function createApp({
     } else if (route === 'GET /api/interactions') {
       // Open this in a browser to check the bot's setup (no secrets shown).
       const status = bot?.status() ?? { publicKey: 'missing', posting: false };
+      const servers = bot ? await bot.servers() : null;
       result = {
         ...status,
+        servers,
+        loggedIn: bot?.loggedIn ?? false,
+        invite: servers === 0 ? 'The bot isn\'t in any server yet: open the invite link from the container log.' : undefined,
         buttons: status.publicKey === 'ok'
           ? 'Ready: Discord can verify this address (Developer Portal > Interactions Endpoint URL).'
           : status.publicKey === 'invalid'
