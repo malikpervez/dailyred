@@ -92,11 +92,23 @@ export function createBot({
   api = API,
   log = console,
 }) {
-  const key = publicKey ? createPublicKey({
-    key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(publicKey, 'hex')]),
-    format: 'der',
-    type: 'spki',
-  }) : null;
+  // The public key as pasted from the Developer Portal: 64 hex digits.
+  // Stray spaces or quotes from copying are ignored.
+  const keyHex = publicKey ? String(publicKey).trim().replace(/^["']|["']$/g, '').trim().toLowerCase() : '';
+  let keyStatus = keyHex ? 'ok' : 'missing';
+  let key = null;
+  if (keyHex && !/^[0-9a-f]{64}$/.test(keyHex)) {
+    keyStatus = 'invalid';
+    log.warn(`DISCORD_PUBLIC_KEY doesn't look right (${keyHex.length} characters): it should be the 64 letters and digits`
+      + ' under Developer Portal > General Information > Public Key.');
+  } else if (keyHex) {
+    key = createPublicKey({
+      key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(keyHex, 'hex')]),
+      format: 'der',
+      type: 'spki',
+    });
+  }
+  const posting = Boolean(token); // without a bot token, only the buttons work
   const channels = new Map(); // guild id -> { id, until } or { missing, until }
   const queues = new Map(); // guild:date -> promise, so card edits don't race
   const failedRecaps = new Map(); // guild:date -> time of the last failed try
@@ -181,6 +193,7 @@ export function createBot({
 
   // Posts or edits the server's card for `date`. Never throws.
   function updateCard(guildId, date) {
+    if (!posting) return Promise.resolve();
     const queueKey = `${guildId}:${date}`;
     const run = async () => {
       const message = cardMessage(guildId, date);
@@ -329,6 +342,7 @@ export function createBot({
   // server where someone finished a battle yesterday (once; failed tries are
   // retried every 30 minutes).
   async function tick() {
+    if (!posting) return;
     const { date: todayZoned, time } = zonedNow();
     if (time < recapTime) return;
     const date = addDays(todayZoned, -1);
@@ -466,7 +480,15 @@ export function createBot({
     recapMessage,
     monthMessage,
     get canVerify() { return Boolean(key); },
+    // For GET /api/interactions: what's set up (never the secrets themselves).
+    status: () => ({
+      publicKey: keyStatus,
+      posting,
+      channel: `#${channelName}`,
+      recap: `${recapTime} ${recapTimeZone}`,
+    }),
     async start() {
+      if (!posting) return;
       await identifyOnce().catch((err) => log.warn(`Daily Red bot login failed: ${err.message}`));
       timer = setInterval(() => tick().catch((err) => log.warn(err)), 60 * 1000);
       timer.unref?.();

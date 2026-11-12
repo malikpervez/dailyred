@@ -244,3 +244,18 @@ test('a tie all the way down makes co-Masters', async () => {
   const month = discord.posts().find((p) => p.body.embeds[0].title.startsWith('🏆'));
   assert.match(description(month), /^It's a tie! <@1> and <@2> share Pokémon Master of November with \*\*1 win\*\*, 0 losses \(100%\) each\./);
 });
+
+test('the public key may be pasted with spaces, quotes or capitals; a wrong one is reported, not fatal', () => {
+  const { publicKey } = generateKeyPairSync('ed25519');
+  const hex = publicKey.export({ format: 'der', type: 'spki' }).subarray(12).toString('hex');
+  const store = openStore(':memory:');
+  const make = (key) => createBot({ token: '', clientId: '999', publicKey: key, store, log: quiet });
+  const pasted = make(`  "${hex.toUpperCase()}" `);
+  assert.equal(pasted.canVerify, true);
+  assert.equal(pasted.status().publicKey, 'ok');
+  assert.equal(pasted.status().posting, false, 'no bot token: buttons only');
+  const wrong = make('not-a-key');
+  assert.equal(wrong.canVerify, false);
+  assert.equal(wrong.status().publicKey, 'invalid');
+  assert.equal(make(null).status().publicKey, 'missing');
+});

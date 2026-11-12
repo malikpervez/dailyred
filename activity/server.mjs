@@ -25,7 +25,8 @@ import { createApp } from './app.mjs';
 import { createBot, inviteUrl } from './bot.mjs';
 import { openStore } from './store.mjs';
 
-const env = process.env;
+// Values pasted into OMV's environment box can pick up spaces or quotes.
+const env = Object.fromEntries(Object.entries(process.env).map(([k, v]) => [k, String(v).trim().replace(/^["'](.*)["']$/, '$1').trim()]));
 const port = Number(env.PORT || 8080);
 const dataDir = resolve(env.DATA_DIR || 'data');
 const webRoot = resolve(env.WEB_ROOT || fileURLToPath(new URL('../web', import.meta.url)));
@@ -46,7 +47,7 @@ if (!env.DISCORD_CLIENT_ID || !env.DISCORD_CLIENT_SECRET) {
 const store = openStore(join(dataDir, 'dailyred.sqlite'));
 
 let bot = null;
-if (env.DISCORD_BOT_TOKEN && env.DISCORD_CLIENT_ID) {
+if ((env.DISCORD_BOT_TOKEN || env.DISCORD_PUBLIC_KEY) && env.DISCORD_CLIENT_ID) {
   bot = createBot({
     token: env.DISCORD_BOT_TOKEN,
     clientId: env.DISCORD_CLIENT_ID,
@@ -58,11 +59,16 @@ if (env.DISCORD_BOT_TOKEN && env.DISCORD_CLIENT_ID) {
     publicUrl: env.PUBLIC_URL || null,
   });
   bot.start();
-  console.log(`Daily Red bot on: posts in #${env.DAILYRED_CHANNEL || 'general'}, recap at ${env.RECAP_TIME || '06:00'} ${env.RECAP_TIMEZONE || 'America/New_York'}.`
-    + ` Add it to a server: ${inviteUrl(env.DISCORD_CLIENT_ID)}`);
-  if (!env.DISCORD_PUBLIC_KEY) console.warn('DISCORD_PUBLIC_KEY is not set: the bot posts without its Battle RED / Leaderboard buttons.');
+  if (env.DISCORD_BOT_TOKEN) {
+    console.log(`Daily Red bot on: posts in #${env.DAILYRED_CHANNEL || 'general'}, recap at ${env.RECAP_TIME || '06:00'} ${env.RECAP_TIMEZONE || 'America/New_York'}.`
+      + ` Add it to a server: ${inviteUrl(env.DISCORD_CLIENT_ID)}`);
+  } else {
+    console.log('DISCORD_BOT_TOKEN is not set: nothing is posted in Discord (the buttons endpoint still works).');
+  }
+  console.log(`Interactions endpoint (Battle RED / Leaderboard buttons): ${bot.status().publicKey === 'ok' ? 'ready' : `not ready, DISCORD_PUBLIC_KEY is ${bot.status().publicKey}`}.`
+    + ' Open /api/interactions in a browser to check.');
 } else {
-  console.log('DISCORD_BOT_TOKEN is not set: the bot (live card and recaps in Discord) is off.');
+  console.log('DISCORD_BOT_TOKEN / DISCORD_PUBLIC_KEY are not set (or DISCORD_CLIENT_ID is missing): the bot is off.');
 }
 
 const handle = createApp({

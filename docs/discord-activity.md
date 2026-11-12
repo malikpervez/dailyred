@@ -266,6 +266,14 @@ the messages never ping anyone.
    checks it straight away, so the container must already be running with
    `DISCORD_PUBLIC_KEY` set (step 3). This is what makes the buttons work.
 
+   If the portal says *"The specified interactions endpoint url could not be
+   verified"*, open that same address in a browser. It shows what the server
+   sees: `"publicKey": "ok"` means Discord can verify it (check the address in
+   the portal matches exactly, with `https://` and `/api/interactions`);
+   `"missing"` means the key isn't reaching the container (step 3: the
+   `environment:` list in the file, then **Up**); `"invalid"` means it was
+   copied wrong. A page that doesn't load means the address itself is wrong.
+
 Play a battle in the server: the card appears in #general within a second or
 two. Change the channel with `DAILYRED_CHANNEL` (without the `#`), or the time
 with `RECAP_TIME` / `RECAP_TIMEZONE` (an IANA name such as `America/Chicago`).

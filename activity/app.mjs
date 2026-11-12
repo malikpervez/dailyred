@@ -290,6 +290,18 @@ export function createApp({
       result = battle(user, await readJson(req));
     } else if (route === 'GET /api/board') {
       result = board(await requireUser(req), url.searchParams);
+    } else if (route === 'GET /api/interactions') {
+      // Open this in a browser to check the bot's setup (no secrets shown).
+      const status = bot?.status() ?? { publicKey: 'missing', posting: false };
+      result = {
+        ...status,
+        buttons: status.publicKey === 'ok'
+          ? 'Ready: Discord can verify this address (Developer Portal > Interactions Endpoint URL).'
+          : status.publicKey === 'invalid'
+            ? 'DISCORD_PUBLIC_KEY is set but isn\'t a valid key: copy it again from General Information > Public Key.'
+            : 'DISCORD_PUBLIC_KEY isn\'t reaching the server: add it to the environment (and to the compose file\'s environment: list), then Up.',
+        bot: status.posting ? 'On: posts the live card and recaps.' : 'Off: DISCORD_BOT_TOKEN isn\'t set.',
+      };
     } else if (route === 'POST /api/interactions') {
       // Discord's button presses (bot.mjs), signed with the app's key.
       if (!bot?.canVerify) throw new HttpError(404, 'Not found');
