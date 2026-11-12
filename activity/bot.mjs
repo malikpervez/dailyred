@@ -18,7 +18,11 @@
 //   - The weekly leaderboard: Mondays, right after the recap.
 //   - Daily reminders: players who press "Reminders" get mentioned at
 //     REMINDER_TIME (17:00 by default) on days they haven't played yet.
-//   - Buttons on all of them: "Battle RED" launches the Activity,
+//   - How to play: once per server. Today's card goes up at RECAP_TIME too,
+//     below the recap, so each day starts with something to tap.
+//   - /dailyred: your day, how to play and the buttons, privately.
+//   - Buttons on all of them: "Battle RED" opens the website for that server
+//     (or, without PUBLIC_URL, launches the Activity),
 //     "Leaderboard" posts the leaderboard and Hall of Fame in the channel
 //     (replacing the last one), "Reminders" turns their reminder on or off. Discord sends button
 //     presses to POST /api/interactions (app.mjs), checked with the app's
@@ -204,18 +208,85 @@ export function createBot({
   }
 
   const site = publicUrl ? publicUrl.replace(/\/$/, '') : null;
-  // The message buttons. "Play in browser" is a plain link (for friends who
-  // can't open the Activity: it's only for App Testers until Discord verifies
-  // it), so it works even without the public key; the others need it.
+  // The play button: a link to the website for that server, where players
+  // sign in with Discord (anyone can; the Activity is only for App Testers
+  // until Discord verifies it). Without PUBLIC_URL, the Activity instead.
+  const playButton = (label, guildId) => (site && guildId
+    ? { type: 2, style: 5, label, emoji: { name: '▶️' }, url: `${site}/?g=${guildId}` }
+    : key && { type: 2, style: 3, label, emoji: { name: '▶️' }, custom_id: PLAY_BUTTON });
+  // The message buttons. The link works even without the public key; the
+  // others are button presses, which need it.
   const buttons = (label, guildId) => {
     const row = [
-      key && { type: 2, style: 3, label, emoji: { name: '▶️' }, custom_id: PLAY_BUTTON },
-      site && guildId && { type: 2, style: 5, label: 'Play in browser', emoji: { name: '🌐' }, url: `${site}/?g=${guildId}` },
+      playButton(label, guildId),
       key && { type: 2, style: 2, label: 'Leaderboard', custom_id: BOARD_BUTTON },
       key && { type: 2, style: 2, label: 'Reminders', emoji: { name: '🔔' }, custom_id: REMIND_BUTTON },
     ].filter(Boolean);
     return row.length ? [{ type: 1, components: row }] : [];
   };
+
+  // How to play, for the one-time welcome message and /dailyred.
+  const howToLines = () => [
+    "• One battle a day against RED's team. Everyone in the server gets the same six level 100 Pokémon.",
+    '• Tap **▶️ Battle RED**, sign in with Discord, pick your lead and battle. Your result shows up on the day\'s card here.',
+    '• The most wins in a month makes you **Pokémon Master of the Month** 👑. Streaks start over on the 1st.',
+    `• **🔔 Reminders** mentions you at ${timeLabel(reminderTime)} ${zoneLabel(recapTimeZone)} on days you haven't played. **Leaderboard** shows the standings.`,
+    '• Type `/dailyred` any time for these buttons.',
+  ];
+
+  function howToMessage(guildId) {
+    return {
+      embeds: [{
+        color: RED,
+        title: 'How to play Daily Red',
+        description: howToLines().join('\n'),
+        thumbnail,
+        footer: { text: `A new team every day · today's card goes up at ${timeLabel(recapTime)} ${zoneLabel(recapTimeZone)}` },
+      }],
+      components: buttons('Battle RED', guildId),
+      allowed_mentions: { parse: [] },
+    };
+  }
+
+  // /dailyred: today's number, whether you've played, and the buttons (only
+  // the person who typed it sees it).
+  function commandMessage(guildId, userId) {
+    const { date } = zonedNow();
+    const { results, players } = dayResults(`g:${guildId}`, date);
+    const mine = userId && results.get(userId);
+    const battling = players.some((p) => p.id === userId && p.stats.pending === date);
+    const status = mine ? (mine.won ? `You beat RED today${mine.monsLeft != null ? ` with ${mine.monsLeft} left` : ''}! 🔥`
+      : mine.gaveUp ? 'You ran from RED today. New team at midnight!' : 'RED won today. New team at midnight!')
+      : battling ? "You're battling RED right now." : "You haven't battled RED today yet.";
+    const wins = [...results.values()].filter((r) => r.won).length;
+    return {
+      flags: 64,
+      embeds: [{
+        color: RED,
+        title: `Daily Red No. ${dayNumber(date)} · ${dateLabel(date)}`,
+        description: [`**${status}**`, results.size ? `${wins} of ${results.size} in this server beat RED today.` : '', '', ...howToLines()]
+          .filter((line, i) => line || i === 2).join('\n'),
+      }],
+      components: buttons('Battle RED', guildId),
+      allowed_mentions: { parse: [] },
+    };
+  }
+
+  // Adds /dailyred to Discord (once; POST adds or updates just this command,
+  // leaving the Activity's own launch command alone).
+  async function registerCommand() {
+    const version = '1';
+    if (store.getSetting('command:dailyred') === version) return;
+    await discord('POST', `/applications/${clientId}/commands`, {
+      name: 'dailyred',
+      type: 1,
+      description: "Play today's Daily Red, see the leaderboard or turn on reminders",
+      contexts: [0], // in servers
+      integration_types: [0],
+    });
+    store.setSetting('command:dailyred', version);
+    log.log('Daily Red bot added the /dailyred command.');
+  }
   const thumbnail = site ? { url: `${site}/sprites/front/25.png` } : undefined;
 
   // Wall-clock date and "HH:MM" in the recap's time zone.
@@ -653,6 +724,11 @@ export function createBot({
   async function tick() {
     if (!posting) return;
     const { date: today, time, weekday } = zonedNow();
+    const guilds = (await guildIds()) ?? [];
+    // Once per server: how to play.
+    for (const guildId of guilds) {
+      await once('howto', guildId, 'how-to-play message', () => post(guildId, howToMessage(guildId)));
+    }
     if (time >= recapTime) {
       const date = addDays(today, -1);
       for (const room of store.roomsWithResults(date)) {
@@ -670,6 +746,15 @@ export function createBot({
           const guildId = room.slice(2);
           await once(`week:${today}`, guildId, 'weekly leaderboard', () => post(guildId, weeklyMessage(guildId, today)));
         }
+      }
+      // Then today's card, so every day starts with something to tap, below
+      // the morning's other posts. (Battles after midnight may have put it up already.)
+      for (const guildId of guilds) {
+        await once(`card:${today}`, guildId, "today's card", async () => {
+          if (store.getCard(guildId, today)) return;
+          await updateCard(guildId, today);
+          if (!store.getCard(guildId, today)) throw new Error('not posted');
+        });
       }
     }
     if (time >= reminderTime) {
@@ -716,13 +801,23 @@ export function createBot({
       if (body.token) replaceOldBoard(body.guild_id, body.token);
       return { type: 4, data: leaderboardMessage(body.guild_id, viewer ? String(viewer) : null) };
     }
-    if (body.type === 3 && id === PLAY_BUTTON) return { type: 12 }; // LAUNCH_ACTIVITY
+    if (body.type === 3 && id === PLAY_BUTTON) {
+      // Older messages' Activity button: the website now, if there is one.
+      if (site && body.guild_id) {
+        return { type: 4, data: { flags: 64, content: 'Daily Red plays in your browser now:', components: [{ type: 1, components: [playButton('Battle RED', body.guild_id)] }] } };
+      }
+      return { type: 12 }; // LAUNCH_ACTIVITY
+    }
+    if (body.type === 2 && id === 'dailyred') {
+      if (!body.guild_id) return { type: 4, data: { flags: 64, content: 'Daily Red is played in servers: try /dailyred in one.' } };
+      return { type: 4, data: commandMessage(body.guild_id, String(body.member?.user?.id ?? body.user?.id ?? '')) };
+    }
     if (body.type === 3 && id === REMIND_BUTTON && body.guild_id) {
       const userId = body.member?.user?.id ?? body.user?.id;
       if (!userId) return { type: 4, data: { flags: 64, content: "Couldn't tell who pressed that." } };
       return { type: 4, data: { flags: 64, content: reminderReply(toggleReminder(body.guild_id, String(userId))) } };
     }
-    if (body.type === 2) return { type: 12 }; // the app's launch command
+    if (body.type === 2) return { type: 12 }; // the Activity's own launch command
     return { type: 4, data: { flags: 64, content: "That button doesn't do anything any more." } };
   }
 
@@ -775,6 +870,8 @@ export function createBot({
     recapMessage,
     monthMessage,
     weeklyMessage,
+    howToMessage,
+    commandMessage,
     get canVerify() { return Boolean(key); },
     // For GET /api/interactions: what's set up (never the secrets themselves).
     status: () => ({
@@ -793,6 +890,7 @@ export function createBot({
     async start() {
       if (!posting) return;
       await identifyOnce().catch((err) => log.warn(`Daily Red bot login failed: ${err.message}`));
+      if (key) await registerCommand().catch((err) => log.warn(`Daily Red bot couldn't add /dailyred: ${err.message}`));
       timer = setInterval(() => tick().catch((err) => log.warn(err)), 60 * 1000);
       timer.unref?.();
       tick().catch((err) => log.warn(err));

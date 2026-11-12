@@ -29,6 +29,7 @@ function fakeDiscord({ channels = [{ id: 'c-rules', type: 0, name: 'rules' }, { 
     if (path === `/guilds/${GUILD}/channels`) return json(200, channels);
     if (path === `/guilds/${GUILD}`) return json(200, { id: GUILD, system_channel_id: systemChannel });
     if (path === '/users/@me/guilds') return json(200, [{ id: GUILD, name: 'Test server' }]);
+    if (path === '/applications/999/commands' && init.method === 'POST') return json(200, { id: 'cmd1', ...body });
     const original = /^\/webhooks\/999\/([^/]+)\/messages\/@original$/.exec(path);
     if (original) return json(200, { id: `orig-${original[1]}`, channel_id: 'c-general' });
     let m = /^\/channels\/([^/]+)\/messages$/.exec(path);
@@ -70,6 +71,7 @@ function setup({ discord = fakeDiscord(), clock = new Date('2026-11-12T15:00:00Z
 }
 
 const description = (call) => call.body.embeds[0].description;
+const titles = (discord) => discord.posts().map((p) => p.body.embeds?.[0]?.title ?? p.body.content);
 
 test('the live card goes to #general and is edited as players start and finish', async () => {
   const { store, bot, discord, player } = setup();
@@ -150,12 +152,13 @@ test('the recap goes out once, at 6:00 in New York, with yesterday ranked', asyn
   store.saveResult({ playerId: '4', date: '2026-11-10', won: true, monsLeft: 1, redLeft: 0, turns: 25 });
 
   await bot.tick();
-  assert.equal(discord.posts().length, 0, 'not before 6:00');
+  assert.deepEqual(titles(discord), ['How to play Daily Red'], 'before 6:00, only the one-time how-to');
 
   setClock(new Date('2026-11-13T11:00:00Z')); // 6:00 AM EST
   await bot.tick();
-  assert.equal(discord.posts().length, 1);
-  const recap = discord.posts()[0];
+  assert.deepEqual(titles(discord), ['How to play Daily Red', "Yesterday's results · Daily Red No. 12", 'Daily Red No. 13 · Fri, Nov 13'],
+    "then the recap, and today's card below it");
+  const recap = discord.posts()[1];
   assert.equal(recap.path, '/channels/c-general/messages');
   assert.equal(recap.body.embeds[0].title, "Yesterday's results · Daily Red No. 12");
   assert.equal(description(recap), [
@@ -174,7 +177,7 @@ test('the recap goes out once, at 6:00 in New York, with yesterday ranked', asyn
   ].join('\n'));
 
   await bot.tick();
-  assert.equal(discord.posts().length, 1, 'only once');
+  assert.equal(discord.posts().length, 3, 'only once');
 });
 
 test('buttons: signed requests only; Battle RED launches the Activity; Leaderboard is for everyone', async () => {
@@ -234,10 +237,11 @@ test('on the 1st, after the recap, the Pokémon Master of the Month is announced
   day('1', '2026-10-31', true); // October doesn't count
 
   await bot.tick();
-  assert.equal(discord.posts().length, 0);
+  assert.deepEqual(titles(discord), ['How to play Daily Red']);
   setClock(new Date('2026-12-01T11:00:00Z')); // 6:00 AM EST
   await bot.tick();
-  const [recap, month] = discord.posts();
+  assert.equal(titles(discord).at(-1), 'Daily Red No. 31 · Tue, Dec 1');
+  const [, recap, month] = discord.posts();
   assert.equal(recap.body.embeds[0].title, "Yesterday's results · Daily Red No. 30");
   assert.equal(month.path, '/channels/c-general/messages');
   assert.equal(month.body.embeds[0].title, '🏆 Pokémon Master of November 2026');
@@ -253,7 +257,7 @@ test('on the 1st, after the recap, the Pokémon Master of the Month is announced
   assert.equal(month.body.embeds[0].footer.text, '3 trainers battled RED 10 times in November');
 
   await bot.tick();
-  assert.equal(discord.posts().length, 2, 'only once');
+  assert.equal(discord.posts().length, 4, 'only once');
 });
 
 test('ties for Master: fewer losses, more Pokémon left, fewer turns, then co-Masters', () => {
@@ -365,7 +369,8 @@ test('Mondays at 6:00 the weekly leaderboard follows the recap, once', async () 
     store.saveResult({ playerId: id, date, won, monsLeft: won ? 2 : 0, redLeft: won ? 0 : 3, turns: 20 });
   }
   await bot.tick();
-  const [recap, weekly] = discord.posts();
+  const [, recap, weekly, card] = discord.posts();
+  assert.equal(card.body.embeds[0].title, 'Daily Red No. 16 · Mon, Nov 16');
   assert.equal(recap.body.embeds[0].title, "Yesterday's results · Daily Red No. 15");
   assert.equal(weekly.body.embeds[0].title, '📊 Weekly leaderboard · November 2026');
   assert.equal(description(weekly), '14 days left · most wins becomes Pokémon Master');
@@ -375,7 +380,7 @@ test('Mondays at 6:00 the weekly leaderboard follows the recap, once', async () 
     { name: '📈 All time', value: '<@1> **3W** 75% · <@2> **1W** 33%' },
   ]);
   await bot.tick();
-  assert.equal(discord.posts().length, 2, 'only once');
+  assert.equal(discord.posts().length, 4, 'only once');
 });
 
 test('🔔 Reminders: players opt in with the button and get one mention a day if they have not played', async () => {
@@ -393,16 +398,17 @@ test('🔔 Reminders: players opt in with the button and get one mention a day i
   assert.match(press('1').data.content, /^🔔 Reminders on/, 'the second press turned it off, the third back on');
   assert.deepEqual(store.reminders(GUILD).sort(), ['1', '2', '3', '5']);
 
+  const reminders = () => discord.posts().filter((p) => p.body.content?.startsWith('⏰'));
   await bot.tick();
-  assert.equal(discord.posts().length, 0, 'not before 17:00');
+  assert.equal(reminders().length, 0, 'not before 17:00');
   setClock(new Date('2026-11-12T22:00:00Z'));
   await bot.tick();
-  const [reminder] = discord.posts();
+  const [reminder] = reminders();
   // 5 pressed the button without ever playing: reminded too.
   assert.match(reminder.body.content, /^⏰ Today's Daily Red \(No\. 12\) is waiting for <@1> <@5>\. /);
   assert.deepEqual(reminder.body.allowed_mentions, { users: ['1', '5'] }, 'pings only who asked and has not played');
   await bot.tick();
-  assert.equal(discord.posts().length, 1, 'once a day');
+  assert.equal(reminders().length, 1, 'once a day');
 
   assert.match(press('1').data.content, /^🔕 Reminders off/);
   assert.deepEqual(store.reminders(GUILD).sort(), ['2', '3', '5']);
@@ -484,7 +490,7 @@ test('the Leaderboard button shows today and where the presser stands, and repla
   assert.deepEqual(discord.deletes().map((d) => d.path), ['/channels/c-general/messages/orig-tok1']);
 });
 
-test('with PUBLIC_URL, messages get a Play in browser link for that server', async () => {
+test('with PUBLIC_URL, the play button is a link to the website for that server', async () => {
   const discord = fakeDiscord();
   const store = openStore(':memory:');
   const bot = createBot({ token: 'bot-token', clientId: '999', store, fetch: discord.fetch, now: () => new Date('2026-11-12T15:00:00Z'), log: quiet, publicUrl: 'https://nas.example.ts.net/' });
@@ -492,7 +498,45 @@ test('with PUBLIC_URL, messages get a Play in browser link for that server', asy
   store.joinRoom(`g:${GUILD}`, '1');
   await bot.updateCard(GUILD, '2026-11-12');
   const [row] = discord.posts()[0].body.components;
-  assert.deepEqual(row.components, [{ type: 2, style: 5, label: 'Play in browser', emoji: { name: '🌐' }, url: `https://nas.example.ts.net/?g=${GUILD}` }],
+  assert.deepEqual(row.components, [{ type: 2, style: 5, label: 'Battle RED', emoji: { name: '▶️' }, url: `https://nas.example.ts.net/?g=${GUILD}` }],
     'without the public key, only the link');
   assert.deepEqual(await bot.guildIds(), [GUILD]);
+});
+
+test('/dailyred shows your day privately; old Activity buttons point to the website; the command is added once', async () => {
+  const { publicKey } = generateKeyPairSync('ed25519');
+  const rawKey = publicKey.export({ format: 'der', type: 'spki' }).subarray(12).toString('hex');
+  const discord = fakeDiscord();
+  const store = openStore(':memory:');
+  const bot = createBot({
+    token: 'bot-token', clientId: '999', publicKey: rawKey, store, fetch: discord.fetch, log: quiet, followUpDelay: 0,
+    now: () => new Date('2026-11-12T15:00:00Z'), publicUrl: 'https://nas.example.ts.net',
+  });
+  store.savePlayer({ id: '1', name: 'Ash', avatarUrl: '', stats: { ...EMPTY, wins: 1, winStreak: 1, lastPlayed: '2026-11-12', lastResult: 'won' } });
+  store.joinRoom(`g:${GUILD}`, '1');
+  store.saveResult({ playerId: '1', date: '2026-11-12', won: true, monsLeft: 4, redLeft: 0, turns: 18 });
+
+  const command = (userId) => bot.interaction({ type: 2, guild_id: GUILD, member: { user: { id: userId } }, data: { name: 'dailyred' } });
+  const mine = command('1');
+  assert.equal(mine.type, 4);
+  assert.equal(mine.data.flags, 64, 'only you see it');
+  assert.equal(mine.data.embeds[0].title, 'Daily Red No. 12 · Thu, Nov 12');
+  assert.match(mine.data.embeds[0].description, /^\*\*You beat RED today with 4 left! 🔥\*\*\n1 of 1 in this server beat RED today\.\n\n• One battle a day/);
+  assert.deepEqual(mine.data.components[0].components.map((b) => b.url ?? b.custom_id),
+    [`https://nas.example.ts.net/?g=${GUILD}`, 'dailyred:board', 'dailyred:remind']);
+  assert.match(command('2').data.embeds[0].description, /^\*\*You haven't battled RED today yet\.\*\*/);
+  assert.equal(bot.interaction({ type: 2, guild_id: GUILD, data: { name: 'launch' } }).type, 12, "the Activity's own command still launches it");
+
+  const old = bot.interaction({ type: 3, guild_id: GUILD, data: { custom_id: 'dailyred:play' } });
+  assert.equal(old.data.flags, 64);
+  assert.equal(old.data.components[0].components[0].url, `https://nas.example.ts.net/?g=${GUILD}`);
+
+  store.setSetting('gateway_identified', '1'); // skip the Gateway login
+  await bot.start();
+  bot.stop();
+  await bot.start();
+  bot.stop();
+  const added = discord.calls.filter((c) => c.path === '/applications/999/commands');
+  assert.equal(added.length, 1, 'added once');
+  assert.deepEqual([added[0].method, added[0].body.name, added[0].body.contexts], ['POST', 'dailyred', [0]]);
 });

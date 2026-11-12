@@ -223,8 +223,10 @@ like reloading the website.
 
 The bot posts these in each server's **#general**:
 
-- **The live card**: one message per day, posted when the first battle of the
-  day starts and edited as people start and finish. Each player shows their
+- **How to play**: once, when the bot first starts in the server. Pin it
+  (long-press or right-click > **Pin Message**) so newcomers find it.
+- **The live card**: one message per day, posted at 6:00 AM Eastern (or by
+  the first battle after midnight) and edited as people start and finish. Each player shows their
   result, how many Pokémon they had left, turns and streak, with 🟥⬛ squares
   ("🏃 Ran from RED on turn 3" if they gave up), and the month's top three in
   the Master race. Nobody's team or lead is shown. When someone finishes and
@@ -249,8 +251,12 @@ The bot posts these in each server's **#general**:
   players who asked for it and haven't battled yet that day. Nobody else is
   pinged, and there's no message if everyone who asked has played.
 
-They have a **Battle RED** button that opens the Activity, a **Leaderboard**
-button and a **🔔 Reminders** button. **Leaderboard** posts the server's
+They have a **▶️ Battle RED** button, a **Leaderboard** button and a
+**🔔 Reminders** button. **▶️ Battle RED** opens the website for that server
+([play in the browser](#play-in-the-browser-friends-who-arent-app-testers));
+without `PUBLIC_URL` it opens the Activity instead. Typing **`/dailyred`**
+anywhere in the server shows the same buttons, whether you've played today
+and how to play, to you only. **Leaderboard** posts the server's
 leaderboard in the channel for everyone: the month's Master race with how each
 player did today, win streaks, all-time wins, where the person who pressed it
 stands, and the Hall of Fame. The previous one is deleted, so the channel only
@@ -325,8 +331,9 @@ race.
 3. Open `https://<your public address>/api/interactions`: `websiteSignIn`
    says "On" and shows the redirect it expects.
 
-The bot's messages now have a **🌐 Play in browser** button. It opens the site
-for that server; the player presses **Sign in with Discord to battle**,
+The bot's **▶️ Battle RED** button (and `/dailyred`) then opens the site for
+that server instead of the Activity; the player presses **Sign in with
+Discord to battle**,
 Discord asks them to authorize Daily Red (their name, avatar and which
 servers they're in), and they're back on the page, signed in for 30 days.
 If they're in several servers with Daily Red, a menu picks which one the
