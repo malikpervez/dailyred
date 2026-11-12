@@ -226,7 +226,9 @@ The bot posts these in each server's **#general**:
 - **How to play**: once, when the bot first starts in the server. Pin it
   (long-press or right-click > **Pin Message**) so newcomers find it.
 - **The live card**: one message per day, posted at 6:00 AM Eastern (or by
-  the first battle after midnight) and edited as people start and finish. Each player shows their
+  the first battle after midnight) and edited as people start and finish.
+  It starts with **today's team**, the day's six everyone gets (in the day's
+  order, so never anyone's chosen lead). Each player shows their
   result, how many Pokémon they had left, turns and streak, with 🟥⬛ squares
   ("🏃 Ran from RED on turn 3" if they gave up), and the month's top three in
   the Master race. Nobody's team or lead is shown. When someone finishes and

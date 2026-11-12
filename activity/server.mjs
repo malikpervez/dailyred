@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { createApp } from './app.mjs';
 import { createBot, inviteUrl } from './bot.mjs';
 import { openStore } from './store.mjs';
+import { dailySeed } from '../web/daily.js';
 
 // Values pasted into OMV's environment box can pick up spaces or quotes.
 const env = Object.fromEntries(Object.entries(process.env).map(([k, v]) => [k, String(v).trim().replace(/^["'](.*)["']$/, '$1').trim()]));
@@ -49,6 +50,16 @@ if (!env.DISCORD_CLIENT_ID || !env.DISCORD_CLIENT_SECRET) {
 
 const store = openStore(join(dataDir, 'dailyred.sqlite'));
 
+// The day's six for the bot's card: activity/dist/team-of-day.mjs, built by
+// `npm run build` (the Docker image has it).
+let teamOfDay = null;
+try {
+  const { teamSpecies } = await import('./dist/team-of-day.mjs');
+  teamOfDay = (date) => teamSpecies(dailySeed(date));
+} catch {
+  console.warn("activity/dist/team-of-day.mjs is missing (npm run build in activity/): the bot's card won't list today's team.");
+}
+
 let bot = null;
 if ((env.DISCORD_BOT_TOKEN || env.DISCORD_PUBLIC_KEY) && env.DISCORD_CLIENT_ID) {
   bot = createBot({
@@ -61,6 +72,7 @@ if ((env.DISCORD_BOT_TOKEN || env.DISCORD_PUBLIC_KEY) && env.DISCORD_CLIENT_ID) 
     recapTimeZone: env.RECAP_TIMEZONE || 'America/New_York',
     reminderTime: env.REMINDER_TIME || '17:00',
     publicUrl: env.PUBLIC_URL || null,
+    teamOfDay,
   });
   bot.start();
   if (env.DISCORD_BOT_TOKEN) {

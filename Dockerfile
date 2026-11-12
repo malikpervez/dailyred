@@ -27,7 +27,7 @@ COPY activity/build-sprites.mjs activity/
 COPY web/battle/fx-sprites.js web/battle/
 COPY scripts/get-sprites.sh scripts/
 RUN scripts/get-sprites.sh /tmp/pokefirered && rm -rf /tmp/pokefirered
-COPY activity/build-sdk.mjs activity/build-battle.mjs activity/
+COPY activity/build-sdk.mjs activity/build-battle.mjs activity/team-of-day.mjs activity/
 COPY web/battle/ web/battle/
 RUN cd activity && npm run build
 
@@ -40,6 +40,8 @@ COPY web/ web/
 COPY --from=build /src/web/vendor/ web/vendor/
 COPY --from=build /src/web/sprites/ web/sprites/
 COPY activity/server.mjs activity/app.mjs activity/store.mjs activity/bot.mjs activity/
+# The day's six for the bot's card (the battle data, bundled: a few MB).
+COPY --from=build /src/activity/dist/ activity/dist/
 RUN mkdir -p /data && chown node:node /data
 USER node
 VOLUME /data

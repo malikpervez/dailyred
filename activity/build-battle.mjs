@@ -2,7 +2,8 @@
 // simulator it uses) into web/vendor/battle-worker.js, one classic Web Worker
 // script, so the site needs no CDN or runtime build step. Also writes
 // web/vendor/battle-worker.LICENSE.txt with the licenses of every package in
-// the bundle.
+// the bundle, and bundles activity/team-of-day.mjs (the day's six, for the
+// bot's card) into activity/dist/ for the server, from the same packages.
 //
 //   cd activity && npm ci && npm run build-battle
 import { build } from 'esbuild';
@@ -30,6 +31,20 @@ const result = await build({
   logLevel: 'warning',
 });
 
+await build({
+  entryPoints: [join(here, 'team-of-day.mjs')],
+  outfile: join(here, 'dist/team-of-day.mjs'),
+  bundle: true,
+  minify: true,
+  format: 'esm',
+  platform: 'node',
+  target: ['node22'],
+  define: { 'process.env.NODE_ENV': '"production"' },
+  legalComments: 'none',
+  logLevel: 'warning',
+  banner: { js: '// Bundled from @pkmn/sim (MIT, see web/vendor/battle-worker.LICENSE.txt) and web/battle/team.js.' },
+});
+
 // Every npm package that ended up in the bundle, with its license text.
 const packages = new Set();
 for (const input of Object.keys(result.metafile.inputs)) {
@@ -45,4 +60,4 @@ const sections = [...packages].sort().map((name) => {
 });
 writeFileSync(join(vendor, 'battle-worker.LICENSE.txt'),
   `Packages bundled into battle-worker.js\n\n${sections.join('\n')}`);
-console.log(`Built web/vendor/battle-worker.js (${[...packages].join(', ')})`);
+console.log(`Built web/vendor/battle-worker.js (${[...packages].join(', ')}) and activity/dist/team-of-day.mjs`);

@@ -540,3 +540,25 @@ test('/dailyred shows your day privately; old Activity buttons point to the webs
   assert.equal(added.length, 1, 'added once');
   assert.deepEqual([added[0].method, added[0].body.name, added[0].body.contexts], ['POST', 'dailyred', [0]]);
 });
+
+test("today's card lists the day's six (never anyone's lead), and still posts if that fails", async () => {
+  const { teamSpecies } = await import('../team-of-day.mjs');
+  const { dailySeed } = await import('../../web/daily.js');
+  const { generateTeam } = await import('../../web/battle/team.js');
+  const { Dex } = await import('@pkmn/sim');
+  const six = teamSpecies(dailySeed('2026-11-12'));
+  assert.deepEqual(six, generateTeam(Dex.forGen(3), dailySeed('2026-11-12')).map((s) => s.species), "the browser's team");
+
+  const discord = fakeDiscord();
+  const store = openStore(':memory:');
+  const make = (teamOfDay) => createBot({ token: 'bot-token', clientId: '999', store, fetch: discord.fetch, log: quiet, now: () => new Date('2026-11-12T15:00:00Z'), teamOfDay });
+  const bot = make((date) => teamSpecies(dailySeed(date)));
+  store.savePlayer({ id: '1', name: 'Ash', avatarUrl: '', stats: { ...EMPTY, pending: '2026-11-12' } });
+  store.joinRoom(`g:${GUILD}`, '1');
+  await bot.updateCard(GUILD, '2026-11-12');
+  assert.equal(description(discord.posts()[0]), `**Today's team:** ${six.join(' · ')}\n\n<@1> ⚔️ Battling RED…`);
+  assert.match(bot.commandMessage(GUILD, '1').embeds[0].description, new RegExp(`\\n\\*\\*Today's team:\\*\\* ${six[0]}`));
+
+  const broken = make(() => { throw new Error('no data'); });
+  assert.equal(broken.cardMessage(GUILD, '2026-11-13').embeds[0].description, 'Nobody has battled RED yet today.');
+});

@@ -123,6 +123,7 @@ export function createBot({
   fetch = globalThis.fetch,
   now = () => new Date(),
   followUpDelay = 1500, // ms to wait before looking up a just-posted leaderboard
+  teamOfDay = null, // date -> the day's six species (server.mjs), for the card
   api = API,
   log = console,
 }) {
@@ -264,8 +265,8 @@ export function createBot({
       embeds: [{
         color: RED,
         title: `Daily Red No. ${dayNumber(date)} · ${dateLabel(date)}`,
-        description: [`**${status}**`, results.size ? `${wins} of ${results.size} in this server beat RED today.` : '', '', ...howToLines()]
-          .filter((line, i) => line || i === 2).join('\n'),
+        description: [`**${status}**`, results.size ? `${wins} of ${results.size} in this server beat RED today.` : '', teamLine(date), '', ...howToLines()]
+          .filter((line, i) => line || i === 3).join('\n'),
       }],
       components: buttons('Battle RED', guildId),
       allowed_mentions: { parse: [] },
@@ -303,6 +304,24 @@ export function createBot({
 
   // --- The live card --------------------------------------------------------------------
 
+  // "**Today's team:** Pupitar · Umbreon · …": everyone's six for `date`, in
+  // the day's order (never anyone's chosen lead). Worked out once a day.
+  const teams = new Map();
+  function teamLine(date) {
+    if (!teamOfDay) return '';
+    if (!teams.has(date)) {
+      if (teams.size > 7) teams.clear();
+      try {
+        teams.set(date, teamOfDay(date));
+      } catch (err) {
+        log.warn(`Daily Red bot couldn't work out the team for ${date}: ${err.message}`);
+        teams.set(date, null);
+      }
+    }
+    const team = teams.get(date);
+    return team?.length ? `**Today's team:** ${team.join(' · ')}` : '';
+  }
+
   // The room's players and their results on `date`. Battles saved before
   // results were kept per day only have won/lost (from the player's stats).
   function dayResults(room, date) {
@@ -335,7 +354,7 @@ export function createBot({
     const month = date.slice(0, 7);
     const race = monthStandings(room, month).filter((x) => x.wins > 0).slice(0, 3);
     const raceLine = race.length ? `🏆 ${monthName(month)} race: ${race.map((x) => `${who(x.id, crowned)} ${x.wins}`).join(' · ')}` : '';
-    const description = cap(lines).join('\n') || 'Nobody has battled RED yet today.';
+    const description = [teamLine(date), cap(lines).join('\n') || 'Nobody has battled RED yet today.'].filter(Boolean).join('\n\n');
     return {
       embeds: [{
         color: RED,
@@ -891,6 +910,7 @@ export function createBot({
       if (!posting) return;
       await identifyOnce().catch((err) => log.warn(`Daily Red bot login failed: ${err.message}`));
       if (key) await registerCommand().catch((err) => log.warn(`Daily Red bot couldn't add /dailyred: ${err.message}`));
+      setImmediate(() => teamLine(zonedNow().date)); // load the battle data now, not on the first card
       timer = setInterval(() => tick().catch((err) => log.warn(err)), 60 * 1000);
       timer.unref?.();
       tick().catch((err) => log.warn(err));
