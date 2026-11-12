@@ -70,6 +70,11 @@
       <!-- Discord Activity only (discord.js): who in this server has played today. -->
       <section class="board" id="board" aria-labelledby="board-heading" hidden>
         <h2 class="section-title" id="board-heading">Today in this server</h2>
+        <div class="segmented board-tabs" role="group" aria-label="Leaderboard">
+          <button type="button" data-board="today" aria-pressed="true">Today</button>
+          <button type="button" data-board="streaks" aria-pressed="false">Streaks</button>
+          <button type="button" data-board="alltime" aria-pressed="false">All time</button>
+        </div>
         <ol class="board-list" id="board-list"></ol>
         <p class="section-note" id="board-note"></p>
       </section>

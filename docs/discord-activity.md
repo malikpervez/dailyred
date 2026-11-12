@@ -11,6 +11,9 @@ the same game as the website. On top of that, inside Discord:
 - **"Today in this server"** lists everyone in the server who has played, with
   today's result (Beat RED / Lost to RED / Battling RED / Not yet) and their streaks.
 - **Your Discord status** shows how today's battle went, e.g. "Beat RED today".
+- **With the bot (step 6), in #general:** a live card for the day that fills in
+  as people play (result, Pokémon left, turns, streak), and a recap of
+  yesterday every morning at 6:00 Eastern with a leaderboard, like Wordle.
 
 It all runs in one Docker container on your own machine, here a Raspberry Pi
 running OpenMediaVault. The container bundles the battle engine and fetches
@@ -33,6 +36,7 @@ Discord app ──▶ <app id>.discordsays.com (Discord's proxy) ──HTTPS─�
 - [3. Give the Pi a public HTTPS address](#3-give-the-pi-a-public-https-address)
 - [4. Connect it to Discord](#4-connect-it-to-discord)
 - [5. Play](#5-play)
+- [6. Post the day's battles in #general (the bot)](#6-post-the-days-battles-in-general-the-bot)
 - [Updating and backups](#updating-and-backups)
 - [How it works](#how-it-works)
 - [Troubleshooting](#troubleshooting)
@@ -209,6 +213,58 @@ day changes at each player's local midnight. Start the battle and it counts:
 closing the Activity mid-battle is a loss the next time you open it, exactly
 like reloading the website.
 
+## 6. Post the day's battles in #general (the bot)
+
+The bot posts two kinds of message in each server's **#general**:
+
+- **The live card**: one message per day, posted when the first battle of the
+  day starts and edited as people start and finish. Each player shows their
+  result, how many Pokémon they had left, turns and streak, with 🟥⬛ squares.
+  Nobody's team or lead is shown.
+- **The morning recap**: at 6:00 AM Eastern, yesterday's results ranked (wins
+  first, then Pokémon left, then fewest turns), win streak leaders, how many
+  days in a row the server has played, and who didn't play.
+
+Both have a **Battle RED** button that opens the Activity and a **Leaderboard**
+button that shows the server's leaderboard to whoever presses it. Mentions in
+the messages never ping anyone.
+
+1. **Developer Portal > your app > Bot**: press **Reset Token** and copy it.
+   Leave the privileged intents off; the bot doesn't need them.
+2. **General Information**: copy the **Public Key**.
+3. **In OMV**, edit the `dailyred` file. If its `environment:` list doesn't
+   have the `DISCORD_BOT_TOKEN` lines yet (files added before the bot existed
+   don't), add these under `DISCORD_CLIENT_SECRET`:
+
+   ```yaml
+         DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+         DISCORD_PUBLIC_KEY: ${DISCORD_PUBLIC_KEY:-}
+         PUBLIC_URL: ${PUBLIC_URL:-}
+         DAILYRED_CHANNEL: ${DAILYRED_CHANNEL:-general}
+         RECAP_TIME: ${RECAP_TIME:-06:00}
+         RECAP_TIMEZONE: ${RECAP_TIMEZONE:-America/New_York}
+   ```
+
+   Then in the environment box add `DISCORD_BOT_TOKEN=` (step 1),
+   `DISCORD_PUBLIC_KEY=` (step 2) and `PUBLIC_URL=` your public address from
+   step 3, e.g. `https://nas.tailxxxx.ts.net` (optional: it adds Pikachu to
+   the messages). Save and press **Up**.
+4. **Invite the bot to your server.** The container's log prints the link
+   (**Tools > logs**: "Add it to a server: …"). It's
+   `https://discord.com/oauth2/authorize?client_id=<your client ID>&scope=bot%20applications.commands&permissions=84992`
+   and asks for View Channel, Send Messages, Embed Links and Read Message
+   History. Check that the bot can post in #general.
+5. **General Information > Interactions Endpoint URL**:
+   `https://<your public address>/api/interactions`, then **Save**. Discord
+   checks it straight away, so the container must already be running with
+   `DISCORD_PUBLIC_KEY` set (step 3). This is what makes the buttons work.
+
+Play a battle in the server: the card appears in #general within a second or
+two. Change the channel with `DAILYRED_CHANNEL` (without the `#`), or the time
+with `RECAP_TIME` / `RECAP_TIMEZONE` (an IANA name such as `America/Chicago`).
+If a server has no #general, the bot uses its system channel (where "welcome"
+messages go). The recap is skipped on days nobody in the server played.
+
 ## Updating and backups
 
 **In OMV:** select `dailyred` and press **Up**. The file's `pull_policy: build`
@@ -320,6 +376,7 @@ the `*.trycloudflare.com` hostname it prints. Put it back afterwards.
 | `activity/server.mjs` | Entry point: env, database, HTTP server |
 | `activity/app.mjs` | Static files and the `/api` routes |
 | `activity/store.mjs` | SQLite storage (`node:sqlite`, no npm packages) |
+| `activity/bot.mjs` | The bot: live card, morning recap, leaderboard, button presses |
 | `activity/build-sdk.mjs` | Bundles Discord's SDK into `web/vendor/` |
 | `activity/build-battle.mjs` | Bundles the battle engine into `web/vendor/` |
 | `scripts/get-sprites.sh` | The Pokémon sprites into `web/sprites/` |

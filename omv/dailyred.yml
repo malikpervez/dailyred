@@ -23,6 +23,13 @@ services:
       # when you connect Discord. Without them the site works in a browser.
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      # The bot: the live card and the 6 AM recap in #general (docs/discord-activity.md, step 6).
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      DISCORD_PUBLIC_KEY: ${DISCORD_PUBLIC_KEY:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      DAILYRED_CHANNEL: ${DAILYRED_CHANNEL:-general}
+      RECAP_TIME: ${RECAP_TIME:-06:00}
+      RECAP_TIMEZONE: ${RECAP_TIMEZONE:-America/New_York}
     ports:
       - "8380:8080"
     volumes:

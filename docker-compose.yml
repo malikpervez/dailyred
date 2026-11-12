@@ -17,6 +17,13 @@ services:
       # the browser, as on the website); only Discord sign-in needs them.
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      # The bot: the live card and the 6 AM recap in #general (docs/discord-activity.md, step 6).
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      DISCORD_PUBLIC_KEY: ${DISCORD_PUBLIC_KEY:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      DAILYRED_CHANNEL: ${DAILYRED_CHANNEL:-general}
+      RECAP_TIME: ${RECAP_TIME:-06:00}
+      RECAP_TIMEZONE: ${RECAP_TIMEZONE:-America/New_York}
     ports:
       # For a reverse proxy on the Pi. Not needed with the tunnel below.
       - "${DAILYRED_PORT:-8380}:8080"

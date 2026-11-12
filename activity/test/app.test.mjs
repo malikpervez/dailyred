@@ -129,14 +129,14 @@ test('the API needs a valid Discord token', async () => {
 test('a daily win: start, result, then locked for the day', async () => {
   const before = calls.me;
   let res = await get('/api/me?settle=1&room=g:42', 'token-ash');
-  assert.deepEqual((await res.json()).stats, { wins: 0, losses: 0, winStreak: 0, dayStreak: 0, lastPlayed: null, lastResult: null, pending: null });
+  assert.deepEqual((await res.json()).stats, { wins: 0, losses: 0, winStreak: 0, bestWinStreak: 0, dayStreak: 0, lastPlayed: null, lastResult: null, pending: null });
 
   res = await battle('token-ash', { event: 'start', date: TODAY });
   assert.equal((await res.json()).stats.pending, TODAY);
 
-  res = await battle('token-ash', { event: 'result', date: TODAY, won: true });
+  res = await battle('token-ash', { event: 'result', date: TODAY, won: true, monsLeft: 4, redLeft: 0, turns: 18 });
   let { stats } = await res.json();
-  assert.deepEqual(stats, { wins: 1, losses: 0, winStreak: 1, dayStreak: 1, lastPlayed: TODAY, lastResult: 'won', pending: null });
+  assert.deepEqual(stats, { wins: 1, losses: 0, winStreak: 1, bestWinStreak: 1, dayStreak: 1, lastPlayed: TODAY, lastResult: 'won', pending: null });
 
   // A second result for the same day changes nothing (one battle a day).
   res = await battle('token-ash', { event: 'result', date: TODAY, won: false });
@@ -160,6 +160,10 @@ test("the board lists the server's players, today's results first", async () => 
     ['gary', 'battling', 0, true],
   ]);
   assert.match(players[1].avatarUrl, /^https:\/\/cdn\.discordapp\.com\/embed\/avatars\/[0-5]\.png$/);
+  // How Ash's battle went, for the board's squares and the leaderboard tabs.
+  assert.deepEqual(players[0].result, { won: true, monsLeft: 4, redLeft: 0, turns: 18 });
+  assert.deepEqual([players[0].bestWinStreak, players[0].played, players[0].winRate], [1, 1, 100]);
+  assert.equal(players[1].result, null);
 
   // Other servers have their own lists.
   const other = await (await get(`/api/board?room=g:43&date=${TODAY}`, 'token-gary')).json();

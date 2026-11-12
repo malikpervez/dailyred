@@ -39,7 +39,7 @@ WORKDIR /app
 COPY web/ web/
 COPY --from=build /src/web/vendor/ web/vendor/
 COPY --from=build /src/web/sprites/ web/sprites/
-COPY activity/server.mjs activity/app.mjs activity/store.mjs activity/
+COPY activity/server.mjs activity/app.mjs activity/store.mjs activity/bot.mjs activity/
 RUN mkdir -p /data && chown node:node /data
 USER node
 VOLUME /data

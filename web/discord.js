@@ -65,8 +65,9 @@ export async function connectDiscord() {
     // Sends 'start' / 'result' to the server, in order. Each one is retried
     // for a while: if a result never arrived, the server would count the
     // battle as abandoned (a loss) next time.
-    report(event, date, won) {
-      const body = { event, date, room, ...(event === 'result' && { won }) };
+    // For a result, `details` is { monsLeft, redLeft, turns } for the board and the bot.
+    report(event, date, won, details = {}) {
+      const body = { event, date, room, ...(event === 'result' && { won, ...details }) };
       reports = reports.then(() => retry(() => call('POST', 'api/battle', body)))
         .then(({ stats }) => { cached = stats; })
         .catch((err) => console.error(`Couldn't save the ${event} of today's battle`, err));
@@ -93,14 +94,47 @@ export async function connectDiscord() {
 // --- "Today in this server" ---------------------------------------------------
 
 const TODAY_LABEL = { won: 'Beat RED', lost: 'Lost to RED', battling: 'Battling RED' };
+const squares = (left) => (left == null ? '' : '🟥'.repeat(left) + '⬛'.repeat(Math.max(0, 6 - left)));
+
+// The board's three tabs: who played today, streaks, and all-time records.
+const TABS = {
+  today: {
+    sort: null, // the server's order: today's results first
+    detail(p) {
+      const r = p.result;
+      if (!r) return `${p.wins}W ${p.losses}L · ${p.winStreak} win streak`;
+      const how = r.won
+        ? `${r.monsLeft != null ? `${r.monsLeft} left` : 'Won'}`
+        : `${r.redLeft != null ? `RED had ${r.redLeft} left` : 'Lost'}`;
+      return [how, r.turns ? `${r.turns} turns` : null, `🔥 ${p.winStreak}`].filter(Boolean).join(' · ');
+    },
+    badge: (p) => TODAY_LABEL[p.today] ?? 'Not yet',
+    squares: (p) => squares(p.result?.monsLeft),
+  },
+  streaks: {
+    sort: (a, b) => b.winStreak - a.winStreak || b.bestWinStreak - a.bestWinStreak || b.wins - a.wins,
+    detail: (p) => `Best ${p.bestWinStreak} · ${p.dayStreak ? `${p.dayStreak}-day play streak` : 'No play streak'}`,
+    badge: (p) => `🔥 ${p.winStreak}`,
+    squares: () => '',
+  },
+  alltime: {
+    sort: (a, b) => b.wins - a.wins || b.winRate - a.winRate || a.losses - b.losses,
+    detail: (p) => `${p.played} played · best streak ${p.bestWinStreak}`,
+    badge: (p) => `${p.wins}W ${p.losses}L · ${p.winRate}%`,
+    squares: () => '',
+  },
+};
 
 // players: from GET /api/board. Names come from Discord, so they only ever
 // go in as text.
-export function renderBoard(list, players) {
-  list.replaceChildren(...players.map((p) => {
+export function renderBoard(list, players, tab = 'today') {
+  const view = TABS[tab] ?? TABS.today;
+  const shown = view.sort ? players.filter((p) => p.played > 0).sort(view.sort) : players;
+  list.dataset.tab = tab;
+  list.replaceChildren(...shown.map((p, i) => {
     const row = document.createElement('li');
     row.className = 'board-row';
-    row.dataset.today = p.today ?? 'none';
+    row.dataset.today = tab === 'today' ? p.today ?? 'none' : 'rank';
     if (p.you) row.classList.add('is-you');
 
     const avatar = document.createElement('img');
@@ -113,17 +147,21 @@ export function renderBoard(list, players) {
 
     const name = document.createElement('span');
     name.className = 'board-name';
-    name.textContent = p.you ? `${p.name} (you)` : p.name;
+    name.textContent = `${tab === 'today' ? '' : `${i + 1}. `}${p.you ? `${p.name} (you)` : p.name}`;
 
     const today = document.createElement('span');
     today.className = 'board-today';
-    today.textContent = TODAY_LABEL[p.today] ?? 'Not yet';
+    today.textContent = view.badge(p);
 
     const streak = document.createElement('span');
     streak.className = 'board-streak';
-    streak.textContent = `${p.wins}W ${p.losses}L · ${p.winStreak} win streak`;
+    streak.textContent = view.detail(p);
 
-    row.append(avatar, name, today, streak);
+    const grid = document.createElement('span');
+    grid.className = 'board-squares';
+    grid.textContent = view.squares(p);
+
+    row.append(avatar, name, today, streak, grid);
     return row;
   }));
 }

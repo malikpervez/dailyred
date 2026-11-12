@@ -4,7 +4,7 @@
 // Inside a Discord Activity, discord.js adds sign-in, stats kept on the
 // server and the "Today in this server" list.
 import {
-  today, dailySeed, msUntilTomorrow, loadStats, resultFor, currentStreaks,
+  today, dailySeed, dayNumber, msUntilTomorrow, loadStats, resultFor, currentStreaks,
   markBattleStarted, recordResult, settleAbandonedGame, useStatsStorage,
 } from './daily.js';
 import { inDiscord, connectDiscord, renderBoard } from './discord.js';
@@ -42,9 +42,6 @@ const ui = {
   shareText: $('share-text'),
 };
 
-// The first day of Daily Red, for the "No." in the header.
-const FIRST_DAY = '2026-11-01';
-
 // ?seed=123 shows the team for that seed instead of today's, for testing and
 // for fun: nothing is recorded and there's no daily limit.
 const practiceSeed = parseSeed(new URLSearchParams(location.search).get('seed'));
@@ -77,12 +74,6 @@ function setState(state) {
 }
 
 // --- Header ------------------------------------------------------------------------
-
-const DAY = 86400000;
-
-function dayNumber(day) {
-  return Math.round((new Date(`${day}T12:00:00`) - new Date(`${FIRST_DAY}T12:00:00`)) / DAY) + 1;
-}
 
 function formatTime(ms) {
   const total = Math.max(0, Math.ceil(ms / 1000));
@@ -282,12 +273,24 @@ function showError(err) {
 
 let boardTimer = null;
 
+let boardTab = 'today';
+let boardPlayers = [];
+
+for (const button of document.querySelectorAll('[data-board]')) {
+  button.addEventListener('click', () => {
+    boardTab = button.dataset.board;
+    for (const b of document.querySelectorAll('[data-board]')) b.setAttribute('aria-pressed', String(b === button));
+    renderBoard(ui.boardList, boardPlayers, boardTab);
+  });
+}
+
 async function refreshBoard() {
   if (!discord?.room) return;
   clearTimeout(boardTimer);
   try {
     const { players } = await discord.board(today());
-    renderBoard(ui.boardList, players);
+    boardPlayers = players;
+    renderBoard(ui.boardList, players, boardTab);
     ui.boardNote.textContent = players.length ? '' : 'Nobody has played here yet. Be the first to battle RED!';
   } catch (err) {
     console.warn("Couldn't load today's players", err);
@@ -364,7 +367,10 @@ async function beginBattle({ practice }) {
   startBattle({ seed, order: battleOrder(), name }, {
     onEvents: (events) => {
       const turn = events.findLast((e) => e.turn)?.turn;
-      if (turn) ui.turnLabel.textContent = `Turn ${turn}`;
+      if (turn) {
+        ui.turnLabel.textContent = `Turn ${turn}`;
+        if (battle) battle.turns = turn;
+      }
       view.play(events);
     },
     onRequest: (request) => view.request(request),
@@ -381,7 +387,9 @@ function endBattle(won, tie = false) {
   battle.done = true;
   if (battle.official) {
     recordResult(stats, battle.date, won);
-    discord?.report('result', battle.date, won);
+    // How it went, for the server's board and the Discord bot's card.
+    const alive = (side) => (view.state?.[side].party ?? []).filter((p) => p !== 'fnt').length;
+    discord?.report('result', battle.date, won, { monsLeft: alive('p1'), redLeft: alive('p2'), turns: battle.turns ?? 0 });
   }
   const text = won ? 'You defeated RED!'
     : tie ? 'Both last Pokémon fell at once. A draw counts as a loss.'

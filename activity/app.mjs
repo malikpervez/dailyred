@@ -59,6 +59,7 @@ export function createApp({
   discordApi = 'https://discord.com/api/v10',
   fetch = globalThis.fetch,
   now = () => new Date(),
+  bot = null, // bot.mjs: the live card, recaps and button presses (optional)
 }) {
   const root = resolve(webRoot);
   const gzipCache = new Map(); // path -> { mtimeMs, body }
@@ -194,9 +195,18 @@ export function createApp({
 
   // GET /api/me. settle=1 when the activity starts: a battle that started but
   // never finished is a loss, exactly like reloading the website mid-battle.
+  // settleAbandonedGame(), also saving the loss as that day's result.
+  function settle(player) {
+    const { pending } = player.stats;
+    settleAbandonedGame(player.stats);
+    if (pending && player.stats.lastPlayed === pending && player.stats.lastResult === 'lost') {
+      store.saveResult({ playerId: player.id, date: pending, won: false });
+    }
+  }
+
   function me(user, query) {
     const player = loadPlayer(user);
-    if (query.get('settle') === '1') settleAbandonedGame(player.stats);
+    if (query.get('settle') === '1') settle(player);
     store.savePlayer(player);
     const room = checkRoom(query.get('room'));
     if (room) store.joinRoom(room, user.id);
@@ -211,29 +221,49 @@ export function createApp({
     if (stats.lastPlayed && date < stats.lastPlayed) throw new HttpError(409, 'A later day is already recorded');
     // A battle left unfinished on an earlier day (another device, a crash)
     // is a loss before today's counts.
-    if (stats.pending && stats.pending < date && stats.pending !== stats.lastPlayed) recordResult(stats, stats.pending, false);
+    if (stats.pending && stats.pending < date && stats.pending !== stats.lastPlayed) {
+      store.saveResult({ playerId: user.id, date: stats.pending, won: false });
+      recordResult(stats, stats.pending, false);
+    }
 
     if (body.event === 'start') {
       markBattleStarted(stats, date);
     } else if (body.event === 'result') {
       if (typeof body.won !== 'boolean') throw new HttpError(400, 'Missing won');
+      // How it went, for the board and the bot (older pages don't send these).
+      const count = (value, max) => (Number.isInteger(value) && value >= 0 && value <= max ? value : null);
+      if (!resultFor(stats, date)) {
+        store.saveResult({
+          playerId: user.id, date, won: body.won,
+          monsLeft: count(body.monsLeft, 6), redLeft: count(body.redLeft, 6), turns: count(body.turns, 1000),
+        });
+      }
       recordResult(stats, date, body.won); // ignored if the day already has a result
     } else {
       throw new HttpError(400, 'Unknown event');
     }
     store.savePlayer(player);
     if (room) store.joinRoom(room, user.id);
+    if (bot && room?.startsWith('g:')) bot.updateCard(room.slice(2), date);
     return { stats };
   }
 
   function board(user, query) {
     const room = checkRoom(query.get('room'), { required: true });
     const date = checkDate(query.get('date'));
+    const results = store.roomResults(room, date);
     const players = store.roomPlayers(room).map(({ id, name, avatarUrl, stats }) => {
       const full = { ...EMPTY, ...stats };
       const result = resultFor(full, date);
       const today = result || (full.pending === date ? 'battling' : null);
-      return { id, name, avatarUrl, today, wins: full.wins, losses: full.losses, ...currentStreaks(full, date), you: id === user.id };
+      const played = full.wins + full.losses;
+      return {
+        id, name, avatarUrl, today, wins: full.wins, losses: full.losses, ...currentStreaks(full, date),
+        bestWinStreak: Math.max(full.bestWinStreak || 0, full.winStreak),
+        played, winRate: played ? Math.round((full.wins / played) * 100) : 0,
+        result: result ? results.get(id) ?? { won: result === 'won' } : null,
+        you: id === user.id,
+      };
     });
     const order = { won: 0, lost: 1, battling: 2 };
     players.sort((a, b) => (order[a.today] ?? 3) - (order[b.today] ?? 3)
@@ -257,6 +287,18 @@ export function createApp({
       result = battle(user, await readJson(req));
     } else if (route === 'GET /api/board') {
       result = board(await requireUser(req), url.searchParams);
+    } else if (route === 'POST /api/interactions') {
+      // Discord's button presses (bot.mjs), signed with the app's key.
+      if (!bot?.canVerify) throw new HttpError(404, 'Not found');
+      const raw = await readBody(req, 64 * 1024);
+      if (!bot.verifyRequest(req.headers, raw)) throw new HttpError(401, 'Bad signature');
+      let body;
+      try {
+        body = JSON.parse(raw.toString('utf8'));
+      } catch {
+        throw new HttpError(400, 'Expected JSON');
+      }
+      result = bot.interaction(body);
     } else {
       throw new HttpError(404, 'Not found');
     }
@@ -296,7 +338,7 @@ function sendJson(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-async function readJson(req, limit = 16 * 1024) {
+async function readBody(req, limit) {
   let size = 0;
   const chunks = [];
   for await (const chunk of req) {
@@ -304,8 +346,13 @@ async function readJson(req, limit = 16 * 1024) {
     if (size > limit) throw new HttpError(413, 'Request too large');
     chunks.push(chunk);
   }
+  return Buffer.concat(chunks);
+}
+
+async function readJson(req, limit = 16 * 1024) {
+  const raw = await readBody(req, limit);
   try {
-    const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+    const body = JSON.parse(raw.toString('utf8') || '{}');
     if (body && typeof body === 'object' && !Array.isArray(body)) return body;
   } catch { /* fall through */ }
   throw new HttpError(400, 'Expected a JSON object');

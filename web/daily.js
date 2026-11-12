@@ -17,6 +17,13 @@ export function addDays(date, days) {
   return today(d);
 }
 
+// The first day of Daily Red, for the "No." in the header and in Discord.
+export const FIRST_DAY = '2026-11-01';
+
+export function dayNumber(date) {
+  return Math.round((new Date(`${date}T12:00:00Z`) - new Date(`${FIRST_DAY}T12:00:00Z`)) / 86400000) + 1;
+}
+
 // The day's team seed: a hash (FNV-1a) of the date, never 0.
 export function dailySeed(date) {
   let hash = 0x811c9dc5;
@@ -36,11 +43,12 @@ export function msUntilTomorrow(now = new Date()) {
 // --- Stats ------------------------------------------------------------------
 //   wins, losses     all-time
 //   winStreak        daily wins in a row
+//   bestWinStreak    the longest winStreak so far
 //   dayStreak        days played in a row
 //   lastPlayed       date of the last finished battle, lastResult 'won'/'lost'
 //   pending          date of a battle that started but hasn't finished
 
-export const EMPTY = { wins: 0, losses: 0, winStreak: 0, dayStreak: 0, lastPlayed: null, lastResult: null, pending: null };
+export const EMPTY = { wins: 0, losses: 0, winStreak: 0, bestWinStreak: 0, dayStreak: 0, lastPlayed: null, lastResult: null, pending: null };
 
 // Where stats are kept: this browser's localStorage, unless useStatsStorage()
 // swaps in something else (the Discord Activity keeps them on its server, and
@@ -101,6 +109,7 @@ export function recordResult(stats, date, won) {
   if (won) {
     stats.wins++;
     stats.winStreak = consecutive && stats.lastResult === 'won' ? stats.winStreak + 1 : 1;
+    stats.bestWinStreak = Math.max(stats.bestWinStreak || 0, stats.winStreak);
   } else {
     stats.losses++;
     stats.winStreak = 0;

@@ -142,7 +142,10 @@ In the browser console, `dailyRed.teams`, `dailyRed.stats` and
 ## Discord Activity
 
 Daily Red can also run inside Discord as an Activity, with Discord sign-in,
-stats that follow you across devices and a "Today in this server" list. It's
+stats that follow you across devices, a "Today in this server" board with
+Today / Streaks / All time tabs, and (with the bot) a live card in #general
+that fills in as people play plus a recap of yesterday every morning at 6:00
+Eastern, like Wordle. It's
 one Docker image that runs on an x86_64 or arm64 machine, e.g. a Raspberry Pi
 NAS, and builds in a minute or two. Setup:
 [docs/discord-activity.md](docs/discord-activity.md).
