@@ -231,7 +231,7 @@ The bot posts these in each server's **#general**:
   order, so never anyone's chosen lead). Each player shows their
   result, how many Pokémon they had left, turns and streak, with 🟥⬛ squares
   ("🏃 Ran from RED on turn 3" if they gave up), and the month's top three in
-  the Master race. Nobody's team or lead is shown. When someone finishes and
+  the Master race. Nobody's lead or battle order is shown. When someone finishes and
   the card has scrolled up (10 or more newer messages in the channel), the
   bot deletes it and posts it again at the bottom, so there's still one card
   a day and nobody gets pinged.
