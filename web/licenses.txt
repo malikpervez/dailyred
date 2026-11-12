@@ -1,25 +1,26 @@
 Daily Red: third-party software and content
 ===========================================
 
-Pokémon FireRed (the ROM in game/)
-  Built from pret/pokefirered (https://github.com/pret/pokefirered), a
-  community decompilation of Pokémon FireRed, with Daily Red's changes.
-  Pokémon and all game content are © Nintendo, Creatures Inc. and GAME FREAK
-  inc. This is a free, unofficial fan project, not affiliated with or endorsed
-  by them or The Pokémon Company.
+Pokémon
+  Pokémon and all related names, characters and game content are © Nintendo,
+  Creatures Inc. and GAME FREAK inc. Daily Red is a free, unofficial fan
+  project, not affiliated with or endorsed by them or The Pokémon Company.
 
-mGBA libretro core (vendor/mgba_libretro.js, vendor/mgba_libretro.wasm)
-  mGBA by Vicki Pfau and contributors, Mozilla Public License 2.0:
-  https://github.com/mgba-emu/mgba
-  Built for the browser as part of RetroArch (GNU GPL v3):
-  https://github.com/libretro/RetroArch
-  Build used: https://github.com/arianrhodsandlot/retroarch-emscripten-build
-  (release v1.22.2). Source code for these binaries is available at the links
-  above.
+Pokémon sprites (sprites/)
+  The Pokémon FireRed battle sprites, taken from pret/pokefirered
+  (https://github.com/pret/pokefirered), a community decompilation of
+  Pokémon FireRed, when the site is built. © Nintendo, Creatures Inc. and
+  GAME FREAK inc.
 
-Nostalgist.js (vendor/nostalgist.js)
-  MIT License, see vendor/nostalgist.LICENSE.txt
-  https://github.com/arianrhodsandlot/nostalgist
+Battle engine (vendor/battle-worker.js)
+  Pokémon Showdown's battle simulator and client libraries as packaged by the
+  pkmn project (@pkmn/sim, @pkmn/client, @pkmn/view, @pkmn/protocol,
+  @pkmn/data, @pkmn/sets, @pkmn/streams), MIT License:
+  https://github.com/pkmn/ps and https://github.com/smogon/pokemon-showdown
+  The damage calculator @smogon/calc, MIT License:
+  https://github.com/smogon/damage-calc
+  ts-chacha20, MIT License: https://github.com/hscrypt/ts-chacha20
+  Full license texts: vendor/battle-worker.LICENSE.txt
 
 Pixelify Sans (vendor/pixelify-sans.woff2)
   SIL Open Font License 1.1, see vendor/pixelify-sans.OFL.txt

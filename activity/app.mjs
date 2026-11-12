@@ -30,16 +30,15 @@ const TYPES = {
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
-  '.wasm': 'application/wasm',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.txt': 'text/plain; charset=utf-8',
   '.woff2': 'font/woff2',
 };
-// Worth gzipping on the way out (the ROM is already gzipped; the emulator
-// core shrinks from 3.4 MB to about 1 MB, which matters on a home uplink).
-const COMPRESSIBLE = new Set(['.html', '.js', '.mjs', '.css', '.json', '.wasm', '.svg', '.txt']);
+// Worth gzipping on the way out (the battle engine shrinks from 7 MB to about
+// 1.2 MB, which matters on a home uplink). Each file is compressed once.
+const COMPRESSIBLE = new Set(['.html', '.js', '.mjs', '.css', '.json', '.svg', '.txt']);
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ROOM = /^[gc]:\d{1,20}$/; // g:<server id> or c:<channel id> (DMs)

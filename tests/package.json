@@ -2,12 +2,9 @@
   "name": "dailyred-tests",
   "private": true,
   "type": "module",
-  "description": "Headless browser tests for Daily Red (drives your installed Google Chrome)",
+  "description": "Headless browser test for Daily Red (drives your installed Google Chrome)",
   "scripts": {
-    "test": "node smoke.mjs && node site.mjs",
-    "smoke": "node smoke.mjs",
-    "site": "node site.mjs",
-    "teams": "node teams.mjs"
+    "test": "node site.mjs"
   },
   "devDependencies": {
     "playwright-core": "1.56.1"

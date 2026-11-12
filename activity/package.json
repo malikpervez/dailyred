@@ -2,17 +2,25 @@
   "name": "dailyred-activity",
   "private": true,
   "type": "module",
-  "description": "Daily Red as a Discord Activity: the site, plus a small server for Discord sign-in, stats and the server leaderboard",
+  "description": "Daily Red's server (Discord sign-in, stats, the server leaderboard) and the build scripts for the battle engine and sprites",
   "engines": {
     "node": ">=22.13"
   },
   "scripts": {
+    "build": "node build-sdk.mjs && node build-battle.mjs",
     "build-sdk": "node build-sdk.mjs",
+    "build-battle": "node build-battle.mjs",
     "start": "node --disable-warning=ExperimentalWarning server.mjs",
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.mjs"
   },
   "devDependencies": {
     "@discord/embedded-app-sdk": "2.5.0",
+    "@pkmn/client": "0.7.4",
+    "@pkmn/data": "0.11.0",
+    "@pkmn/protocol": "0.7.4",
+    "@pkmn/sim": "0.11.0",
+    "@pkmn/view": "0.7.4",
+    "@smogon/calc": "0.12.0",
     "esbuild": "0.28.2"
   }
 }

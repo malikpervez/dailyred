@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Daily Red</title>
-  <meta name="description" content="One Pokémon battle a day: six random level 100 Pokémon against RED at the top of the mountain.">
+  <meta name="description" content="One Pokémon battle a day: today's six level 100 Pokémon against RED, with Gen 3 rules.">
   <meta name="color-scheme" content="light dark">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preload" href="vendor/pixelify-sans.woff2" as="font" type="font/woff2" crossorigin>
@@ -12,96 +12,136 @@
   <script type="module" src="app.js"></script>
 </head>
 <body>
-  <main class="app" data-state="title">
-    <header class="masthead">
-      <h1 class="title">Daily Red</h1>
-    </header>
+  <header class="masthead">
+    <a class="wordmark" href="./">Daily <span>Red</span></a>
+    <p class="masthead-meta">
+      <span id="day-label"></span>
+      <span class="next-team">Next team <time id="next-team">--:--:--</time></span>
+    </p>
+  </header>
 
-    <section class="console" id="console" aria-label="Game">
-      <div class="bezel">
-        <div class="screen" id="screen">
-          <div class="card card-title">
-            <div class="snow" aria-hidden="true"></div>
-            <img class="red-sprite" src="game/red.png" width="64" height="64" alt="RED">
-            <dl class="stats">
-              <div><dt>Wins</dt><dd id="stat-wins">0</dd></div>
-              <div><dt>Losses</dt><dd id="stat-losses">0</dd></div>
-              <div><dt>Win streak</dt><dd id="stat-win-streak">0</dd></div>
-              <div><dt>Day streak</dt><dd id="stat-day-streak">0</dd></div>
-            </dl>
-            <button class="button button-play" id="play" type="button">Play</button>
-            <div class="played" id="played" hidden>
-              <p class="played-result" id="played-result"></p>
-              <p class="played-next" id="played-next"></p>
-            </div>
-            <p class="card-note" id="practice-note" hidden>Practice run: results aren't saved.</p>
+  <main class="app" data-state="loading">
+    <div class="status-card" id="loading" role="status" aria-live="polite">
+      <p id="loading-text">Loading today's team…</p>
+    </div>
+
+    <div class="status-card status-error" id="error" role="alert">
+      <p class="status-heading">Something went wrong</p>
+      <p id="error-text"></p>
+      <button class="button button-primary" id="retry" type="button">Try again</button>
+    </div>
+
+    <!-- Today's page: the lead, the battle button, your stats and both teams. -->
+    <div class="home" id="home">
+      <section class="hero">
+        <h1 class="hero-title">Beat <em>RED</em> with today's six.</h1>
+        <p class="lede">One Pokémon battle a day. Everyone gets the same six level 100 Pokémon, and one official battle against RED. Battles run on Pokémon Showdown's simulator with Gen 3 rules.</p>
+
+        <div class="leads">
+          <div class="lead">
+            <img class="lead-sprite" id="red-lead-sprite" width="64" height="64" alt="">
+            <p><span class="lead-label">RED leads with</span><strong id="red-lead-name"></strong></p>
           </div>
-          <div class="card card-loading" role="status" aria-live="polite">
-            <p class="card-heading" id="loading-text">Downloading the game</p>
-            <div class="meter"><div class="meter-fill" id="meter"></div></div>
-            <p class="card-note" id="loading-detail"></p>
+          <div class="lead">
+            <img class="lead-sprite" id="your-lead-sprite" width="64" height="64" alt="">
+            <p><span class="lead-label">Your lead</span><strong id="your-lead-name"></strong></p>
           </div>
-          <div class="card card-error" role="alert">
-            <p class="card-heading">The game didn't start</p>
-            <p class="card-note" id="error-text"></p>
-            <button class="button button-play" id="retry" type="button">Try again</button>
-          </div>
+          <a class="lead-change" href="#team">Change lead</a>
         </div>
-      </div>
 
-      <div class="toolbar">
-        <button class="button button-quiet" id="sound" type="button" aria-pressed="false" disabled>Mute</button>
-        <button class="button button-quiet" id="fullscreen" type="button" disabled>Full screen</button>
-      </div>
-
-      <div class="pad" aria-label="Touch controls">
-        <div class="dpad" aria-label="Directional pad" role="group">
-          <span class="dpad-arm dpad-up"></span>
-          <span class="dpad-arm dpad-left"></span>
-          <span class="dpad-arm dpad-center"></span>
-          <span class="dpad-arm dpad-right"></span>
-          <span class="dpad-arm dpad-down"></span>
+        <button class="button button-primary button-battle" id="play" type="button">Battle RED</button>
+        <div class="played" id="played" hidden>
+          <p class="played-result" id="played-result"></p>
+          <p class="played-next" id="played-next"></p>
         </div>
-        <div class="face">
-          <button class="pad-button pad-b" type="button" data-button="b">B</button>
-          <button class="pad-button pad-a" type="button" data-button="a">A</button>
-        </div>
-        <div class="meta">
-          <button class="pad-pill" type="button" data-button="select">Select</button>
-          <button class="pad-pill" type="button" data-button="start">Start</button>
-        </div>
-      </div>
-    </section>
+        <p class="hero-links">
+          <button class="link-button" id="practice" type="button">Practice run</button>
+          <span class="practice-note" id="practice-note" hidden>This team comes from the page address (?seed=), so nothing is recorded.</span>
+        </p>
+      </section>
 
-    <!-- Discord Activity only (discord.js): who in this server has played today. -->
-    <section class="board" id="board" aria-labelledby="board-heading" hidden>
-      <h2 class="guide-heading" id="board-heading">Today in this server</h2>
-      <ol class="board-list" id="board-list"></ol>
-      <p class="guide-note" id="board-note"></p>
-    </section>
-
-    <section class="guide">
-      <h2 class="guide-heading">Keyboard</h2>
-      <dl class="keys">
-        <div><dt><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd></dt><dd>Walk, move the cursor</dd></div>
-        <div><dt><kbd>X</kbd></dt><dd>A button: talk, confirm</dd></div>
-        <div><dt><kbd>Z</kbd></dt><dd>B button: back, cancel</dd></div>
-        <div><dt><kbd>Enter</kbd></dt><dd>Start: open the menu</dd></div>
-        <div><dt><kbd>Right Shift</kbd></dt><dd>Select</dd></div>
+      <dl class="stats" aria-label="Your stats">
+        <div><dt>Played</dt><dd id="stat-played">0</dd></div>
+        <div><dt>Win %</dt><dd id="stat-win-rate">0</dd></div>
+        <div><dt>Win streak</dt><dd id="stat-win-streak">0</dd></div>
+        <div><dt>Day streak</dt><dd id="stat-day-streak">0</dd></div>
       </dl>
-      <p class="guide-note">On a phone or tablet, use the buttons under the screen.</p>
-    </section>
 
-    <footer class="footer">
-      <p>Daily Red is a free, unofficial fan project. It isn't affiliated with or endorsed by Nintendo, Creatures Inc., GAME FREAK inc. or The Pokémon Company. Pokémon and all game content are © Nintendo, Creatures Inc. and GAME FREAK inc.</p>
-      <p><a href="licenses.txt">Licenses</a> · <a href="https://github.com/malikpervez/dailyred">Source</a></p>
-    </footer>
+      <!-- Discord Activity only (discord.js): who in this server has played today. -->
+      <section class="board" id="board" aria-labelledby="board-heading" hidden>
+        <h2 class="section-title" id="board-heading">Today in this server</h2>
+        <ol class="board-list" id="board-list"></ol>
+        <p class="section-note" id="board-note"></p>
+      </section>
 
-    <!-- Inside Discord, links can't leave the page; licenses.txt opens here instead. -->
-    <dialog class="text-dialog" id="text-dialog" aria-label="Licenses">
-      <form method="dialog"><button class="button button-quiet" type="submit">Close</button></form>
-      <pre class="text-dialog-body" id="text-dialog-body"></pre>
-    </dialog>
+      <section class="team" id="team" aria-labelledby="team-heading">
+        <h2 class="section-title" id="team-heading">Today's team</h2>
+        <p class="section-note">Your lead goes out first. The others follow in this order when one faints, or switch in any time.</p>
+        <ol class="team-list" id="team-list"></ol>
+      </section>
+
+      <section class="red-team" aria-labelledby="red-heading">
+        <h2 class="section-title" id="red-heading">RED's team</h2>
+        <ol class="red-list" id="red-list"></ol>
+        <details class="red-details">
+          <summary>Show RED's moves and items</summary>
+          <ol class="team-list team-list-red" id="red-details"></ol>
+        </details>
+      </section>
+
+      <section class="guide" id="how" aria-labelledby="how-heading">
+        <h2 class="section-title" id="how-heading">How to play</h2>
+        <ol class="steps">
+          <li>Look over today's six and pick your lead.</li>
+          <li>Battle RED: each turn, pick a move or switch Pokémon. Win by knocking out all six of his.</li>
+          <li>One official battle a day. Practice runs are unlimited and aren't recorded.</li>
+        </ol>
+        <p class="section-note">Leaving an official battle before it ends counts as a loss. A new team arrives at midnight, your time.</p>
+      </section>
+    </div>
+
+    <!-- The battle (battle/view.js builds the inside). -->
+    <div class="battle-screen" id="battle-screen">
+      <div class="battle-bar">
+        <span class="chip" id="practice-chip" hidden>Practice run, not recorded</span>
+        <span class="battle-turn" id="turn-label"></span>
+      </div>
+      <div id="battle-root"></div>
+      <div class="speed">
+        <span>Text speed</span>
+        <div class="segmented" role="group" aria-label="Text speed">
+          <button type="button" data-speed="normal">Normal</button>
+          <button type="button" data-speed="fast">Fast</button>
+        </div>
+      </div>
+      <div class="battle-done" id="battle-done" hidden>
+        <p class="done-title" id="done-title"></p>
+        <pre class="share-text" id="share-text"></pre>
+        <div class="done-buttons">
+          <button class="button button-primary" id="copy-result" type="button">Copy result</button>
+          <button class="button" id="back-home" type="button">Back to today</button>
+        </div>
+      </div>
+    </div>
   </main>
+
+  <footer class="footer">
+    <p>Daily Red is a free, unofficial fan project. It isn't affiliated with or endorsed by Nintendo, Creatures Inc., GAME FREAK inc. or The Pokémon Company. Pokémon and all game content are © Nintendo, Creatures Inc. and GAME FREAK inc.</p>
+    <p><a href="licenses.txt">Licenses</a> · <a href="https://github.com/malikpervez/dailyred">Source</a></p>
+  </footer>
+
+  <!-- Inside Discord, links can't leave the page; licenses.txt opens here instead. -->
+  <dialog class="text-dialog" id="text-dialog" aria-label="Licenses">
+    <form method="dialog"><button class="button" type="submit">Close</button></form>
+    <pre class="text-dialog-body" id="text-dialog-body"></pre>
+  </dialog>
+
+  <dialog class="confirm-dialog" id="run-dialog" aria-labelledby="run-dialog-text">
+    <p id="run-dialog-text"></p>
+    <form method="dialog" class="confirm-buttons">
+      <button class="button" value="cancel" type="submit">Keep battling</button>
+      <button class="button button-primary" value="run" type="submit">Give up</button>
+    </form>
+  </dialog>
 </body>
 </html>

@@ -13,8 +13,8 @@ the same game as the website. On top of that, inside Discord:
 - **Your Discord status** shows how today's battle went, e.g. "Beat RED today".
 
 It all runs in one Docker container on your own machine, here a Raspberry Pi
-running OpenMediaVault. The container builds the ROM from source the same way
-`scripts/build-rom.sh` does. Nothing gets uploaded anywhere else.
+running OpenMediaVault. The container bundles the battle engine and fetches
+the sprites while it builds. Nothing gets uploaded anywhere else.
 
 ```
 Discord app ──▶ <app id>.discordsays.com (Discord's proxy) ──HTTPS──▶ your hostname
@@ -22,7 +22,7 @@ Discord app ──▶ <app id>.discordsays.com (Discord's proxy) ──HTTPS─�
                                                                         │ or your reverse proxy
                                                                         ▼
                                               Pi: dailyred container (activity/server.mjs)
-                                                    web/ (site, ROM, emulator)
+                                                    web/ (site, battle engine, sprites)
                                                     /api (Discord sign-in, stats, board)
                                                     /data/dailyred.sqlite
 ```
@@ -64,18 +64,19 @@ the build and ideally 2 GB+ of RAM.
    - URL: `https://raw.githubusercontent.com/malikpervez/dailyred/main/omv/dailyred.yml`
    - Name: `dailyred`
 2. Select the new `dailyred` row and press **Up** (the arrow). Docker downloads
-   the code from GitHub and builds the image, which compiles the whole game.
-   The first time this takes about 10–20 minutes on a Pi 4. Leave the
-   output window open, or close it and check later in **Tools > logs**.
+   the code from GitHub and builds the image, which takes a minute or two on a
+   Pi 4. Leave the output window open, or close it and check later in
+   **Tools > logs**.
 3. When it's done, open **`http://<nas-ip>:8380/`** on a computer on your
-   network. You should see the normal Daily Red website, and **Play** should
-   start the game, with stats kept in that browser as usual.
+   network. You should see today's Daily Red page, and **Battle RED** should
+   start a battle, with stats kept in that browser as usual.
    `http://<nas-ip>:8380/healthz` should say `ok`.
 
 The file ([omv/dailyred.yml](../omv/dailyred.yml)) builds straight from this
 repository on GitHub. The log's warning that `DISCORD_CLIENT_ID /
-DISCORD_CLIENT_SECRET are not set` is expected until step 4. If the build
-runs out of memory, edit the file in OMV and uncomment `JOBS: "2"`.
+DISCORD_CLIENT_SECRET are not set` is expected until step 4. Every **Up**
+rebuilds from GitHub (`pull_policy: build`), so pressing it again picks up new
+versions; unchanged steps come from Docker's cache.
 
 ### Or over SSH
 
@@ -210,8 +211,8 @@ like reloading the website.
 
 ## Updating and backups
 
-**In OMV:** select `dailyred`, **Tools > Build** (it fetches the latest code
-from GitHub), then **Up**.
+**In OMV:** select `dailyred` and press **Up**. The file's `pull_policy: build`
+makes every Up fetch the latest code from GitHub and rebuild.
 
 **Over SSH:**
 
@@ -236,10 +237,10 @@ docker compose start dailyred
   only runs when Discord opens the page (its URL carries a `frame_id`).
   Everywhere else the site behaves exactly as before and keeps stats in
   localStorage.
-- **The emulator runs unchanged in Discord.** Discord's sandbox allows
-  WebAssembly (`'unsafe-eval'`), the `blob:` module import Nostalgist uses to
-  load the emulator core, and avatars from `cdn.discordapp.com`. Every file is
-  same-origin, so a single URL mapping covers everything.
+- **The battle runs in a Web Worker** loaded from the same origin
+  (`vendor/battle-worker.js`), which Discord's sandbox allows, like avatars
+  from `cdn.discordapp.com`. Every file is same-origin, so a single URL
+  mapping covers everything.
 - **Sign-in:** the Embedded App SDK's `authorize` gives a one-time code; the
   server exchanges it for an access token with the client secret
   (`POST /api/token`); the page passes the token to `authenticate` and uses it
@@ -301,8 +302,8 @@ completely and start it again.
 ```sh
 cd activity
 npm ci
-npm run build-sdk       # web/vendor/discord-sdk.js
-npm test                # the server's API tests (fake Discord)
+npm run build           # web/vendor/discord-sdk.js and battle-worker.js
+npm test                # the server's API tests (fake Discord) and the battle rules
 cd ..
 DISCORD_CLIENT_ID=... DISCORD_CLIENT_SECRET=... node activity/server.mjs   # http://localhost:8080
 ```
@@ -320,5 +321,6 @@ the `*.trycloudflare.com` hostname it prints. Put it back afterwards.
 | `activity/app.mjs` | Static files and the `/api` routes |
 | `activity/store.mjs` | SQLite storage (`node:sqlite`, no npm packages) |
 | `activity/build-sdk.mjs` | Bundles Discord's SDK into `web/vendor/` |
-| `Dockerfile`, `docker-compose.yml` | ROM build, vendor files, SDK bundle, server image; optional tunnel |
-| `scripts/setup-linux.sh` | The ROM compiler on Linux (used by the Dockerfile) |
+| `activity/build-battle.mjs` | Bundles the battle engine into `web/vendor/` |
+| `scripts/get-sprites.sh` | The Pokémon sprites into `web/sprites/` |
+| `Dockerfile`, `docker-compose.yml` | Vendor files, battle engine, sprites, server image; optional tunnel |

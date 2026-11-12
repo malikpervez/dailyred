@@ -1,163 +1,280 @@
-// Website controller: the daily title card (RED, your stats, Play), the
-// emulator, and the toolbar and touch controls. All game behaviour lives in the
-// ROM; this file starts it with the day's seed, watches for the result, and
-// keeps the stats (see daily.js). Inside a Discord Activity, discord.js adds
-// sign-in, stats kept on the server and the "Today in this server" list.
-import { Nostalgist } from './vendor/nostalgist.js';
-import { loadGameFiles } from './game-files.js';
-import { injectConfig, parseSeed } from './rom-config.js';
-import { createGameLink, PHASE, RESULT } from './game-link.js';
+// Website controller: today's page (your six, the lead picker, RED's team,
+// your stats) and the battle. The battle itself runs on Pokémon Showdown's
+// simulator in a Web Worker (battle/worker.js); battle/view.js draws it.
+// Inside a Discord Activity, discord.js adds sign-in, stats kept on the
+// server and the "Today in this server" list.
 import {
   today, dailySeed, msUntilTomorrow, loadStats, resultFor, currentStreaks,
   markBattleStarted, recordResult, settleAbandonedGame, useStatsStorage,
 } from './daily.js';
 import { inDiscord, connectDiscord, renderBoard } from './discord.js';
-import { startFpsMeter } from './fps-meter.js';
+import { loadTeams, startBattle, choose, forfeit, detach } from './battle/engine.js';
+import { createBattleView, spriteUrl } from './battle/view.js';
 
 const $ = (id) => document.getElementById(id);
 const app = document.querySelector('.app');
-const screen = $('screen');
 const ui = {
+  loadingText: $('loading-text'),
+  errorText: $('error-text'),
+  dayLabel: $('day-label'),
+  nextTeam: $('next-team'),
   play: $('play'),
-  retry: $('retry'),
-  sound: $('sound'),
-  fullscreen: $('fullscreen'),
-  wins: $('stat-wins'),
-  losses: $('stat-losses'),
-  winStreak: $('stat-win-streak'),
-  dayStreak: $('stat-day-streak'),
   played: $('played'),
   playedResult: $('played-result'),
   playedNext: $('played-next'),
+  practice: $('practice'),
   practiceNote: $('practice-note'),
-  loadingText: $('loading-text'),
-  loadingDetail: $('loading-detail'),
-  meter: $('meter'),
-  errorText: $('error-text'),
+  redLeadSprite: $('red-lead-sprite'),
+  redLeadName: $('red-lead-name'),
+  yourLeadSprite: $('your-lead-sprite'),
+  yourLeadName: $('your-lead-name'),
+  teamList: $('team-list'),
+  redList: $('red-list'),
+  redDetails: $('red-details'),
   board: $('board'),
   boardHeading: $('board-heading'),
   boardList: $('board-list'),
   boardNote: $('board-note'),
+  practiceChip: $('practice-chip'),
+  turnLabel: $('turn-label'),
+  battleDone: $('battle-done'),
+  doneTitle: $('done-title'),
+  shareText: $('share-text'),
 };
 
-// sessionStorage can throw when storage is blocked; the site works without it.
-const session = {
-  get(key) { try { return sessionStorage.getItem(key); } catch { return null; } },
-  set(key, value) { try { sessionStorage.setItem(key, value); } catch { /* not remembered */ } },
-};
+// The first day of Daily Red, for the "No." in the header.
+const FIRST_DAY = '2026-11-01';
 
-// ?seed=123 starts a practice run with that team, for testing: results
-// aren't saved, there's no daily limit, and the game keeps dealing new teams.
+// ?seed=123 shows the team for that seed instead of today's, for testing and
+// for fun: nothing is recorded and there's no daily limit.
 const practiceSeed = parseSeed(new URLSearchParams(location.search).get('seed'));
 
-// Test switches for tuning the emulator's speed on phones, also not in the UI:
-//   ?fps          show the game's speed in frames per second (60 is full speed)
-//                 and the ms the emulator spends on each frame (fps-meter.js)
-//   ?audiosync=0  don't let the audio buffer pace the game; the screen refresh does
-//   ?latency=128  audio buffer in milliseconds
-//   ?vsync=0      run frames on a timer instead of the screen refresh
-//   ?idle=detect  let mGBA find and skip idle loops (default: known games only)
-//   ?frameskip=1  draw only every 2nd frame (2 = every 3rd, ...); the game
-//                 itself still runs every frame
-//   ?scale=1      draw the game at 1x (240x160) instead of 3x; CSS scales it
-//                 up either way
-//   ?pace=timer   run the emulator's frames off a 60 Hz setTimeout instead of
-//                 requestAnimationFrame, for browsers that throttle the latter
-// e.g. ?seed=7&fps&audiosync=0 for a practice run with the counter on.
-// (RetroArch's defaults: audio sync on, 64 ms latency, vsync on.)
-const tuning = readTuning(new URLSearchParams(location.search));
-if (new URLSearchParams(location.search).get('pace') === 'timer') paceWithTimer();
-if (new URLSearchParams(location.search).has('fps')) startFpsMeter(screen);
-
-// RetroArch's main loop asks for one frame at a time through
-// requestAnimationFrame. Hand it a 60 Hz timer instead: each call schedules
-// the callback for the next 1/60 s slot, skipping slots it has already missed
-// rather than running several frames back to back to catch up.
-function paceWithTimer() {
-  const frame = 1000 / 60;
-  let next = 0;
-  window.requestAnimationFrame = (callback) => {
-    const now = performance.now();
-    next = Math.max(next + frame, now);
-    return setTimeout(() => callback(performance.now()), next - now);
-  };
-  window.cancelAnimationFrame = (id) => clearTimeout(id);
+function parseSeed(text) {
+  if (text == null || !/^\d{1,10}$/.test(String(text).trim())) return null;
+  const seed = Number(text);
+  return seed >= 1 && seed <= 0xFFFFFFFF ? seed : null;
 }
 
-function readTuning(params) {
-  const config = {};
-  const core = {};
-  if (params.has('fps')) config.fps_show = true;
-  if (params.get('audiosync') === '0') config.audio_sync = false;
-  if (params.get('vsync') === '0') config.video_vsync = false;
-  const latency = Number(params.get('latency'));
-  if (latency >= 16 && latency <= 512) config.audio_latency = Math.round(latency);
-  const idle = { detect: 'Detect and Remove', off: "Don't Remove" }[params.get('idle')];
-  if (idle) core.mgba_idle_optimization = idle;
-  const frameskip = Number(params.get('frameskip'));
-  if (Number.isInteger(frameskip) && frameskip >= 1 && frameskip <= 10) {
-    core.mgba_frameskip = 'fixed_interval';
-    core.mgba_frameskip_interval = String(frameskip);
-  }
-  const scale = Number(params.get('scale'));
-  const size = [1, 2, 3].includes(scale) ? scale : 3;
-  return { config, core, size: { width: 240 * size, height: 160 * size } };
-}
+// Per-browser preferences (the lead and text speed). Storage can be blocked.
+const prefs = {
+  get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+  set(key, value) { try { localStorage.setItem(key, value); } catch { /* not remembered */ } },
+};
 
 let stats = null; // loaded in start(), once we know where they're kept
 let discord = null; // the Discord session (discord.js) inside an activity
-let emu = null;
-let readGame = null;
-let pollTimer = null;
-let runDate = null;
-let battleSeen = false;
-let muted = session.get('dailyred-muted') === '1';
-let starting = false;
-let titleDate = null;
-
-// RetroArch opens a Web Audio context for each emulator and never closes it,
-// so a restart would leave one running (and browsers cap how many a page can
-// have). Track the contexts the emulator creates and close them on exit.
-const audioContexts = [];
-const NativeAudioContext = window.AudioContext;
-if (NativeAudioContext) {
-  window.AudioContext = class extends NativeAudioContext {
-    constructor(...args) {
-      super(...args);
-      audioContexts.push(this);
-    }
-  };
-}
+let date = null; // the day the page shows
+let seed = null;
+let teams = null; // { team, red } from the engine
+let lead = 0;
+let battle = null; // { official, date, done }
+let speed = prefs.get('dailyred-speed') === 'fast' ? 'fast' : 'normal';
 
 function setState(state) {
   app.dataset.state = state;
-  const playing = state === 'playing';
-  ui.sound.disabled = !playing;
-  ui.fullscreen.disabled = !playing || !document.fullscreenEnabled;
+  if (state !== 'battle') document.title = 'Daily Red';
 }
 
-// --- Title card ------------------------------------------------------------------
+// --- Header ------------------------------------------------------------------------
 
-function renderTitle() {
-  titleDate = today();
-  const { winStreak, dayStreak } = currentStreaks(stats, titleDate);
-  ui.wins.textContent = stats.wins;
-  ui.losses.textContent = stats.losses;
-  ui.winStreak.textContent = winStreak;
-  ui.dayStreak.textContent = dayStreak;
+const DAY = 86400000;
 
-  const result = practiceSeed ? null : resultFor(stats, titleDate);
+function dayNumber(day) {
+  return Math.round((new Date(`${day}T12:00:00`) - new Date(`${FIRST_DAY}T12:00:00`)) / DAY) + 1;
+}
+
+function formatTime(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(Math.floor(total / 3600))}:${pad(Math.floor(total / 60) % 60)}:${pad(total % 60)}`;
+}
+
+function renderHeader() {
+  const label = new Date(`${date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  ui.dayLabel.textContent = practiceSeed ? `Practice team #${practiceSeed}` : `No. ${dayNumber(date)}, ${label}`;
+}
+
+function tick() {
+  const left = formatTime(msUntilTomorrow());
+  ui.nextTeam.textContent = left;
+  if (!ui.played.hidden) ui.playedNext.textContent = `Next battle in ${left}`;
+  // At midnight a new team arrives: reload today's page (not mid-battle).
+  if (date && date !== today() && app.dataset.state === 'home' && !practiceSeed) loadDay();
+}
+setInterval(tick, 1000);
+
+// --- Today's page ----------------------------------------------------------------------
+
+const el = (tag, className, text) => {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+};
+
+const leadKey = () => `dailyred-lead:${practiceSeed ?? date}`;
+
+function battleOrder() {
+  return [lead, ...teams.team.map((_, i) => i).filter((i) => i !== lead)];
+}
+
+function typeBadges(types) {
+  const row = el('span', 'types');
+  for (const type of types) {
+    const badge = el('span', 'type-badge', type);
+    badge.dataset.type = type;
+    row.append(badge);
+  }
+  return row;
+}
+
+function sprite(mon, className) {
+  const img = el('img', className);
+  img.src = spriteUrl(mon.num, { shiny: mon.shiny });
+  img.alt = '';
+  img.width = img.height = 64;
+  img.loading = 'lazy';
+  return img;
+}
+
+const STAT_NAMES = [['hp', 'HP'], ['atk', 'Atk'], ['def', 'Def'], ['spa', 'SpA'], ['spd', 'SpD'], ['spe', 'Spe']];
+const genderSymbol = (g) => (g === 'M' ? '♂' : g === 'F' ? '♀' : '');
+
+function monCard(mon, index, { red = false } = {}) {
+  const item = el('li', 'mon-card');
+  if (!red && index === lead) item.classList.add('is-lead');
+
+  const head = el('div', 'mon-head');
+  head.append(sprite(mon, 'mon-sprite'));
+  const title = el('div', 'mon-title');
+  const name = el('h3', 'mon-name', mon.species);
+  const gender = el('span', 'mon-gender', genderSymbol(mon.gender));
+  gender.dataset.gender = mon.gender;
+  name.append(gender);
+  if (mon.shiny) name.append(el('span', 'mon-shiny', '★'));
+  title.append(name, typeBadges(mon.types));
+  head.append(title);
+  if (!red) {
+    if (index === lead) {
+      head.append(el('span', 'lead-badge', 'LEAD'));
+    } else {
+      const button = el('button', 'button button-small set-lead', 'Set as lead');
+      button.type = 'button';
+      button.addEventListener('click', () => setLead(index));
+      head.append(button);
+    }
+  }
+  item.append(head);
+
+  const facts = el('dl', 'mon-facts');
+  for (const [label, value, title] of [['Item', mon.item, mon.itemDesc], ['Ability', mon.ability, mon.abilityDesc], ['Nature', mon.nature]]) {
+    const row = el('div');
+    const dd = el('dd', '', value);
+    if (title) dd.title = title;
+    row.append(el('dt', '', label), dd);
+    facts.append(row);
+  }
+  item.append(facts);
+
+  const moves = el('ul', 'mon-moves');
+  for (const move of mon.moves) {
+    const row = el('li', 'mon-move');
+    row.dataset.type = move.type;
+    row.title = move.desc ?? '';
+    row.append(el('span', 'move-type'), el('span', 'mon-move-name', move.name));
+    const detail = [move.type, move.category === 'Status' ? 'Status' : `${move.power ?? '—'} ${move.category}`].join(' · ');
+    row.append(el('span', 'mon-move-detail', detail));
+    moves.append(row);
+  }
+  item.append(moves);
+
+  const statList = el('dl', 'mon-stats');
+  const total = Object.values(mon.baseStats).reduce((a, b) => a + b, 0);
+  for (const [key, label] of STAT_NAMES) {
+    const row = el('div', 'stat-row');
+    const bar = el('span', 'stat-bar');
+    const fill = el('span', 'stat-fill');
+    fill.style.width = `${Math.min(100, (mon.stats[key] / (key === 'hp' ? 450 : 400)) * 100)}%`;
+    bar.append(fill);
+    row.append(el('dt', '', label), el('dd', 'stat-value', String(mon.stats[key])), bar);
+    statList.append(row);
+  }
+  const bst = el('p', 'mon-bst', `Base stat total ${total}`);
+  item.append(statList, bst);
+  return item;
+}
+
+function renderTeams() {
+  const yourLead = teams.team[lead];
+  const redLead = teams.red[0];
+  ui.yourLeadSprite.src = spriteUrl(yourLead.num, { shiny: yourLead.shiny });
+  ui.yourLeadName.textContent = yourLead.species;
+  ui.redLeadSprite.src = spriteUrl(redLead.num);
+  ui.redLeadName.textContent = redLead.species;
+
+  ui.teamList.replaceChildren(...teams.team.map((mon, i) => monCard(mon, i)));
+  ui.redList.replaceChildren(...teams.red.map((mon, i) => {
+    const row = el('li', 'red-mon');
+    row.append(el('span', 'red-index', String(i + 1)), sprite(mon, 'red-sprite'), el('span', 'red-name', mon.species), typeBadges(mon.types));
+    return row;
+  }));
+  ui.redDetails.replaceChildren(...teams.red.map((mon, i) => monCard(mon, i, { red: true })));
+}
+
+function setLead(index) {
+  lead = index;
+  prefs.set(leadKey(), String(index));
+  renderTeams();
+  document.querySelector('.leads')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function renderHome() {
+  const { winStreak, dayStreak } = currentStreaks(stats, date);
+  const played = stats.wins + stats.losses;
+  $('stat-played').textContent = played;
+  $('stat-win-rate').textContent = played ? Math.round((stats.wins / played) * 100) : 0;
+  $('stat-win-streak').textContent = winStreak;
+  $('stat-day-streak').textContent = dayStreak;
+
+  const result = practiceSeed ? null : resultFor(stats, date);
   ui.play.hidden = Boolean(result);
   ui.played.hidden = !result;
   ui.practiceNote.hidden = !practiceSeed;
+  ui.practice.hidden = Boolean(practiceSeed);
+  ui.play.textContent = practiceSeed ? 'Battle RED (practice)' : 'Battle RED';
   if (result) ui.playedResult.textContent = result === 'won' ? 'You beat RED today!' : 'RED won today.';
-  updateCountdown();
+  tick();
 
   const record = `${stats.wins}W ${stats.losses}L`;
   if (result === 'won') discord?.setPresence('Beat RED today', `${record} · ${winStreak} win streak`);
   else if (result === 'lost') discord?.setPresence('Lost to RED today', record);
   else discord?.setPresence("Today's battle: not yet", record);
   refreshBoard();
+}
+
+async function loadDay() {
+  date = today();
+  seed = practiceSeed ?? dailySeed(date);
+  renderHeader();
+  setState('loading');
+  ui.loadingText.textContent = "Loading today's team…";
+  try {
+    teams = await loadTeams(seed);
+  } catch (err) {
+    showError(err);
+    return;
+  }
+  const saved = Number(prefs.get(leadKey()));
+  lead = Number.isInteger(saved) && saved >= 0 && saved < teams.team.length ? saved : 0;
+  renderTeams();
+  renderHome();
+  setState('home');
+}
+
+function showError(err) {
+  console.error(err);
+  ui.errorText.textContent = err?.message || String(err);
+  setState('error');
 }
 
 // --- Today in this server (Discord only) ---------------------------------------
@@ -170,297 +287,173 @@ async function refreshBoard() {
   try {
     const { players } = await discord.board(today());
     renderBoard(ui.boardList, players);
-    ui.boardNote.textContent = players.length ? '' : 'Nobody has played here yet. Be the first to climb!';
+    ui.boardNote.textContent = players.length ? '' : 'Nobody has played here yet. Be the first to battle RED!';
   } catch (err) {
     console.warn("Couldn't load today's players", err);
   }
-  // Keep it fresh while the title card is up; others play meanwhile.
+  // Keep it fresh while today's page is up; others play meanwhile.
   boardTimer = setTimeout(() => {
-    if (app.dataset.state === 'title' && !document.hidden) refreshBoard();
+    if (app.dataset.state === 'home' && !document.hidden) refreshBoard();
   }, 30000);
 }
 
-function formatTime(ms) {
-  const total = Math.max(0, Math.ceil(ms / 1000));
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${pad(Math.floor(total / 3600))}:${pad(Math.floor(total / 60) % 60)}:${pad(total % 60)}`;
-}
+// --- The battle --------------------------------------------------------------------------
 
-function updateCountdown() {
-  // At midnight a new battle unlocks: redraw the card.
-  if (titleDate !== today()) {
-    renderTitle();
-    return;
-  }
-  if (!ui.played.hidden) ui.playedNext.textContent = `Next battle in ${formatTime(msUntilTomorrow())}`;
-}
-setInterval(() => {
-  if (app.dataset.state === 'title') updateCountdown();
-}, 1000);
+const view = createBattleView($('battle-root'), {
+  onChoose: (choice) => choose(choice),
+  onRun: () => askToRun(),
+  getSpeed: () => speed,
+});
 
-// --- Running the game --------------------------------------------------------------
-
-const megabytes = (n) => (n / 1048576).toFixed(1);
-
-function checkBrowser() {
-  if (typeof WebAssembly !== 'object' || typeof DecompressionStream !== 'function') {
-    throw new Error("This browser can't run the game. Use a recent version of Chrome, Edge, Firefox or Safari.");
+function renderSpeed() {
+  for (const button of document.querySelectorAll('[data-speed]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.speed === speed));
   }
 }
-
-function stopEmulator() {
-  clearInterval(pollTimer);
-  pollTimer = null;
-  readGame = null;
-  if (emu) {
-    try {
-      emu.exit();
-    } catch (err) {
-      console.warn('Emulator exit failed', err);
-    }
-    emu = null;
-  }
-  for (const ctx of audioContexts.splice(0)) ctx.close().catch(() => {});
+for (const button of document.querySelectorAll('[data-speed]')) {
+  button.addEventListener('click', () => {
+    speed = button.dataset.speed;
+    prefs.set('dailyred-speed', speed);
+    renderSpeed();
+  });
 }
 
-async function startRun() {
-  if (starting) return;
-  starting = true;
-  try {
-    checkBrowser();
-    stopEmulator();
-    setState('loading');
-    ui.loadingText.textContent = 'Downloading the game';
-    ui.loadingDetail.textContent = '';
-    const files = await loadGameFiles((loaded, total) => {
-      ui.meter.style.width = total ? `${Math.min(100, (loaded / total) * 100)}%` : '50%';
-      ui.loadingDetail.textContent = total ? `${megabytes(loaded)} of ${megabytes(total)} MB` : `${megabytes(loaded)} MB`;
-    });
-
-    runDate = today();
+async function beginBattle({ practice }) {
+  const official = !practice && !practiceSeed;
+  if (official) {
     // Another tab (or, in Discord, another device) may have played meanwhile.
     await discord?.refreshStats().catch((err) => console.warn("Couldn't refresh stats", err));
     stats = loadStats();
-    if (!practiceSeed && resultFor(stats, runDate)) {
-      renderTitle();
-      setState('title');
+    if (date !== today()) {
+      loadDay();
       return;
     }
-    const seed = practiceSeed ?? dailySeed(runDate);
-    const rom = practiceSeed
-      ? injectConfig(files.rom, { seed })
-      : injectConfig(files.rom, { seed, wins: stats.wins, battles: stats.wins + stats.losses, daily: true });
-
-    ui.loadingText.textContent = 'Starting the emulator';
-    ui.loadingDetail.textContent = '';
-    ui.meter.style.width = '100%';
-
-    const canvas = document.createElement('canvas');
-    canvas.className = 'game-canvas';
-    screen.prepend(canvas);
-    emu = await Nostalgist.launch({
-      core: 'mgba',
-      element: canvas,
-      size: tuning.size, // 3x (720x480) unless ?scale; CSS scales it to fit
-      rom: { fileName: 'dailyred.gba', fileContent: new Blob([rom]) },
-      resolveCoreJs: () => files.coreJs,
-      resolveCoreWasm: () => files.coreWasm,
-      retroarchConfig: {
-        audio_mute_enable: muted,
-        // The site never makes save states itself; uncompressed ones let the
-        // debugging tools in tests/ read the game's RAM.
-        savestate_file_compression: false,
-        savestate_thumbnail_enable: false,
-        ...tuning.config,
-      },
-      retroarchCoreConfig: tuning.core,
-    });
-
-    readGame = createGameLink(emu, seed);
-    battleSeen = false;
-    pollTimer = setInterval(watchGame, 500);
-    setState('playing');
-    discord?.setPresence('Climbing to RED', `${stats.wins}W ${stats.losses}L`);
-  } catch (err) {
-    console.error(err);
-    stopEmulator();
-    // fetch() rejects with a TypeError when the network itself fails.
-    const hint = err instanceof TypeError ? ' Check your connection and try again.' : '';
-    ui.errorText.textContent = `${err?.message || err}${hint}`;
-    setState('error');
-  } finally {
-    starting = false;
+    if (resultFor(stats, date)) {
+      renderHome();
+      return;
+    }
   }
+  battle = { official, date, ran: false, done: false };
+  const name = discord?.user?.name ?? 'You';
+  ui.practiceChip.hidden = official;
+  ui.battleDone.hidden = true;
+  ui.turnLabel.textContent = '';
+  view.reset({ name });
+  setState('battle');
+  document.title = 'Daily Red: battling RED';
+  window.scrollTo({ top: 0 });
+
+  if (official) {
+    markBattleStarted(stats, date);
+    discord?.report('start', date);
+    discord?.setPresence('Battling RED', `${stats.wins}W ${stats.losses}L`);
+  }
+
+  startBattle({ seed, order: battleOrder(), name }, {
+    onEvents: (events) => {
+      const turn = events.findLast((e) => e.turn)?.turn;
+      if (turn) ui.turnLabel.textContent = `Turn ${turn}`;
+      view.play(events);
+    },
+    onRequest: (request) => view.request(request),
+    onEnd: (won, tie) => endBattle(won, tie),
+    onError: (err) => {
+      battle = null;
+      showError(err);
+    },
+  });
 }
 
-// Follows the daily battle: once it starts the day counts as played, the
-// result goes into the stats as soon as it's known, and when the game has
-// finished its closing messages we go back to the title card.
-function watchGame() {
-  let status;
+function endBattle(won, tie = false) {
+  if (!battle || battle.done) return;
+  battle.done = true;
+  if (battle.official) {
+    recordResult(stats, battle.date, won);
+    discord?.report('result', battle.date, won);
+  }
+  const text = won ? 'You defeated RED!'
+    : tie ? 'Both last Pokémon fell at once. A draw counts as a loss.'
+    : battle.ran ? 'You gave up. RED wins.'
+    : 'Your team was wiped out. RED wins.';
+  view.end(text, () => showDone(won));
+}
+
+function shareText(won) {
+  const left = (view.state?.p1.party ?? []).map((p) => (p === 'fnt' ? '⬛' : '🟥'));
+  const redLeft = (view.state?.p2.party ?? []).filter((p) => p !== 'fnt').length;
+  const head = practiceSeed || !battle.official ? 'Daily Red (practice)' : `Daily Red No. ${dayNumber(battle.date)}`;
+  const line = won
+    ? `Beat RED with ${left.filter((x) => x === '🟥').length} left`
+    : `Lost to RED (he had ${redLeft} left)`;
+  return `${head}\n${line}\n${left.join('')}`;
+}
+
+function showDone(won) {
+  ui.doneTitle.textContent = won ? 'You beat RED!' : 'RED won this time.';
+  ui.shareText.textContent = shareText(won);
+  ui.battleDone.hidden = false;
+  ui.battleDone.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function leaveBattle() {
+  detach();
+  battle = null;
+  stats = loadStats();
+  if (date !== today() && !practiceSeed) loadDay();
+  else {
+    renderHome();
+    setState('home');
+  }
+  window.scrollTo({ top: 0 });
+}
+
+function askToRun() {
+  const dialog = $('run-dialog');
+  $('run-dialog-text').textContent = battle?.official
+    ? "Give up today's battle? It counts as a loss."
+    : 'Give up this practice run?';
+  dialog.returnValue = '';
+  dialog.showModal();
+  dialog.addEventListener('close', () => {
+    if (dialog.returnValue === 'run' && battle && !battle.done) {
+      battle.ran = true;
+      forfeit();
+    }
+  }, { once: true });
+}
+
+$('back-home').addEventListener('click', leaveBattle);
+$('copy-result').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
   try {
-    status = readGame?.();
+    await navigator.clipboard.writeText(ui.shareText.textContent);
+    button.textContent = 'Copied!';
   } catch {
-    return;
+    // Clipboard blocked (e.g. inside Discord): select the text to copy by hand.
+    const range = document.createRange();
+    range.selectNodeContents(ui.shareText);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+    button.textContent = 'Select and copy';
   }
-  if (!status || practiceSeed) return;
-  if (status.phase >= PHASE.BATTLE) {
-    battleSeen = true;
-    saveBattleStart();
-  } else if (battleSeen && status.result === RESULT.NONE) {
-    // The game restarted mid-battle: that's a loss, like leaving the page.
-    saveResult(false);
-    endDailyGame(0);
-    return;
-  }
-  if (status.result !== RESULT.NONE) saveResult(status.result === RESULT.WON);
-  if (status.phase === PHASE.FINISHED) endDailyGame(1000);
-}
-
-// Each is saved once per day (the game is polled twice a second); inside
-// Discord it also goes to the activity server.
-function saveBattleStart() {
-  if (stats.pending === runDate || resultFor(stats, runDate)) return;
-  markBattleStarted(stats, runDate);
-  discord?.report('start', runDate);
-  discord?.setPresence('Battling RED', `${stats.wins}W ${stats.losses}L`);
-}
-
-function saveResult(won) {
-  if (resultFor(stats, runDate)) return;
-  recordResult(stats, runDate, won);
-  discord?.report('result', runDate, won);
-}
-
-function endDailyGame(delayMs) {
-  clearInterval(pollTimer);
-  pollTimer = null;
-  setTimeout(() => {
-    stopEmulator();
-    renderTitle();
-    setState('title');
-  }, delayMs);
-}
-
-// --- Toolbar ---------------------------------------------------------------------
-
-// Buttons keep focus after a click, and Enter is the game's Start button, so
-// hand focus back to the page to avoid triggering the button again.
-function onClick(button, handler) {
-  button.addEventListener('click', () => {
-    button.blur();
-    handler();
-  });
-}
-
-onClick(ui.play, startRun);
-onClick(ui.retry, startRun);
-
-onClick(ui.sound, () => {
-  if (!emu) return;
-  emu.sendCommand('MUTE');
-  muted = !muted;
-  session.set('dailyred-muted', muted ? '1' : '0');
-  showMuted();
+  setTimeout(() => { button.textContent = 'Copy result'; }, 2000);
 });
 
-function showMuted() {
-  ui.sound.textContent = muted ? 'Unmute' : 'Mute';
-  ui.sound.setAttribute('aria-pressed', String(muted));
-}
+ui.play.addEventListener('click', () => beginBattle({ practice: false }));
+ui.practice.addEventListener('click', () => beginBattle({ practice: true }));
+$('retry').addEventListener('click', () => location.reload());
 
-onClick(ui.fullscreen, () => {
-  if (document.fullscreenElement) document.exitFullscreen();
-  else $('console').requestFullscreen().catch(() => {});
+// An official battle in progress counts as a loss if the page closes.
+window.addEventListener('beforeunload', (event) => {
+  if (battle?.official && !battle.done) event.preventDefault();
 });
-
-document.addEventListener('fullscreenchange', () => {
-  ui.fullscreen.textContent = document.fullscreenElement ? 'Exit full screen' : 'Full screen';
-});
-
-// Don't let arrow keys and space scroll the page while playing.
-window.addEventListener('keydown', (event) => {
-  if (app.dataset.state === 'playing' && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(event.key)) {
-    event.preventDefault();
-  }
-});
-
-// Pause when the tab is hidden.
-document.addEventListener('visibilitychange', () => {
-  if (!emu) return;
-  if (document.hidden) emu.pause();
-  else emu.resume();
-});
-
-// Browsers start audio suspended unless it begins during a click; the
-// emulator starts after the download, so resume it on the next interaction.
-// iPhones only count a tap once the finger lifts (touchend / pointerup), and
-// Safari can also leave audio "interrupted", e.g. after a call. Until the
-// audio runs, the emulator keeps asking for it on every audio chunk.
-function resumeAudio() {
-  for (const ctx of audioContexts) {
-    if (ctx.state === 'suspended' || ctx.state === 'interrupted') ctx.resume().catch(() => {});
-  }
-}
-for (const type of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown']) {
-  window.addEventListener(type, resumeAudio, { capture: true, passive: true });
-}
-
-// --- Touch controls ------------------------------------------------------------
-
-for (const button of document.querySelectorAll('[data-button]')) {
-  const release = () => {
-    if (!button.classList.contains('is-down')) return;
-    button.classList.remove('is-down');
-    emu?.pressUp(button.dataset.button);
-  };
-  button.addEventListener('pointerdown', (event) => {
-    event.preventDefault();
-    button.setPointerCapture(event.pointerId);
-    button.classList.add('is-down');
-    emu?.pressDown(button.dataset.button);
-  });
-  button.addEventListener('pointerup', release);
-  button.addEventListener('pointercancel', release);
-  button.addEventListener('lostpointercapture', release);
-}
-
-// The d-pad follows the finger, so sliding from one direction to another works.
-const dpad = document.querySelector('.dpad');
-let heldDirection = null;
-
-function setDirection(next) {
-  if (next === heldDirection) return;
-  if (heldDirection) emu?.pressUp(heldDirection);
-  if (next) emu?.pressDown(next);
-  heldDirection = next;
-  dpad.dataset.dir = next ?? '';
-}
-
-function directionAt(event) {
-  const box = dpad.getBoundingClientRect();
-  const dx = event.clientX - (box.left + box.width / 2);
-  const dy = event.clientY - (box.top + box.height / 2);
-  if (Math.hypot(dx, dy) < box.width * 0.12) return null;
-  if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 'right' : 'left';
-  return dy > 0 ? 'down' : 'up';
-}
-
-dpad.addEventListener('pointerdown', (event) => {
-  event.preventDefault();
-  dpad.setPointerCapture(event.pointerId);
-  setDirection(directionAt(event));
-});
-dpad.addEventListener('pointermove', (event) => {
-  if (dpad.hasPointerCapture(event.pointerId)) setDirection(directionAt(event));
-});
-dpad.addEventListener('pointerup', () => setDirection(null));
-dpad.addEventListener('pointercancel', () => setDirection(null));
 
 // For debugging from the console and for the automated tests.
 window.dailyRed = {
-  get emulator() { return emu; },
   get stats() { return { ...stats }; },
+  get teams() { return teams; },
+  get lead() { return lead; },
+  setSpeed(next) { speed = next; renderSpeed(); },
 };
 
 // --- Inside Discord ----------------------------------------------------------------
@@ -481,7 +474,7 @@ document.querySelector('.footer').addEventListener('click', async (event) => {
 });
 
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && app.dataset.state === 'title') refreshBoard();
+  if (!document.hidden && app.dataset.state === 'home') refreshBoard();
 });
 
 // --- Start -------------------------------------------------------------------------
@@ -489,8 +482,7 @@ document.addEventListener('visibilitychange', () => {
 async function start() {
   if (inDiscord) {
     setState('loading');
-    ui.loadingText.textContent = 'Signing in with Discord';
-    ui.meter.parentElement.hidden = true;
+    ui.loadingText.textContent = 'Signing in with Discord…';
     try {
       discord = await connectDiscord();
       useStatsStorage(discord.storage);
@@ -502,14 +494,11 @@ async function start() {
       ui.board.hidden = false;
       ui.boardNote.textContent = `Couldn't sign in with Discord (${err?.message || err}). Your stats are kept on this device for now.`;
     }
-    ui.meter.parentElement.hidden = false;
   }
   stats = settleAbandonedGame(loadStats());
-  renderTitle();
-  setState('title');
+  await loadDay();
 }
 
 if (inDiscord) document.documentElement.dataset.host = 'discord';
-showMuted();
-ui.fullscreen.hidden = !document.fullscreenEnabled; // e.g. iPhone Safari, Discord's frame
+renderSpeed();
 start();

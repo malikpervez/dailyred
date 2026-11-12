@@ -1,219 +1,148 @@
-// Website test: drives index.html like a player would and checks the daily
-// game across several (faked) days: stats, one battle per day, win / loss /
-// abandoned battles, streaks, practice runs, the phone layout and the error
-// screen. Screenshots go to tests/output/site-*.png.
-import { mkdirSync } from 'node:fs';
-import {
-  startServer, launchBrowser, sleep, press, getStatus, waitFor, startRedBattle, forceWin, forceLoss,
-} from './lib.mjs';
-import { readParty } from './party.mjs';
+// End-to-end test of the website in headless Chrome: today's page, the lead
+// picker, an official battle played to the end, practice runs, giving up, a
+// battle left halfway (counts as a loss) and the next day's team.
+//
+//   cd tests && npm install && npm test        (CHROME_PATH=... if needed)
+//   SITE_URL=http://<nas-ip>:8380 npm test     (test a running server instead)
+//
+// Needs the built site: scripts/fetch-vendor.sh, scripts/get-sprites.sh and
+// `npm run build` in activity/. Screenshots go to tests/output/.
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import assert from 'node:assert/strict';
+import { chromium } from 'playwright-core';
 
-const OUT = new URL('./output/', import.meta.url).pathname;
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const OUT = join(ROOT, 'tests/output');
 mkdirSync(OUT, { recursive: true });
 
-let failures = 0;
-function check(ok, message) {
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${message}`);
-  if (!ok) failures++;
+const CHROME = [
+  process.env.CHROME_PATH,
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/usr/bin/google-chrome',
+  '/usr/bin/chromium',
+  '/opt/pw-browsers/chromium',
+].filter(Boolean).find((p) => existsSync(p));
+if (!CHROME) throw new Error('Chrome not found. Set CHROME_PATH to a Chrome/Chromium binary.');
+for (const file of ['web/vendor/battle-worker.js', 'web/sprites/front/25.png']) {
+  if (!process.env.SITE_URL && !existsSync(join(ROOT, file))) throw new Error(`Missing ${file}: build the site first (see the top of this file).`);
 }
 
-const DAY1 = '2026-10-11', DAY2 = '2026-10-12', DAY3 = '2026-10-13', DAY5 = '2026-10-15';
-const at = (date, time = '10:00:00') => new Date(`${date}T${time}`);
-
-const state = (page) => page.evaluate(() => document.querySelector('.app').dataset.state);
-const saved = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('dailyred-stats') || 'null'));
-const shown = (page) => page.evaluate(() => ({
-  wins: document.getElementById('stat-wins').textContent,
-  losses: document.getElementById('stat-losses').textContent,
-  winStreak: document.getElementById('stat-win-streak').textContent,
-  dayStreak: document.getElementById('stat-day-streak').textContent,
-  canPlay: !document.getElementById('play').hidden,
-  played: document.getElementById('played').hidden ? null : document.getElementById('played-result').textContent,
-  next: document.getElementById('played-next').textContent,
-}));
-const statLine = (s) => `${s.wins}W ${s.losses}L, win streak ${s.winStreak}, day streak ${s.dayStreak}`;
-
-// The test helpers talk to window.emu; point it at the site's emulator.
-async function attach(page) {
-  await page.waitForFunction(() => document.querySelector('.app').dataset.state === 'playing', null, { timeout: 60000 });
-  await page.evaluate(() => { window.emu = window.dailyRed.emulator; });
-  return waitFor(page, (s) => s.inOverworld, { what: 'overworld', timeoutMs: 30000 });
+function startServer() {
+  if (process.env.SITE_URL) return Promise.resolve({ url: process.env.SITE_URL.replace(/\/$/, ''), close() {} });
+  const server = spawn(process.execPath, [join(ROOT, 'scripts/serve.mjs'), '0'], { stdio: ['ignore', 'pipe', 'inherit'] });
+  process.on('exit', () => server.kill());
+  return new Promise((ok, fail) => {
+    server.stdout.once('data', (line) => ok({ url: String(line).match(/http:\/\/\S+/)[0], close: () => server.kill() }));
+    server.once('exit', (code) => fail(new Error(`server exited with ${code}`)));
+  });
 }
 
-// Presses A through the end of the battle and the closing messages until the
-// site has closed the game and is back on the title card.
-async function finishDailyGame(page, shotPrefix) {
-  for (let i = 0; i < 120; i++) {
-    if ((await state(page)) === 'title') return true;
-    if (shotPrefix && i % 3 === 0) await page.locator('canvas').first().screenshot({ path: `${OUT}/${shotPrefix}-${String(i).padStart(3, '0')}.png` }).catch(() => {});
-    await press(page, 'a');
-    await sleep(400);
+const step = (name) => console.log(`- ${name}`);
+const DAY1 = new Date('2026-11-12T10:00:00');
+const DAY2 = new Date('2026-11-13T10:00:00');
+
+// Clicks through a battle until it ends: the first usable move each turn, the
+// first healthy Pokémon when one faints. Returns the result text.
+async function playToTheEnd(page) {
+  for (let i = 0; i < 2000; i++) {
+    if (await page.isVisible('#battle-done')) break;
+    if (await page.isVisible('.party')) await page.click('.party-mon:not(:disabled)');
+    else if (await page.isVisible('.commands')) await page.click('.move:not(:disabled)');
+    else await page.waitForTimeout(25);
   }
-  return false;
+  await page.waitForSelector('#battle-done', { state: 'visible', timeout: 5000 });
+  return page.textContent('#done-title');
 }
 
 const server = await startServer();
-const browser = await launchBrowser();
+const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 try {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 400, height: 860 } });
   const page = await context.newPage();
   const errors = [];
-  page.on('pageerror', (e) => errors.push(e.message));
-
-  // Day 1: a fresh visitor.
-  await page.clock.setFixedTime(at(DAY1));
+  page.on('pageerror', (err) => errors.push(err.message));
+  await page.clock.install({ time: DAY1 });
   await page.goto(server.url);
-  await sleep(1200);
-  await page.screenshot({ path: `${OUT}/site-title.png`, fullPage: true });
-  let s = await shown(page);
-  check(s.canPlay && s.wins === '0' && s.losses === '0' && s.winStreak === '0' && s.dayStreak === '0', `new visitor sees Play and zeroed stats (${statLine(s)})`);
-  check(await page.evaluate(() => document.querySelector('.red-sprite').naturalWidth === 64), "RED's sprite is shown on the title card");
-  const leftovers = await page.evaluate(() => ['.tagline', '.steps', '#seed', '#new-run'].filter((sel) => document.querySelector(sel)));
-  check(leftovers.length === 0, `removed: tagline, how-it-works, seed, New run (${leftovers.join(', ') || 'none left'})`);
-  const footer = await page.evaluate(() => document.querySelector('.footer')?.textContent || '');
-  check(/unofficial fan project/.test(footer) && /not affiliated|isn't affiliated/.test(footer), 'footer shows the fan-project disclaimer');
-  const licenses = await page.evaluate(async () => {
-    const link = document.querySelector('.footer a[href="licenses.txt"]');
-    return link ? (await fetch(link.href)).status : 0;
-  });
-  check(licenses === 200, `footer links to licenses.txt (status ${licenses})`);
-  check(!(await page.locator('.pad').isVisible()), 'touch controls are hidden on desktop');
+  await page.waitForSelector('.app[data-state="home"]', { timeout: 30000 });
+  await page.evaluate(() => window.dailyRed.setSpeed('fast'));
 
+  step("today's page shows six Pokémon, RED's team and his lead");
+  assert.equal(await page.locator('#team-list .mon-card').count(), 6);
+  assert.equal(await page.locator('#red-list .red-mon').count(), 6);
+  assert.equal(await page.textContent('#red-lead-name'), 'Pikachu');
+  const team = await page.evaluate(() => window.dailyRed.teams.team.map((m) => m.species));
+  assert.equal(await page.textContent('#your-lead-name'), team[0]);
+  assert.match(await page.textContent('#day-label'), /^No\. 12, Thu, Nov 12$/);
+  await page.screenshot({ path: join(OUT, 'home.png'), fullPage: true });
+
+  step('Set as lead changes the lead, and it survives a reload');
+  await page.locator('#team-list .set-lead').nth(2).click(); // the 4th Pokémon (the lead has no button)
+  assert.equal(await page.textContent('#your-lead-name'), team[3]);
+  await page.reload();
+  await page.waitForSelector('.app[data-state="home"]');
+  assert.equal(await page.textContent('#your-lead-name'), team[3]);
+  await page.evaluate(() => window.dailyRed.setSpeed('fast'));
+
+  step('a practice run starts with the lead, and Give up ends it unrecorded');
+  await page.click('#practice');
+  await page.waitForSelector('.commands', { state: 'visible', timeout: 30000 });
+  assert.equal(await page.textContent('.infobox-you .ib-name'), team[3]);
+  assert.ok(await page.isVisible('#practice-chip'));
+  await page.screenshot({ path: join(OUT, 'battle.png') });
+  await page.click('.action:has-text("RUN")');
+  await page.click('#run-dialog button[value="run"]');
+  assert.equal(await playToTheEnd(page), 'RED won this time.');
+  assert.match(await page.textContent('#share-text'), /^Daily Red \(practice\)/);
+  await page.click('#back-home');
+  let stats = await page.evaluate(() => window.dailyRed.stats);
+  assert.equal(stats.wins + stats.losses, 0, 'practice runs are not recorded');
+
+  step('the official battle plays to the end and is recorded');
   await page.click('#play');
-  await attach(page);
-  const box = await page.locator('canvas').boundingBox();
-  check(Math.round(box.width) === 720 && Math.round(box.height) === 480, `game screen is 720x480 on desktop (got ${box.width}x${box.height})`);
-  const team1 = JSON.stringify(readParty((await getStatus(page)).mem).party.map((m) => m.species));
+  await page.waitForSelector('.commands', { state: 'visible', timeout: 30000 });
+  assert.equal((await page.evaluate(() => window.dailyRed.stats)).pending, '2026-11-12');
+  const title = await playToTheEnd(page);
+  const won = title === 'You beat RED!';
+  assert.match(await page.textContent('#share-text'), /^Daily Red No\. 12\n(Beat RED with \d left|Lost to RED \(he had \d left\))\n[🟥⬛]{6}$/u);
+  await page.screenshot({ path: join(OUT, 'result.png'), fullPage: true });
+  await page.click('#back-home');
+  stats = await page.evaluate(() => window.dailyRed.stats);
+  assert.deepEqual([stats.wins, stats.losses, stats.lastPlayed, stats.pending], [won ? 1 : 0, won ? 0 : 1, '2026-11-12', null]);
 
-  await startRedBattle(page);
-  await sleep(1000);
-  check((await saved(page))?.pending === DAY1, 'once the battle starts, today counts as played');
-  await forceWin(page);
-  check(await finishDailyGame(page, 'site-win'), 'after a win the site closes the game and returns to the title card');
-  s = await shown(page);
-  check(s.wins === '1' && s.losses === '0' && s.winStreak === '1' && s.dayStreak === '1', `win recorded (${statLine(s)})`);
-  check(!s.canPlay && s.played === 'You beat RED today!' && /^Next battle in \d\d:\d\d:\d\d$/.test(s.next), `no Play button; shows "${s.played}" / "${s.next}"`);
-  await page.screenshot({ path: `${OUT}/site-played.png`, fullPage: true });
+  step('after the battle, today is locked until midnight (practice still works)');
+  assert.ok(await page.isHidden('#play'));
+  assert.equal(await page.textContent('#played-result'), won ? 'You beat RED today!' : 'RED won today.');
+  assert.match(await page.textContent('#played-next'), /^Next battle in \d\d:\d\d:\d\d$/);
+  assert.ok(await page.isVisible('#practice'));
 
+  step('the next day brings a new team; leaving the battle halfway counts as a loss');
+  await page.clock.setSystemTime(DAY2);
   await page.reload();
-  await sleep(1000);
-  s = await shown(page);
-  check(!s.canPlay && s.wins === '1', 'reloading the same day keeps it locked, stats saved');
-
-  // Same team for everyone today: a second browser gets the same Pokemon.
-  const other = await browser.newContext();
-  const otherPage = await other.newPage();
-  await otherPage.clock.setFixedTime(at(DAY1, '22:00:00'));
-  await otherPage.goto(server.url);
-  await otherPage.click('#play');
-  await attach(otherPage);
-  check(JSON.stringify(readParty((await getStatus(otherPage)).mem).party.map((m) => m.species)) === team1, 'everyone gets the same team on the same day');
-  await other.close();
-
-  // Day 2: play again, lose.
-  await page.clock.setFixedTime(at(DAY2));
-  await page.reload();
-  await sleep(1000);
-  s = await shown(page);
-  check(s.canPlay && s.winStreak === '1' && s.dayStreak === '1', `next day: Play is back, streaks kept (${statLine(s)})`);
+  await page.waitForSelector('.app[data-state="home"]');
+  const nextTeam = await page.evaluate(() => window.dailyRed.teams.team.map((m) => m.species));
+  assert.notDeepEqual(nextTeam, team);
+  assert.ok(await page.isVisible('#play'));
   await page.click('#play');
-  await attach(page);
-  const team2 = JSON.stringify(readParty((await getStatus(page)).mem).party.map((m) => m.species));
-  check(team2 !== team1, "a new day brings a new team");
-  await startRedBattle(page);
-  await forceLoss(page);
-  check(await finishDailyGame(page, 'site-loss'), 'after a loss the site closes the game and returns to the title card');
-  s = await shown(page);
-  check(s.wins === '1' && s.losses === '1' && s.winStreak === '0' && s.dayStreak === '2', `loss recorded (${statLine(s)})`);
-  check(s.played === 'RED won today.', `shows "${s.played}"`);
-
-  // Day 3: leave in the middle of the battle -> counts as a loss.
-  await page.clock.setFixedTime(at(DAY3));
+  await page.waitForSelector('.commands', { state: 'visible', timeout: 30000 });
+  page.on('dialog', (dialog) => dialog.accept()); // "Leave site?"
   await page.reload();
-  await page.click('#play');
-  await attach(page);
-  await startRedBattle(page);
-  await sleep(1000);
-  await page.reload();
-  await sleep(1000);
-  s = await shown(page);
-  check(s.losses === '2' && s.dayStreak === '3' && !s.canPlay && s.played === 'RED won today.', `leaving mid-battle counts as a loss (${statLine(s)})`);
+  await page.waitForSelector('.app[data-state="home"]');
+  stats = await page.evaluate(() => window.dailyRed.stats);
+  assert.deepEqual([stats.losses, stats.lastPlayed, stats.lastResult], [won ? 1 : 2, '2026-11-13', 'lost']);
+  assert.equal(await page.textContent('#stat-day-streak'), '2');
 
-  // Day 5: a missed day resets the streaks.
-  await page.clock.setFixedTime(at(DAY5));
-  await page.reload();
-  await sleep(800);
-  s = await shown(page);
-  check(s.canPlay && s.winStreak === '0' && s.dayStreak === '0' && s.wins === '1' && s.losses === '2', `missing a day resets the streaks (${statLine(s)})`);
+  step('?seed= shows that seed\'s team as a practice team');
+  await page.goto(`${server.url}/?seed=12345`);
+  await page.waitForSelector('.app[data-state="home"]');
+  assert.equal(await page.textContent('#day-label'), 'Practice team #12345');
+  assert.ok(await page.isVisible('#practice-note'));
 
-  // Practice runs (?seed=) ignore the daily limit and never touch the stats.
-  await page.clock.setFixedTime(at(DAY3));
-  await page.goto(`${server.url}/?seed=777`);
-  await sleep(800);
-  check(await page.locator('#practice-note').isVisible() && await page.locator('#play').isVisible(), 'practice run: Play is available, with a note');
-  const before = JSON.stringify(await saved(page));
-  await page.click('#play');
-  await attach(page);
-  await startRedBattle(page);
-  await sleep(1000);
-  check(JSON.stringify(await saved(page)) === before, 'practice battles are not recorded');
-  check(errors.length === 0, `no page errors (${errors.join('; ') || 'none'})`);
-  await context.close();
-
-  // Phone: layout and touch controls.
-  const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
-  const phone = await phoneContext.newPage();
-  await phone.goto(server.url);
-  await sleep(1000);
-  // Viewport-only screenshots: a fullPage capture resizes the viewport, which
-  // makes Chromium drop the emulated touch pointer for the rest of the page.
-  await phone.screenshot({ path: `${OUT}/site-phone-title.png` });
-  check(await phone.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 0, 'no horizontal scrolling on a phone');
-  const fits = await phone.evaluate(() => {
-    const card = document.querySelector('.card-title').getBoundingClientRect();
-    return [...document.querySelectorAll('.card-title > :not(.snow):not([hidden])')].every((el) => {
-      const r = el.getBoundingClientRect();
-      return r.top >= card.top - 1 && r.bottom <= card.bottom + 1;
-    });
-  });
-  check(fits, 'the title card fits inside the phone-sized screen');
-  check(await phone.locator('.pad').isVisible(), 'touch controls are shown on a phone');
-  await phone.click('#play');
-  await attach(phone);
-  await sleep(1500);
-  const startY = (await getStatus(phone)).y;
-  const dpad = await phone.locator('.dpad').boundingBox();
-  await phone.mouse.move(dpad.x + dpad.width / 2, dpad.y + 10); // top arm of the d-pad
-  await phone.mouse.down();
-  await sleep(600);
-  await phone.mouse.up();
-  await sleep(600);
-  const endY = (await getStatus(phone)).y;
-  check(endY < startY, `touch d-pad moves the player (y ${startY} -> ${endY})`);
-  await phone.screenshot({ path: `${OUT}/site-phone-playing.png` });
-  await phoneContext.close();
-
-  // A failed download shows the error card, and Try again recovers.
-  const brokenContext = await browser.newContext();
-  const broken = await brokenContext.newPage();
-  await broken.route('**/game/dailyred.gba.gz', (route) => route.fulfill({ status: 404, body: 'missing' }));
-  await broken.goto(server.url);
-  await broken.click('#play');
-  await broken.waitForFunction(() => document.querySelector('.app').dataset.state === 'error');
-  const message = await broken.locator('#error-text').textContent();
-  check(message.includes('HTTP 404'), `download failure shows an error ("${message}")`);
-  await broken.unroute('**/game/dailyred.gba.gz');
-  await broken.click('#retry');
-  await attach(broken);
-  check(true, 'Try again starts the game after the error');
-  await brokenContext.close();
-} catch (err) {
-  failures++;
-  console.log('FAIL ', err.message);
+  assert.deepEqual(errors, [], 'no page errors');
+  console.log('All site tests passed.');
 } finally {
   await browser.close();
   server.close();
 }
-
-console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');
-process.exit(failures ? 1 : 0);

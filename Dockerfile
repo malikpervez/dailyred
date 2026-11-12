@@ -1,53 +1,42 @@
 # syntax=docker/dockerfile:1
 #
-# Daily Red as a Discord Activity, in one image: builds the ROM from source,
-# fetches the emulator, bundles Discord's SDK, and serves everything with the
-# activity server (activity/server.mjs). See docs/discord-activity.md.
+# Daily Red in one image: bundles the battle engine (Pokémon Showdown's
+# simulator) and Discord's SDK, fetches the font and the Pokémon sprites, and
+# serves everything with the activity server (activity/server.mjs). See
+# docs/discord-activity.md.
 #
 #   docker compose up -d --build
 #
-# Builds on x86_64 and arm64 (Raspberry Pi 4/5 with a 64-bit OS). The first
-# build compiles the whole game and takes a while on a Pi (roughly 10-20 min).
+# Builds on x86_64 and arm64 (Raspberry Pi 4/5 with a 64-bit OS) in a minute
+# or two.
 
-# --- 1. The ROM -------------------------------------------------------------------
-# Same compiler as the macOS setup (xPack arm-none-eabi-gcc 14.2.1). The ROM is
-# the same whatever CPU builds it, so this stage runs on the build machine's
-# own architecture.
-FROM --platform=$BUILDPLATFORM debian:trixie-slim AS rom
+# --- 1. The site's vendored files ---------------------------------------------------
+# Nothing here depends on the CPU, so this stage runs on the build machine's own.
+FROM --platform=$BUILDPLATFORM node:24-trixie-slim AS build
 RUN apt-get update \
- && apt-get install -y --no-install-recommends build-essential ca-certificates curl git libpng-dev \
- && rm -rf /var/lib/apt/lists/*
-WORKDIR /src
-COPY scripts/setup-linux.sh scripts/
-RUN scripts/setup-linux.sh
-COPY scripts/ scripts/
-COPY patches/ patches/
-RUN scripts/get-pokefirered.sh
-# Fewer parallel jobs if the build runs out of memory: --build-arg JOBS=2
-ARG JOBS
-RUN JOBS="${JOBS:-$(nproc)}" scripts/build-rom.sh
-
-# --- 2. Emulator, font and the Discord SDK ---------------------------------------------
-FROM --platform=$BUILDPLATFORM node:24-trixie-slim AS vendor
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl unzip \
+ && apt-get install -y --no-install-recommends ca-certificates curl git \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY scripts/fetch-vendor.sh scripts/
 RUN scripts/fetch-vendor.sh
 COPY activity/package.json activity/package-lock.json activity/
 RUN cd activity && npm ci --no-audit --no-fund
-COPY activity/build-sdk.mjs activity/
-RUN cd activity && npm run build-sdk
+# The Pokémon sprites, from pret/pokefirered's graphics (a few MB of git).
+COPY activity/build-sprites.mjs activity/
+COPY scripts/get-sprites.sh scripts/
+RUN scripts/get-sprites.sh /tmp/pokefirered && rm -rf /tmp/pokefirered
+COPY activity/build-sdk.mjs activity/build-battle.mjs activity/
+COPY web/battle/ web/battle/
+RUN cd activity && npm run build
 
-# --- 3. The server -------------------------------------------------------------------
+# --- 2. The server -------------------------------------------------------------------
 # Plain Node with no npm packages: node:sqlite for the stats, node:http for the rest.
 FROM node:24-alpine
 ENV NODE_ENV=production PORT=8080 DATA_DIR=/data
 WORKDIR /app
 COPY web/ web/
-COPY --from=vendor /src/web/vendor/ web/vendor/
-COPY --from=rom /src/web/game/ web/game/
+COPY --from=build /src/web/vendor/ web/vendor/
+COPY --from=build /src/web/sprites/ web/sprites/
 COPY activity/server.mjs activity/app.mjs activity/store.mjs activity/
 RUN mkdir -p /data && chown node:node /data
 USER node

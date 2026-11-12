@@ -4,7 +4,7 @@
 #   Services > Compose > Files > Add (+) > Add from URL
 #     URL:  https://raw.githubusercontent.com/malikpervez/dailyred/main/omv/dailyred.yml
 #     Name: dailyred
-#   then select it and press Up. The first build takes 10-20 minutes on a Pi.
+#   then select it and press Up. The build takes a minute or two on a Pi.
 #   Try it in a browser: http://<nas-ip>:8380/
 #
 # Full guide: https://github.com/malikpervez/dailyred/blob/main/docs/discord-activity.md
@@ -12,8 +12,6 @@ services:
   dailyred:
     build:
       context: https://github.com/malikpervez/dailyred.git#main
-      # args:
-      #   JOBS: "2"   # fewer parallel compile jobs if a Pi with 1-2 GB RAM runs out of memory
     image: dailyred-activity:local
     # Rebuild from GitHub on every Up, so new commits actually get used. Steps
     # that haven't changed come from the build cache, so it's quick if nothing did.

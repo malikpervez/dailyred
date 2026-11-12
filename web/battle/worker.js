@@ -1,0 +1,299 @@
+// The battle engine, run in a Web Worker (bundled into web/vendor/
+// battle-worker.js by activity/build-battle.mjs) so the page stays smooth.
+//
+// It generates the teams, runs the battle on Pokémon Showdown's simulator
+// (@pkmn/sim, Gen 3 rules), plays RED (ai.js), and turns the battle log into
+// what the page shows: lines of text, each with a snapshot of the screen
+// (@pkmn/client tracks the state as the player sees it, line by line).
+//
+// Messages in (from battle/engine.js):
+//   { type: 'team', seed }                 -> { type: 'team', team, red }
+//   { type: 'start', seed, order, name }   -> events / request / end messages
+//   { type: 'choose', choice }             e.g. "move 2", "switch 3"
+//   { type: 'forfeit' }
+// Messages out:
+//   { type: 'events', events: [{ text?, state, anim? }] }
+//   { type: 'request', request }           what the player can do now
+//   { type: 'end', won, tie }    a tie (both last Pokémon down at once) isn't a win
+//   { type: 'error', message }
+
+import { Dex, BattleStreams, Teams } from '@pkmn/sim';
+import { Generations } from '@pkmn/data';
+import { Battle as ClientBattle } from '@pkmn/client';
+import { Protocol } from '@pkmn/protocol';
+import { LogFormatter } from '@pkmn/view';
+import * as calc from '@smogon/calc';
+import { generateTeam, statsFor, isPhysicalType } from './team.js';
+import { RED_TEAM } from './red.js';
+import { chooseForRed } from './ai.js';
+
+const dex = Dex.forGen(3);
+const gens = new Generations(Dex); // the client shares the simulator's data
+
+const post = (message) => postMessage(message);
+
+// --- Teams for the page ------------------------------------------------------------
+
+function describeMove(name, set) {
+  const move = dex.moves.get(name);
+  const type = move.id === 'hiddenpower' ? hiddenPowerType(set.ivs) : move.type;
+  return {
+    name: move.name,
+    type,
+    category: move.category === 'Status' ? 'Status' : isPhysicalType(type) ? 'Physical' : 'Special',
+    power: move.basePower || null,
+    accuracy: move.accuracy === true ? null : move.accuracy,
+    pp: Math.floor(move.pp * 8 / 5), // 3 PP Ups, like the FireRed version's teams
+    desc: move.shortDesc,
+  };
+}
+
+// Gen 3 Hidden Power type from the IVs.
+function hiddenPowerType(ivs) {
+  const types = ['Fighting', 'Flying', 'Poison', 'Ground', 'Rock', 'Bug', 'Ghost', 'Steel',
+    'Fire', 'Water', 'Grass', 'Electric', 'Psychic', 'Ice', 'Dragon', 'Dark'];
+  const bit = (s, n) => (ivs[s] >> n) & 1;
+  const index = ['hp', 'atk', 'def', 'spe', 'spa', 'spd'].reduce((sum, s, i) => sum + (bit(s, 0) << i), 0);
+  return types[Math.floor((index * 15) / 63)];
+}
+
+function describe(set) {
+  const species = dex.species.get(set.species);
+  return {
+    species: species.name,
+    num: species.num,
+    types: species.types,
+    item: set.item,
+    ability: set.ability,
+    abilityDesc: dex.abilities.get(set.ability).shortDesc,
+    itemDesc: dex.items.get(set.item).shortDesc,
+    nature: set.nature,
+    gender: set.gender || species.gender || '',
+    shiny: Boolean(set.shiny),
+    level: set.level,
+    stats: statsFor(dex, set),
+    baseStats: species.baseStats,
+    moves: set.moves.map((m) => describeMove(m, set)),
+  };
+}
+
+// --- Text ---------------------------------------------------------------------------
+
+// The Showdown text, FireRed style: no markdown or exact HP lines, "Foe" for
+// RED's Pokémon.
+function cleanText(text) {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.includes('||') && !line.startsWith('==') && !line.startsWith('['))
+    .map((line) => line
+      .replace(/\*\*/g, '')
+      .replace(/^\((.*)\)$/, '$1')
+      .replace(/\bThe opposing /g, 'Foe ')
+      .replace(/\bthe opposing /g, 'foe '))
+    .filter((line) => !/^Battle started between/.test(line));
+}
+
+// --- Battle -------------------------------------------------------------------------
+
+let current = null;
+
+function pokemonState(mon, own) {
+  if (!mon) return null;
+  const species = dex.species.get(mon.speciesForme);
+  return {
+    name: mon.name,
+    species: species.name,
+    num: species.num,
+    level: mon.level,
+    gender: mon.gender === 'N' ? '' : mon.gender,
+    shiny: Boolean(mon.shiny),
+    hp: mon.hp,
+    maxhp: mon.maxhp,
+    // RED's HP is only known as a percentage (maxhp 100), like on the GBA.
+    exact: own,
+    status: mon.fainted ? 'fnt' : mon.status || '',
+  };
+}
+
+function snapshot(client) {
+  const side = (s, own) => {
+    const active = s.active[0] && !s.active[0].fainted ? pokemonState(s.active[0], own) : null;
+    const party = s.team.map((p) => (p.fainted || p.hp === 0 ? 'fnt' : p.status ? 'status' : 'ok'));
+    while (party.length < 6) party.push('unknown');
+    return { name: s.name, active, party };
+  };
+  return { p1: side(client.p1, true), p2: side(client.p2, false), turn: client.turn };
+}
+
+const STATE_LINES = new Set(['switch', 'drag', 'replace', 'faint', '-damage', '-heal', '-sethp', '-status',
+  '-curestatus', '-cureteam', 'detailschange', '-transform', '-formechange']);
+
+function animFor(args, kwArgs) {
+  const side = (ident) => (ident || '').slice(0, 2);
+  switch (args[0]) {
+    case 'move': return { kind: 'attack', side: side(args[1]) };
+    case '-damage': return kwArgs.from ? null : { kind: 'hit', side: side(args[1]) };
+    case 'faint': return { kind: 'faint', side: side(args[1]) };
+    case 'switch': case 'drag': return { kind: 'enter', side: side(args[1]) };
+    default: return null;
+  }
+}
+
+function summarizeRequest(request) {
+  if (!request || request.wait) return { kind: 'wait' };
+  const battle = current.stream.battle;
+  const team = battle.p1.pokemon;
+  const party = request.side.pokemon.map((p, i) => {
+    const mon = team[i]; // request order = the simulator's party order
+    return {
+      slot: i + 1,
+      species: p.speciesForme,
+      num: dex.species.get(p.speciesForme).num,
+      shiny: Boolean(p.shiny),
+      level: p.level,
+      gender: p.gender || '',
+      hp: p.hp,
+      maxhp: p.maxhp,
+      status: p.fainted ? 'fnt' : p.status || '',
+      active: Boolean(p.active),
+      moves: mon ? mon.moveSlots.map((m) => ({ name: m.move, pp: m.pp, maxpp: m.maxpp })) : [],
+    };
+  });
+  if (request.forceSwitch) return { kind: 'switch', forced: true, party };
+  const active = request.active[0];
+  const activeMon = battle.p1.active[0];
+  const foe = battle.p2.active[0];
+  const moves = active.moves.map((m, i) => {
+    const info = dex.moves.get(m.move.replace(/ \d+$/, ''));
+    const type = info.id.startsWith('hiddenpower') ? activeMon.hpType || info.type : info.type;
+    const category = info.category === 'Status' ? 'Status' : isPhysicalType(type) ? 'Physical' : 'Special';
+    return {
+      slot: i + 1,
+      name: info.exists ? info.name : m.move,
+      type,
+      category,
+      power: info.basePower || null,
+      pp: m.pp ?? null,
+      maxpp: m.maxpp ?? null,
+      disabled: Boolean(m.disabled) || m.pp === 0,
+      effect: category === 'Status' ? '' : effectiveness(type, foe),
+    };
+  });
+  return {
+    kind: 'move',
+    species: activeMon.species.name,
+    ability: activeMon.getAbility().name,
+    moves,
+    canSwitch: !active.trapped && !active.maybeTrapped,
+    party,
+  };
+}
+
+// How a move of this type hits RED's Pokémon, by type alone: 'super',
+// 'weak', 'none' or 'normal' (abilities like Levitate aren't counted).
+function effectiveness(type, foe) {
+  if (!foe || foe.fainted) return '';
+  const types = foe.getTypes();
+  if (!dex.getImmunity(type, types)) return 'none';
+  const e = dex.getEffectiveness(type, types);
+  return e > 0 ? 'super' : e < 0 ? 'weak' : 'normal';
+}
+
+async function readPlayer(battle) {
+  const { client, formatter, streams } = battle;
+  for await (const chunk of streams.p1) {
+    if (battle !== current) return;
+    if (chunk.startsWith('|request|')) {
+      const request = Protocol.parseRequest(chunk.slice(9));
+      client.update(request);
+      post({ type: 'request', request: summarizeRequest(request) });
+      continue;
+    }
+    const events = [];
+    let winner = null;
+    for (const line of chunk.split('\n')) {
+      if (!line.startsWith('|')) continue;
+      const { args, kwArgs } = Protocol.parseBattleLine(line);
+      const text = cleanText(formatter.formatText(args, kwArgs));
+      client.add(args, kwArgs);
+      if (args[0] === 'win') winner = args[1];
+      if (args[0] === 'tie') winner = '';
+      if (args[0] === 'win' || args[0] === 'tie') continue;
+      const anim = animFor(args, kwArgs);
+      if (text.length) {
+        text.forEach((t, i) => events.push({ text: t, state: snapshot(client), anim: i === 0 ? anim : null }));
+      } else if (STATE_LINES.has(args[0]) || anim) {
+        events.push({ state: snapshot(client), anim });
+      }
+      if (args[0] === 'turn') events.push({ turn: client.turn, state: snapshot(client) });
+    }
+    if (events.length) post({ type: 'events', events });
+    if (winner !== null) post({ type: 'end', won: winner !== '' && winner === client.p1.name, tie: winner === '' });
+  }
+}
+
+async function readRed(battle) {
+  for await (const chunk of battle.streams.p2) {
+    if (battle !== current) return;
+    if (!chunk.startsWith('|request|')) continue;
+    const request = JSON.parse(chunk.slice(9));
+    if (request.wait || request.teamPreview) continue;
+    let choice = 'default';
+    try {
+      choice = chooseForRed(calc, dex, battle.stream.battle, request);
+    } catch (err) {
+      console.error('RED AI failed', err);
+    }
+    battle.streams.p2.write(choice);
+  }
+}
+
+// The player's name in the battle log: Showdown takes up to 18 characters
+// and no protocol separators, and it mustn't match RED's (that's how the
+// winner is told apart).
+function playerName(name) {
+  const clean = String(name || '').replace(/[|\n\r,]/g, '').trim().slice(0, 18);
+  return clean && clean.toLowerCase() !== 'red' ? clean : 'You';
+}
+
+function start({ seed, order, name }) {
+  const team = generateTeam(dex, seed);
+  const ordered = order && order.length === team.length ? order.map((i) => team[i]) : team;
+  const stream = new BattleStreams.BattleStream();
+  const streams = BattleStreams.getPlayerStreams(stream);
+  const client = new ClientBattle(gens);
+  const battle = { stream, streams, client, formatter: new LogFormatter('p1', client) };
+  current = battle;
+  readPlayer(battle).catch((err) => post({ type: 'error', message: String(err?.message || err) }));
+  readRed(battle).catch((err) => post({ type: 'error', message: String(err?.message || err) }));
+  const player = (who, sets) => JSON.stringify({ name: who, team: Teams.pack(sets) });
+  streams.omniscient.write([
+    `>start ${JSON.stringify({ formatid: 'gen3customgame' })}`,
+    `>player p1 ${player(playerName(name), ordered)}`,
+    `>player p2 ${player('RED', RED_TEAM)}`,
+  ].join('\n'));
+}
+
+onmessage = ({ data }) => {
+  try {
+    switch (data.type) {
+      case 'team':
+        post({ type: 'team', seed: data.seed, team: generateTeam(dex, data.seed).map(describe), red: RED_TEAM.map(describe) });
+        break;
+      case 'start':
+        start(data);
+        break;
+      case 'choose':
+        current?.streams.p1.write(data.choice);
+        break;
+      case 'forfeit':
+        current?.streams.omniscient.write('>forcelose p1');
+        break;
+      default:
+        break;
+    }
+  } catch (err) {
+    post({ type: 'error', message: String(err?.message || err) });
+  }
+};

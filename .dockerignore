@@ -1,9 +1,8 @@
 # Built inside the image (see Dockerfile), or not needed in it.
 .git
-.toolchain
 pokefirered
 web/vendor
-web/game
+web/sprites
 activity/node_modules
 activity/test
 tests

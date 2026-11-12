@@ -1,13 +1,9 @@
-# Everything below is recreated by the scripts in scripts/ (see README).
+# Everything below is recreated by the scripts (see README).
 
-# scripts/setup-macos.sh
-/.toolchain/
-# scripts/get-pokefirered.sh (pret/pokefirered + patches/)
-/pokefirered/
-# scripts/fetch-vendor.sh
+# scripts/fetch-vendor.sh and `npm run build` in activity/
 /web/vendor/
-# scripts/build-rom.sh. Build output; don't commit it.
-/web/game/
+# scripts/get-sprites.sh
+/web/sprites/
 
 # Wrangler's local cache (Cloudflare deploys)
 /.wrangler/
@@ -20,3 +16,8 @@
 /activity/node_modules/
 /data/
 .env
+
+# Left over from the FireRed version's build (no longer used)
+/pokefirered/
+/.toolchain/
+/web/game/
