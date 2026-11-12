@@ -483,3 +483,16 @@ test('the Leaderboard button shows today and where the presser stands, and repla
   await settle();
   assert.deepEqual(discord.deletes().map((d) => d.path), ['/channels/c-general/messages/orig-tok1']);
 });
+
+test('with PUBLIC_URL, messages get a Play in browser link for that server', async () => {
+  const discord = fakeDiscord();
+  const store = openStore(':memory:');
+  const bot = createBot({ token: 'bot-token', clientId: '999', store, fetch: discord.fetch, now: () => new Date('2026-11-12T15:00:00Z'), log: quiet, publicUrl: 'https://nas.example.ts.net/' });
+  store.savePlayer({ id: '1', name: 'Ash', avatarUrl: '', stats: { ...EMPTY, pending: '2026-11-12' } });
+  store.joinRoom(`g:${GUILD}`, '1');
+  await bot.updateCard(GUILD, '2026-11-12');
+  const [row] = discord.posts()[0].body.components;
+  assert.deepEqual(row.components, [{ type: 2, style: 5, label: 'Play in browser', emoji: { name: '🌐' }, url: `https://nas.example.ts.net/?g=${GUILD}` }],
+    'without the public key, only the link');
+  assert.deepEqual(await bot.guildIds(), [GUILD]);
+});

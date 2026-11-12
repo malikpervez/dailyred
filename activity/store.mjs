@@ -138,6 +138,7 @@ export function openStore(file) {
   const getReminder = db.prepare('SELECT 1 FROM reminders WHERE guild_id = ? AND player_id = ?');
   const guildReminders = db.prepare('SELECT player_id FROM reminders WHERE guild_id = ?');
   const reminderGuilds = db.prepare('SELECT DISTINCT guild_id FROM reminders');
+  const knownGuilds = db.prepare("SELECT DISTINCT room FROM room_players WHERE room LIKE 'g:%'");
   const roomsSince = db.prepare(`
     SELECT DISTINCT rp.room FROM results r JOIN room_players rp ON rp.player_id = r.player_id
     WHERE r.date >= ? AND rp.room LIKE 'g:%'
@@ -195,6 +196,8 @@ export function openStore(file) {
     hasReminder: (guildId, playerId) => Boolean(getReminder.get(guildId, playerId)),
     reminders: (guildId) => guildReminders.all(guildId).map((row) => row.player_id),
     reminderGuilds: () => reminderGuilds.all().map((row) => row.guild_id),
+    // Servers where anyone has played (the website's sign-in, without a bot).
+    knownGuilds: () => knownGuilds.all().map((row) => row.room.slice(2)),
     // Servers where anyone finished a battle on or after `date`.
     roomsSince: (date) => roomsSince.all(date).map((row) => row.room),
     getSetting: (key) => getSetting.get(key)?.value ?? null,

@@ -159,7 +159,9 @@ Today / This month / Streaks / All time tabs, and (with the bot) a live card
 in #general that fills in as people play, a recap of yesterday every morning
 at 6:00 Eastern like Wordle, a leaderboard every Monday, opt-in 🔔 reminders,
 and the Pokémon Master of the Month (most wins) on the 1st, who wears a 👑
-the next month and joins the server's Hall of Fame. It's
+the next month and joins the server's Hall of Fame. Friends who can't open
+the Activity (it's for App Testers until Discord verifies it) can play on the
+website with **Sign in with Discord**, and their battles count the same. It's
 one Docker image that runs on an x86_64 or arm64 machine, e.g. a Raspberry Pi
 NAS, and builds in a minute or two. Setup:
 [docs/discord-activity.md](docs/discord-activity.md).

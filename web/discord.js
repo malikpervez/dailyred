@@ -1,9 +1,10 @@
-// Daily Red as a Discord Activity. Discord opens the page inside its app with
-// launch parameters in the URL (frame_id, instance_id, guild_id, ...). Then
-// this module signs the player in with their Discord account, keeps their
-// stats on the activity server (activity/server.mjs) instead of in this
-// browser, lists who in the server has played today, and sets the player's
-// Discord status. Opened any other way, the page doesn't load any of it.
+// Daily Red with Discord. As an Activity, Discord opens the page inside its
+// app with launch parameters in the URL (frame_id, instance_id, guild_id,
+// ...), and this module signs the player in with the Embedded App SDK. On the
+// website, players can sign in with Discord too (connectWeb: the server's
+// /auth/login, then a cookie). Either way their stats are kept on the server
+// (activity/server.mjs) instead of in this browser, and the page lists who
+// in the server has played today.
 
 import { today } from './daily.js';
 
@@ -39,16 +40,71 @@ export async function connectDiscord() {
   // A server, or the DM / group DM the activity was started in.
   const room = sdk.guildId ? `g:${sdk.guildId}` : sdk.channelId ? `c:${sdk.channelId}` : null;
   const call = (method, path, body) => request(method, path, body, token);
-
-  const { user, stats: serverStats } = await call('GET', `api/me?settle=1&date=${today()}${room ? `&room=${room}` : ''}`);
-  let cached = serverStats;
-  let reports = Promise.resolve();
   let lastPresence = '';
 
+  return session({
+    call,
+    room,
+    inServer: Boolean(sdk.guildId),
+
+    // The two lines under "Playing Daily Red" in Discord.
+    setPresence(details, state) {
+      const key = `${details}\n${state}`;
+      if (key === lastPresence) return;
+      lastPresence = key;
+      sdk.commands.setActivity({ activity: { type: 0, details, state } })
+        .catch((err) => console.warn('setActivity failed', err));
+    },
+
+    // Links can't open inside the activity frame; Discord opens them in the
+    // browser after asking the player.
+    openLink: (url) => sdk.commands.openExternalLink({ url }).catch(() => {}),
+
+    // Puts the result picture on Discord's CDN (through our server, with the
+    // player's token), then opens Discord's "share" dialog with it.
+    async shareImage(blob) {
+      const response = await fetch('api/share', {
+        method: 'POST',
+        headers: { 'Content-Type': 'image/png', Authorization: `Bearer ${token}` },
+        body: blob,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      await sdk.commands.openShareMomentDialog({ mediaUrl: data.url });
+    },
+  });
+}
+
+// --- The website with "Sign in with Discord" --------------------------------------
+
+// { available, user, rooms } from the server: whether the website can sign in
+// (the server has PUBLIC_URL), and who is signed in (a cookie).
+export const webSession = () => request('GET', 'api/web/session');
+
+// The signed-in website player's session, playing for `room` (one of
+// web.rooms, or null if Daily Red isn't in any of their servers).
+export function connectWeb(web, room) {
+  return session({
+    call: (method, path, body) => request(method, path, body),
+    room,
+    inServer: Boolean(room),
+    rooms: web.rooms,
+    setPresence() {}, // only inside Discord
+    openLink: (url) => window.open(url, '_blank', 'noopener'),
+  });
+}
+
+// What both kinds of session share: stats kept on the server, results
+// reported to it, and the server's board.
+async function session({ call, room, ...rest }) {
+  const date = today();
+  const { user, stats: serverStats } = await call('GET', `api/me?settle=1&date=${date}${room ? `&room=${room}` : ''}`);
+  let cached = serverStats;
+  let reports = Promise.resolve();
   return {
     user,
     room,
-    inServer: Boolean(sdk.guildId),
+    ...rest,
 
     // For daily.js (useStatsStorage): the stats live on the server, this is
     // just the copy the page works with. Nothing goes in localStorage, which
@@ -68,44 +124,18 @@ export async function connectDiscord() {
     // for a while: if a result never arrived, the server would count the
     // battle as abandoned (a loss) next time.
     // For a result, `details` is { monsLeft, redLeft, turns, gaveUp } for the board and the bot.
-    report(event, date, won, details = {}) {
-      const body = { event, date, room, ...(event === 'result' && { won, ...details }) };
+    report(event, day, won, details = {}) {
+      const body = { event, date: day, room, ...(event === 'result' && { won, ...details }) };
       reports = reports.then(() => retry(() => call('POST', 'api/battle', body)))
         .then(({ stats }) => { cached = stats; })
         .catch((err) => console.error(`Couldn't save the ${event} of today's battle`, err));
       return reports;
     },
 
-    board: (date) => room ? call('GET', `api/board?room=${room}&date=${date}`) : Promise.resolve({ players: [] }),
+    board: (day) => room ? call('GET', `api/board?room=${room}&date=${day}`) : Promise.resolve({ players: [] }),
 
     // The bot's daily reminder for this server (the same as its 🔔 button).
     setReminder: (on) => call('POST', 'api/reminder', { room, on }),
-
-    // Puts the result picture on Discord's CDN (through our server, with the
-    // player's token), then opens Discord's "share" dialog with it.
-    async shareImage(blob) {
-      const response = await fetch('api/share', {
-        method: 'POST',
-        headers: { 'Content-Type': 'image/png', Authorization: `Bearer ${token}` },
-        body: blob,
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-      await sdk.commands.openShareMomentDialog({ mediaUrl: data.url });
-    },
-
-    // The two lines under "Playing Daily Red" in Discord.
-    setPresence(details, state) {
-      const key = `${details}\n${state}`;
-      if (key === lastPresence) return;
-      lastPresence = key;
-      sdk.commands.setActivity({ activity: { type: 0, details, state } })
-        .catch((err) => console.warn('setActivity failed', err));
-    },
-
-    // Links can't open inside the activity frame; Discord opens them in the
-    // browser after asking the player.
-    openLink: (url) => sdk.commands.openExternalLink({ url }).catch(() => {}),
   };
 }
 
@@ -255,6 +285,8 @@ async function request(method, path, body, token) {
     headers: {
       ...(body && { 'Content-Type': 'application/json' }),
       ...(token && { Authorization: `Bearer ${token}` }),
+      // The website's session cookie only counts with this (no CSRF).
+      'X-Daily-Red': '1',
     },
     body: body && JSON.stringify(body),
   });

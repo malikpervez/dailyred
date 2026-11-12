@@ -8,12 +8,23 @@
 //   GET  /api/board    ?room=&date= -> { players, hallOfFame, reminders }
 //   POST /api/reminder { room, on } -> { on, time }     the bot's daily reminder
 //   POST /api/share    PNG image -> { url }             for Discord's share dialog
+//   GET  /api/web/session -> { available, user, rooms }  the website's sign-in
 //
-// Every /api call except config and token needs "Authorization: Bearer
-// <Discord access token>"; the token is checked against Discord's API and
-// tells us who the player is. Stats follow the same rules as the website
+// The website (outside Discord) can sign in too, for friends who can't open
+// the Activity (it's only for App Testers until Discord verifies it):
+//
+//   GET /auth/login?g=<server id>  -> Discord's "Authorize" page
+//   GET /auth/callback             <- Discord sends the player back here,
+//                                     which must be the app's OAuth2 redirect
+//   GET /auth/logout
+//
+// Every /api call except config, token and web/session needs "Authorization:
+// Bearer <Discord access token>" (the Activity) or the website's session
+// cookie. A token is checked against Discord's API and tells us who the
+// player is; the cookie is signed with a key made from the client secret. Stats follow the same rules as the website
 // (web/daily.js), applied here so a player's record is the same on every
 // device they play on.
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { stat, readFile } from 'node:fs/promises';
 import { extname, join, normalize, relative, resolve, sep } from 'node:path';
@@ -47,6 +58,10 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ROOM = /^[gc]:\d{1,20}$/; // g:<server id> or c:<channel id> (DMs)
 const TOKEN_CACHE_MS = 10 * 60 * 1000;
 const MAX_SHARE_BYTES = 2 * 1024 * 1024;
+const SESSION_DAYS = 30;
+const SESSION_COOKIE = 'dailyred_session';
+const STATE_COOKIE = 'dailyred_signin';
+const MAX_ROOMS = 10; // servers remembered in a website session
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 class HttpError extends Error {
@@ -65,7 +80,12 @@ export function createApp({
   fetch = globalThis.fetch,
   now = () => new Date(),
   bot = null, // bot.mjs: the live card, recaps and button presses (optional)
+  publicUrl = null, // https://... this site's public address: turns on the website's sign-in
 }) {
+  const site = publicUrl ? String(publicUrl).replace(/\/$/, '') : null;
+  const redirectUri = site ? `${site}/auth/callback` : null;
+  const webSignIn = Boolean(redirectUri && clientId && clientSecret);
+  const sessionKey = clientSecret ? createHmac('sha256', 'dailyred-web-session').update(clientSecret).digest() : null;
   const root = resolve(webRoot);
   const gzipCache = new Map(); // path -> { mtimeMs, body }
   const tokenCache = new Map(); // access token -> { user, expires }
@@ -135,7 +155,7 @@ export function createApp({
     return { ok: response.ok, status: response.status, body };
   }
 
-  async function exchangeCode(code) {
+  async function exchangeCode(code, redirect = null) {
     if (!clientId || !clientSecret) {
       throw new HttpError(500, 'The server is missing DISCORD_CLIENT_ID or DISCORD_CLIENT_SECRET.');
     }
@@ -148,6 +168,7 @@ export function createApp({
         client_secret: clientSecret,
         grant_type: 'authorization_code',
         code,
+        ...(redirect && { redirect_uri: redirect }),
       }),
     });
     if (!ok || !body.access_token) {
@@ -165,7 +186,14 @@ export function createApp({
 
   async function requireUser(req) {
     const token = bearer(req);
-    if (!token) throw new HttpError(401, 'Not signed in');
+    if (!token) {
+      // The website: the session cookie. Changes need our own header too,
+      // which another site's page can't send (no CSRF).
+      const user = webUser(req);
+      if (!user) throw new HttpError(401, 'Not signed in');
+      if (req.method !== 'GET' && req.headers['x-daily-red'] !== '1') throw new HttpError(403, 'Missing X-Daily-Red header');
+      return user;
+    }
     const cached = tokenCache.get(token);
     if (cached && cached.expires > Date.now()) return cached.user;
 
@@ -177,12 +205,100 @@ export function createApp({
     return user;
   }
 
+  // --- The website's sign-in -------------------------------------------------------
+
+  function seal(value) {
+    const body = Buffer.from(JSON.stringify(value)).toString('base64url');
+    return `${body}.${createHmac('sha256', sessionKey).update(body).digest('base64url')}`;
+  }
+
+  function unseal(text) {
+    if (!sessionKey || typeof text !== 'string') return null;
+    const [body, mac] = text.split('.');
+    if (!body || !mac) return null;
+    const want = createHmac('sha256', sessionKey).update(body).digest();
+    const got = Buffer.from(mac, 'base64url');
+    if (got.length !== want.length || !timingSafeEqual(got, want)) return null;
+    try {
+      const value = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+      return value.exp > now().getTime() ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function cookies(req) {
+    const out = {};
+    for (const part of (req.headers.cookie || '').split(';')) {
+      const i = part.indexOf('=');
+      if (i > 0) out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
+    }
+    return out;
+  }
+
+  const cookie = (name, value, maxAge) => `${name}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${site?.startsWith('https:') ? '; Secure' : ''}`;
+
+  // The website's signed-in player: { id, name, avatarUrl, rooms, web: true }.
+  function webUser(req) {
+    const session = unseal(cookies(req)[SESSION_COOKIE]);
+    return session ? { id: session.id, name: session.name, avatarUrl: session.avatarUrl, rooms: session.rooms, web: true } : null;
+  }
+
+  function redirect(res, location, setCookies = []) {
+    res.writeHead(302, { Location: location, 'Set-Cookie': setCookies, 'Cache-Control': 'no-store' });
+    res.end();
+  }
+
+  // GET /auth/login?g=<server id>: off to Discord's "Authorize" page.
+  function login(req, res, url) {
+    if (!webSignIn) throw new HttpError(404, 'Website sign-in is off (PUBLIC_URL is not set)');
+    const guild = /^\d{1,20}$/.test(url.searchParams.get('g') || '') ? url.searchParams.get('g') : null;
+    const state = randomBytes(16).toString('base64url');
+    const authorize = new URL('https://discord.com/oauth2/authorize');
+    for (const [k, v] of Object.entries({
+      response_type: 'code', client_id: clientId, scope: 'identify guilds', state, redirect_uri: redirectUri, prompt: 'none',
+    })) authorize.searchParams.set(k, v);
+    redirect(res, authorize.href, [cookie(STATE_COOKIE, seal({ state, guild, exp: now().getTime() + 10 * 60 * 1000 }), 600)]);
+  }
+
+  // GET /auth/callback: Discord sends the player back with a code.
+  async function callback(req, res, url) {
+    if (!webSignIn) throw new HttpError(404, 'Website sign-in is off');
+    const pending = unseal(cookies(req)[STATE_COOKIE]);
+    const clear = cookie(STATE_COOKIE, '', 0);
+    const back = (guild) => (guild ? `/?g=${guild}` : '/');
+    if (url.searchParams.get('error')) return redirect(res, back(pending?.guild), [clear]); // pressed Cancel
+    if (!pending || url.searchParams.get('state') !== pending.state) throw new HttpError(400, 'Sign-in expired or came from somewhere else. Try again.');
+
+    const { access_token: token } = await exchangeCode(url.searchParams.get('code'), redirectUri);
+    const auth = { headers: { Authorization: `Bearer ${token}` } };
+    const [me, guilds] = await Promise.all([discordJson('/users/@me', auth), discordJson('/users/@me/guilds', auth)]);
+    if (!me.ok) throw new HttpError(502, "Couldn't get your Discord account");
+    // The player's servers that have Daily Red: the bot's servers, or (with
+    // no bot) the ones where someone has played.
+    const known = new Set((await bot?.guildIds?.().catch(() => null)) ?? store.knownGuilds());
+    const rooms = (guilds.ok && Array.isArray(guilds.body) ? guilds.body : [])
+      .filter((g) => known.has(String(g.id)))
+      .slice(0, MAX_ROOMS)
+      .map((g) => ({ room: `g:${g.id}`, name: String(g.name || 'Server').slice(0, 40) }));
+    const user = { id: String(me.body.id), name: me.body.global_name || me.body.username || 'Trainer', avatarUrl: avatarUrl(me.body) };
+    const session = { ...user, rooms, exp: now().getTime() + SESSION_DAYS * 86400 * 1000 };
+    const guild = rooms.some((r) => r.room === `g:${pending.guild}`) ? pending.guild : null;
+    redirect(res, back(guild), [clear, cookie(SESSION_COOKIE, seal(session), SESSION_DAYS * 86400)]);
+  }
+
+  // A room the player may use. Website players: only their own servers.
+  function allowRoom(user, room) {
+    if (room && user.web && !user.rooms.some((r) => r.room === room)) throw new HttpError(403, "You're not in that server");
+    return room;
+  }
+
   // --- Players ----------------------------------------------------------------
 
   // The player's saved row with their current Discord name and avatar.
-  function loadPlayer(user) {
-    const saved = store.getPlayer(user.id);
-    return { ...user, stats: { ...EMPTY, ...saved?.stats } };
+  function loadPlayer({ id, name, avatarUrl: avatar }) {
+    const saved = store.getPlayer(id);
+    return { id, name, avatarUrl: avatar, stats: { ...EMPTY, ...saved?.stats } };
   }
 
   // Dates come from the player's own time zone, so they're within a day of
@@ -219,7 +335,7 @@ export function createApp({
     const player = loadPlayer(user);
     if (query.get('settle') === '1') settle(player);
     store.savePlayer(player);
-    const room = checkRoom(query.get('room'));
+    const room = allowRoom(user, checkRoom(query.get('room')));
     if (room) store.joinRoom(room, user.id);
     // Opening the Activity in a server puts up today's card if it's missing.
     if (bot && room?.startsWith('g:') && query.get('date')) {
@@ -234,7 +350,7 @@ export function createApp({
 
   function battle(user, body) {
     const date = checkDate(body.date);
-    const room = checkRoom(body.room);
+    const room = allowRoom(user, checkRoom(body.room));
     const player = loadPlayer(user);
     const { stats } = player;
     if (stats.lastPlayed && date < stats.lastPlayed) throw new HttpError(409, 'A later day is already recorded');
@@ -282,7 +398,7 @@ export function createApp({
   }
 
   function board(user, query) {
-    const room = checkRoom(query.get('room'), { required: true });
+    const room = allowRoom(user, checkRoom(query.get('room'), { required: true }));
     const date = checkDate(query.get('date'));
     const results = store.roomResults(room, date);
     const month = store.monthTotals(room, date.slice(0, 7)); // the Master of the Month race
@@ -317,7 +433,7 @@ export function createApp({
 
   // POST /api/reminder: the same switch as the bot's 🔔 Reminders button.
   function reminder(user, body) {
-    const room = checkRoom(body.room, { required: true });
+    const room = allowRoom(user, checkRoom(body.room, { required: true }));
     if (!room.startsWith('g:') || !bot?.status().posting) throw new HttpError(400, 'Reminders only work in a server with the bot');
     if (typeof body.on !== 'boolean') throw new HttpError(400, 'Missing on');
     store.joinRoom(room, user.id);
@@ -355,6 +471,14 @@ export function createApp({
     let result;
     if (route === 'GET /api/config') {
       result = { clientId: clientId || null };
+    } else if (route === 'GET /api/web/session') {
+      // The website: is sign-in on, and who is signed in (no Discord call).
+      const user = webUser(req);
+      result = {
+        available: webSignIn,
+        user: user && { id: user.id, name: user.name, avatarUrl: user.avatarUrl },
+        rooms: user?.rooms ?? [],
+      };
     } else if (route === 'POST /api/token') {
       result = await exchangeCode((await readJson(req)).code);
     } else if (route === 'GET /api/me') {
@@ -384,6 +508,9 @@ export function createApp({
             ? 'DISCORD_PUBLIC_KEY is set but isn\'t a valid key: copy it again from General Information > Public Key.'
             : 'DISCORD_PUBLIC_KEY isn\'t reaching the server: add it to the environment (and to the compose file\'s environment: list), then Up.',
         bot: status.posting ? 'On: posts the live card, recaps, Monday leaderboards and reminders.' : 'Off: DISCORD_BOT_TOKEN isn\'t set.',
+        websiteSignIn: webSignIn
+          ? `On: the app's only OAuth2 redirect must be ${redirectUri}`
+          : 'Off: set PUBLIC_URL (and DISCORD_CLIENT_SECRET) to let friends play in the browser.',
       };
     } else if (route === 'POST /api/interactions') {
       // Discord's button presses (bot.mjs), signed with the app's key.
@@ -413,12 +540,20 @@ export function createApp({
         res.end('ok');
       } else if (url.pathname.startsWith('/api/')) {
         await api(req, res, url);
+      } else if (url.pathname === '/auth/login' && req.method === 'GET') {
+        login(req, res, url);
+      } else if (url.pathname === '/auth/callback' && req.method === 'GET') {
+        await callback(req, res, url);
+      } else if (url.pathname === '/auth/logout' && req.method === 'GET') {
+        redirect(res, '/', [cookie(SESSION_COOKIE, '', 0)]);
       } else {
         await serveStatic(req, res, url.pathname);
       }
     } catch (err) {
       const status = err instanceof HttpError ? err.status : 500;
       if (status === 500) console.error(err);
+      // A body cut off half-read (too large) leaves the connection unusable.
+      if (status === 413 && !res.headersSent) res.setHeader('Connection', 'close');
       if (res.headersSent) {
         res.destroy();
       } else if (req.url.includes('/api/')) {

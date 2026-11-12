@@ -13,7 +13,10 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { chromium } from 'playwright-core';
+import { createApp } from '../activity/app.mjs';
+import { openStore } from '../activity/store.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'tests/output');
@@ -251,9 +254,94 @@ try {
   await page.waitForSelector('.app[data-state="home"]');
   assert.match(await page.textContent('#day-label'), /^No\. 13, /, "tomorrow's team isn't open for practice");
 
+  step('the website signs in with Discord, and the battle counts for the server');
+  await signInTest(browser);
+
   assert.deepEqual(errors, [], 'no page errors');
   console.log('All site tests passed.');
 } finally {
   await browser.close();
   server.close();
+}
+
+// The activity server (app.mjs) with a stand-in for Discord's API, and the
+// browser sent through "Sign in with Discord".
+async function signInTest(browser) {
+  const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const fakeDiscord = async (url) => {
+    if (url.endsWith('/oauth2/token')) return json(200, { access_token: 'token-ash', expires_in: 604800 });
+    if (url.endsWith('/users/@me')) return json(200, { id: '80351110224678912', username: 'ash', global_name: 'Ash', avatar: null });
+    if (url.endsWith('/users/@me/guilds')) return json(200, [{ id: '42', name: 'Pallet Town' }]);
+    return json(404, {});
+  };
+  const store = openStore(':memory:');
+  store.savePlayer({ id: '1', name: 'Misty', avatarUrl: '', stats: {} });
+  store.joinRoom('g:42', '1');
+  const http = createServer((req, res) => handle(req, res));
+  await new Promise((ok) => http.listen(0, '127.0.0.1', ok));
+  const site = `http://127.0.0.1:${http.address().port}`;
+  const handle = createApp({
+    webRoot: join(ROOT, 'web'), store, clientId: '1234', clientSecret: 'secret', fetch: fakeDiscord,
+    now: () => new Date('2026-11-12T15:00:00Z'), publicUrl: site,
+  });
+  const context = await browser.newContext({ viewport: { width: 400, height: 860 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (err) => errors.push(err.message));
+  // Our /auth/login runs for real; where it would send the browser on to
+  // Discord, the player "authorizes" and comes straight back with a code.
+  // (Playwright can't intercept the redirect itself.)
+  await page.route(`${site}/auth/login**`, async (route) => {
+    const response = await route.fetch({ maxRedirects: 0 });
+    const authorize = new URL(response.headers().location);
+    assert.equal(authorize.origin + authorize.pathname, 'https://discord.com/oauth2/authorize');
+    assert.equal(authorize.searchParams.get('redirect_uri'), `${site}/auth/callback`);
+    await route.fulfill({
+      status: 302,
+      headers: {
+        'Set-Cookie': response.headers()['set-cookie'],
+        Location: `${site}/auth/callback?code=abc&state=${authorize.searchParams.get('state')}`,
+      },
+    });
+  });
+  await page.route('https://cdn.discordapp.com/**', (route) => route.fulfill({ status: 404 }));
+  try {
+    await page.clock.install({ time: DAY1 });
+    await page.goto(`${site}/?g=42`);
+    await page.waitForSelector('.app[data-state="home"]', { timeout: 30000 });
+    assert.ok(await page.isHidden('#play'), 'signed out: no battle that counts');
+    assert.ok(await page.isVisible('#signin'));
+    assert.equal(await page.getAttribute('#signin-link', 'href'), 'auth/login?g=42');
+    await page.screenshot({ path: join(OUT, 'signed-out.png') });
+
+    await page.click('#signin-link');
+    await page.waitForURL(`${site}/?g=42`);
+    await page.waitForSelector('.app[data-state="home"]', { timeout: 30000 });
+    assert.equal(await page.textContent('#account-name'), 'Ash');
+    assert.equal(await page.textContent('#board-heading'), 'Today in Pallet Town');
+    assert.ok(await page.isVisible('#play'));
+    assert.ok(await page.isHidden('#signin'));
+    await page.evaluate(() => window.dailyRed.setSpeed('fast'));
+    await page.screenshot({ path: join(OUT, 'signed-in.png') });
+
+    await page.click('#play');
+    await page.waitForSelector('.commands', { state: 'visible', timeout: 30000 });
+    await page.click('.action:has-text("RUN")');
+    await page.click('#run-dialog button[value="run"]');
+    await playToTheEnd(page);
+    await page.waitForSelector('#done-standing', { state: 'attached' });
+    await page.click('#back-home');
+    await page.waitForFunction(() => document.querySelector('#board-list .board-row.is-you'));
+    assert.match(await page.textContent('#board-list .is-you'), /^Ash \(you\)Ran from RED/);
+    const saved = store.roomResults('g:42', '2026-11-12').get('80351110224678912');
+    assert.deepEqual([saved.won, saved.gaveUp], [false, true], 'saved on the server for the server');
+    assert.deepEqual(errors, [], 'no page errors');
+
+    await page.goto(`${site}/auth/logout`);
+    await page.waitForSelector('.app[data-state="home"]', { timeout: 30000 });
+    assert.ok(await page.isVisible('#signin'), 'signed out again');
+  } finally {
+    await context.close();
+    http.close();
+  }
 }

@@ -31,6 +31,10 @@ async function fakeDiscord(url, init = {}) {
     if (form.get('client_secret') !== 'secret' || !form.get('code').startsWith('code-')) return json(400, { error: 'invalid_grant' });
     return json(200, { access_token: `token-${form.get('code').slice(5)}`, expires_in: 604800, scope: 'identify' });
   }
+  if (url.endsWith('/users/@me/guilds')) {
+    const known = { 'token-ash': [{ id: '42', name: 'Pallet Town' }, { id: '99', name: 'No Daily Red here' }] };
+    return json(200, known[init.headers.Authorization.replace('Bearer ', '')] ?? []);
+  }
   if (url.endsWith('/users/@me')) {
     calls.me++;
     const user = USERS[init.headers.Authorization.replace('Bearer ', '')];
@@ -245,4 +249,70 @@ test('the share image goes to Discord with the player\'s own token', async () =>
   assert.equal(calls.upload.file.type, 'image/png');
   assert.equal((await upload(png)).status, 429, 'one upload every few seconds');
   assert.equal((await upload(Buffer.alloc(3 * 1024 * 1024), 'token-gary')).status, 413);
+});
+
+test('the website can sign in with Discord: login, callback, a signed cookie, only your servers', async () => {
+  // Without PUBLIC_URL it's off.
+  assert.deepEqual(await (await get('/api/web/session')).json(), { available: false, user: null, rooms: [] });
+  assert.equal((await fetch(`${base}/auth/login`, { redirect: 'manual' })).status, 404);
+
+  const store = openStore(':memory:');
+  store.savePlayer({ id: '1', name: 'Misty', avatarUrl: '', stats: {} });
+  store.joinRoom('g:42', '1'); // Daily Red has been played in server 42
+  const site = createServer(createApp({
+    webRoot, store, clientId: '1234567890', clientSecret: 'secret', fetch: fakeDiscord, now: () => clock, publicUrl: 'https://dailyred.test/',
+  }));
+  await new Promise((ok) => site.listen(0, '127.0.0.1', ok));
+  const url = `http://127.0.0.1:${site.address().port}`;
+  const go = (path, headers = {}, init = {}) => fetch(url + path, { redirect: 'manual', ...init, headers });
+  const cookieOf = (res, name) => res.headers.getSetCookie().find((c) => c.startsWith(`${name}=`));
+  try {
+    assert.equal((await (await go('/api/web/session')).json()).available, true);
+
+    const login = await go('/auth/login?g=42');
+    assert.equal(login.status, 302);
+    const authorize = new URL(login.headers.get('location'));
+    assert.equal(authorize.origin + authorize.pathname, 'https://discord.com/oauth2/authorize');
+    assert.equal(authorize.searchParams.get('redirect_uri'), 'https://dailyred.test/auth/callback');
+    assert.equal(authorize.searchParams.get('scope'), 'identify guilds');
+    const stateCookie = cookieOf(login, 'dailyred_signin');
+    assert.match(stateCookie, /HttpOnly; SameSite=Lax; Max-Age=600; Secure/);
+    const state = authorize.searchParams.get('state');
+    const signinCookie = { Cookie: stateCookie.split(';')[0] };
+
+    assert.equal((await go(`/auth/callback?code=code-ash&state=${state}`)).status, 400, 'no cookie: not from our login');
+    assert.equal((await go('/auth/callback?code=code-ash&state=forged', signinCookie)).status, 400);
+    const cancelled = await go('/auth/callback?error=access_denied', signinCookie);
+    assert.equal(cancelled.headers.get('location'), '/?g=42');
+
+    const back = await go(`/auth/callback?code=code-ash&state=${state}`, signinCookie);
+    assert.equal(back.status, 302);
+    assert.equal(back.headers.get('location'), '/?g=42');
+    assert.equal(calls.token.at(-1).redirect_uri, 'https://dailyred.test/auth/callback');
+    const session = { Cookie: cookieOf(back, 'dailyred_session').split(';')[0] };
+
+    // Only the player's servers that have Daily Red.
+    assert.deepEqual(await (await go('/api/web/session', session)).json(), {
+      available: true,
+      user: { id: USERS['token-ash'].id, name: 'Ash', avatarUrl: avatarUrl(USERS['token-ash']) },
+      rooms: [{ room: 'g:42', name: 'Pallet Town' }],
+    });
+    const me = await (await go('/api/me?settle=1&room=g:42', session)).json();
+    assert.equal(me.user.name, 'Ash');
+
+    const start = (headers, room = 'g:42') => go('/api/battle', { ...headers, 'Content-Type': 'application/json' }, {
+      method: 'POST', body: JSON.stringify({ event: 'start', date: clock.toISOString().slice(0, 10), room }),
+    });
+    assert.equal((await start(session)).status, 403, 'changes need the X-Daily-Red header (no CSRF)');
+    assert.equal((await start({ ...session, 'X-Daily-Red': '1' }, 'g:99')).status, 403, 'not one of your servers');
+    assert.equal((await start({ ...session, 'X-Daily-Red': '1' })).status, 200);
+    assert.equal((await go('/api/board?room=g:42&date=' + clock.toISOString().slice(0, 10), session)).status, 200);
+
+    const forged = { Cookie: session.Cookie.replace(/\.[^.]*$/, '.AAAA') };
+    assert.equal((await go('/api/me', forged)).status, 401);
+    const logout = await go('/auth/logout', session);
+    assert.match(cookieOf(logout, 'dailyred_session'), /Max-Age=0/);
+  } finally {
+    site.close();
+  }
 });

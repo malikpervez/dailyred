@@ -7,7 +7,9 @@ import {
   today, addDays, dailySeed, dayNumber, msUntilTomorrow, loadStats, resultFor, currentStreaks,
   markBattleStarted, recordResult, settleAbandonedGame, useStatsStorage,
 } from './daily.js';
-import { inDiscord, connectDiscord, renderBoard, renderHallOfFame, standingText } from './discord.js';
+import {
+  inDiscord, connectDiscord, webSession, connectWeb, renderBoard, renderHallOfFame, standingText,
+} from './discord.js';
 import { loadTeams, startBattle, choose, forfeit, detach } from './battle/engine.js';
 import { createBattleView, spriteUrl } from './battle/view.js';
 import { drawShareImage, canvasToBlob } from './share.js';
@@ -26,6 +28,9 @@ const ui = {
   practice: $('practice'),
   practiceNote: $('practice-note'),
   practiceLocked: $('practice-locked'),
+  signin: $('signin'),
+  signinLink: $('signin-link'),
+  account: $('account'),
   redLeadSprite: $('red-lead-sprite'),
   redLeadName: $('red-lead-name'),
   yourLeadSprite: $('your-lead-sprite'),
@@ -76,7 +81,8 @@ const prefs = {
 };
 
 let stats = null; // loaded in start(), once we know where they're kept
-let discord = null; // the Discord session (discord.js) inside an activity
+let discord = null; // the Discord session (discord.js): the Activity, or signed in on the website
+let signInFirst = false; // the website can sign in with Discord, and the player hasn't
 let date = null; // the day the page shows
 let seed = null;
 let teams = null; // { team, red } from the engine
@@ -246,8 +252,12 @@ function renderHome() {
   $('stat-day-streak').textContent = dayStreak;
 
   const result = practiceSeed ? null : resultFor(stats, date);
-  ui.play.hidden = Boolean(result);
-  ui.played.hidden = !result;
+  // On a website that can sign in with Discord, the battle that counts needs
+  // it (and playing signed out first would be a free practice run).
+  const needSignIn = signInFirst && !practiceSeed;
+  ui.signin.hidden = !needSignIn;
+  ui.play.hidden = Boolean(result) || needSignIn;
+  ui.played.hidden = !result || needSignIn;
   ui.practiceNote.hidden = !practiceSeed;
   // Today's team can only be practised once today's battle is done, so the
   // battle that counts is everyone's first try with it.
@@ -378,6 +388,7 @@ for (const button of document.querySelectorAll('[data-speed]')) {
 }
 
 async function beginBattle({ practice }) {
+  if (signInFirst && !practiceSeed) return;
   if (practice && !practiceSeed && !resultFor(stats, date)) {
     renderHome(); // practice unlocks after today's battle
     return;
@@ -553,7 +564,7 @@ async function shareImage() {
   note('');
   ui.shareButton.disabled = true;
   try {
-    if (discord) {
+    if (discord?.shareImage) {
       await discord.shareImage(shareBlob);
       return;
     }
@@ -663,6 +674,39 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && app.dataset.state === 'home') refreshBoard();
 });
 
+// --- Signed in on the website ---------------------------------------------------------
+
+const linkedServer = /^\d{1,20}$/.test(new URLSearchParams(location.search).get('g') || '')
+  ? new URLSearchParams(location.search).get('g') : null; // from the bot's "Play in browser"
+
+// Which of the player's servers to play for: the bot's link, the last one
+// picked, or the first.
+function pickRoom(rooms) {
+  const ids = rooms.map((r) => r.room);
+  const room = [linkedServer && `g:${linkedServer}`, prefs.get('dailyred-room')].find((r) => r && ids.includes(r)) ?? ids[0] ?? null;
+  if (room) prefs.set('dailyred-room', room);
+  return room;
+}
+
+function showAccount(web, room) {
+  ui.account.hidden = false;
+  $('account-avatar').src = web.user.avatarUrl;
+  $('account-name').textContent = web.user.name;
+  $('account-note').hidden = web.rooms.length > 0;
+  const select = $('account-room');
+  select.hidden = web.rooms.length < 2;
+  select.replaceChildren(...web.rooms.map((r) => {
+    const option = el('option', '', r.name);
+    option.value = r.room;
+    option.selected = r.room === room;
+    return option;
+  }));
+  select.onchange = () => {
+    prefs.set('dailyred-room', select.value);
+    location.href = `./?g=${select.value.slice(2)}`;
+  };
+}
+
 // --- Start -------------------------------------------------------------------------
 
 async function start() {
@@ -679,6 +723,28 @@ async function start() {
       console.error('Discord sign-in failed', err);
       ui.board.hidden = false;
       ui.boardNote.textContent = `Couldn't sign in with Discord (${err?.message || err}). Your stats are kept on this device for now.`;
+    }
+  } else if (!practiceSeed) {
+    // The website: signed in with Discord (a cookie), or offer it.
+    const web = await webSession().catch(() => null); // no server API: a plain website
+    if (web?.user) {
+      setState('loading');
+      ui.loadingText.textContent = 'Loading your stats…';
+      try {
+        const room = pickRoom(web.rooms);
+        discord = await connectWeb(web, room);
+        useStatsStorage(discord.storage);
+        showAccount(web, room);
+        ui.board.hidden = !room;
+        const name = web.rooms.find((r) => r.room === room)?.name;
+        ui.boardHeading.textContent = name ? `Today in ${name}` : 'Today in this server';
+      } catch (err) {
+        console.error('Signing in failed', err);
+        signInFirst = web.available;
+      }
+    } else if (web?.available) {
+      signInFirst = true;
+      ui.signinLink.href = `auth/login${linkedServer ? `?g=${linkedServer}` : ''}`;
     }
   }
   stats = settleAbandonedGame(loadStats());

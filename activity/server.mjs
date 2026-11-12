@@ -14,8 +14,9 @@
 //   RECAP_TIMEZONE         ...in this time zone, default America/New_York (Monday
 //                          leaderboards and reminders use it too)
 //   REMINDER_TIME          when players who asked for it get their daily reminder, default 17:00
-//   PUBLIC_URL             this site's public address, for the picture in the bot's
-//                          messages (optional), e.g. https://nas.example.ts.net
+//   PUBLIC_URL             this site's public address, e.g. https://nas.example.ts.net:
+//                          the picture in the bot's messages, its "Play in browser"
+//                          button and the website's Sign in with Discord (optional)
 //   PORT                   default 8080
 //   DATA_DIR               where dailyred.sqlite goes, default ./data
 //   WEB_ROOT               the site to serve, default ../web next to this file
@@ -81,7 +82,11 @@ const handle = createApp({
   clientId: env.DISCORD_CLIENT_ID,
   clientSecret: env.DISCORD_CLIENT_SECRET,
   bot,
+  publicUrl: env.PUBLIC_URL || null,
 });
+console.log(env.PUBLIC_URL && env.DISCORD_CLIENT_SECRET
+  ? `Website sign-in on: the app's only OAuth2 redirect must be ${env.PUBLIC_URL.replace(/\/$/, '')}/auth/callback`
+  : 'Website sign-in off (set PUBLIC_URL to turn it on).');
 
 const server = createServer(handle);
 server.listen(port, () => {

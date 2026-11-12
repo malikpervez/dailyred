@@ -50,6 +50,10 @@
         </div>
 
         <button class="button button-primary button-battle" id="play" type="button">Battle RED</button>
+        <div class="signin" id="signin" hidden>
+          <a class="button button-primary button-battle button-discord" id="signin-link" href="auth/login">Sign in with Discord to battle</a>
+          <p class="signin-note">Your battle then counts on your server's leaderboard. Daily Red only sees your name, avatar and which servers you're in.</p>
+        </div>
         <div class="played" id="played" hidden>
           <p class="played-result" id="played-result"></p>
           <p class="played-next" id="played-next"></p>
@@ -60,6 +64,14 @@
           <span class="practice-note" id="practice-note" hidden>This team comes from the page address (?seed=), so nothing is recorded.</span>
         </p>
       </section>
+
+      <div class="account" id="account" hidden>
+        <img class="account-avatar" id="account-avatar" alt="" width="24" height="24" referrerpolicy="no-referrer">
+        <span class="account-name">Signed in as <strong id="account-name"></strong></span>
+        <select class="account-room" id="account-room" aria-label="Server" hidden></select>
+        <a class="account-signout" href="auth/logout">Sign out</a>
+        <p class="account-note" id="account-note" hidden>Daily Red's bot isn't in any of your servers, so your battles only count for you.</p>
+      </div>
 
       <dl class="stats" aria-label="Your stats">
         <div><dt>Played</dt><dd id="stat-played">0</dd></div>

@@ -142,10 +142,25 @@ export function createBot({
   const channels = new Map(); // guild id -> { id, until }
   const queues = new Map(); // guild:date -> promise, so card edits don't race
   const failed = new Map(); // what:guild:date -> time of the last failed try
-  let serverCache = null;
+  let serverCache = null; // { ids, until }
   let timer = null;
 
   // --- Discord HTTP API --------------------------------------------------------------
+
+  // The ids of the servers the bot is in (null if it can't tell), for the
+  // website's sign-in. Looked up again after a minute.
+  async function guildIds() {
+    if (!posting) return null;
+    if (serverCache && serverCache.until > Date.now()) return serverCache.ids;
+    try {
+      const guilds = await discord('GET', '/users/@me/guilds');
+      serverCache = { ids: guilds.map((g) => String(g.id)), until: Date.now() + 60 * 1000 };
+      return serverCache.ids;
+    } catch (err) {
+      log.warn(`Daily Red bot couldn't list its servers: ${err.message}`);
+      return null;
+    }
+  }
 
   async function discord(method, path, body) {
     for (let attempt = 0; ; attempt++) {
@@ -188,15 +203,20 @@ export function createBot({
     return discord('POST', `/channels/${channelId}/messages`, message);
   }
 
-  const buttons = (label) => (key ? [{
-    type: 1,
-    components: [
-      { type: 2, style: 3, label, emoji: { name: '▶️' }, custom_id: PLAY_BUTTON },
-      { type: 2, style: 2, label: 'Leaderboard', custom_id: BOARD_BUTTON },
-      { type: 2, style: 2, label: 'Reminders', emoji: { name: '🔔' }, custom_id: REMIND_BUTTON },
-    ],
-  }] : []);
-  const thumbnail = publicUrl ? { url: `${publicUrl.replace(/\/$/, '')}/sprites/front/25.png` } : undefined;
+  const site = publicUrl ? publicUrl.replace(/\/$/, '') : null;
+  // The message buttons. "Play in browser" is a plain link (for friends who
+  // can't open the Activity: it's only for App Testers until Discord verifies
+  // it), so it works even without the public key; the others need it.
+  const buttons = (label, guildId) => {
+    const row = [
+      key && { type: 2, style: 3, label, emoji: { name: '▶️' }, custom_id: PLAY_BUTTON },
+      site && guildId && { type: 2, style: 5, label: 'Play in browser', emoji: { name: '🌐' }, url: `${site}/?g=${guildId}` },
+      key && { type: 2, style: 2, label: 'Leaderboard', custom_id: BOARD_BUTTON },
+      key && { type: 2, style: 2, label: 'Reminders', emoji: { name: '🔔' }, custom_id: REMIND_BUTTON },
+    ].filter(Boolean);
+    return row.length ? [{ type: 1, components: row }] : [];
+  };
+  const thumbnail = site ? { url: `${site}/sprites/front/25.png` } : undefined;
 
   // Wall-clock date and "HH:MM" in the recap's time zone.
   function zonedNow() {
@@ -253,7 +273,7 @@ export function createBot({
         thumbnail,
         footer: { text: `${summary ? `${summary} · ` : ''}New team at midnight, your time` },
       }],
-      components: buttons('Battle RED'),
+      components: buttons('Battle RED', guildId),
       allowed_mentions: { parse: [] },
     };
   }
@@ -375,7 +395,7 @@ export function createBot({
         thumbnail,
         footer: { text: `${dateLabel(date)} · Today's team is No. ${dayNumber(today)}` },
       }],
-      components: buttons(`Play No. ${dayNumber(today)}`),
+      components: buttons(`Play No. ${dayNumber(today)}`, guildId),
       allowed_mentions: { parse: [] },
     };
   }
@@ -420,7 +440,7 @@ export function createBot({
         thumbnail,
         footer: { text: `${plural(standings.length, 'trainer')} battled RED ${plural(battles, 'time')} in ${monthName(month)}` },
       }],
-      components: buttons('Battle RED'),
+      components: buttons('Battle RED', guildId),
       allowed_mentions: { parse: [] },
     };
   }
@@ -555,7 +575,7 @@ export function createBot({
     const { date } = zonedNow();
     return {
       embeds: [boardEmbed(guildId, date, { title: `Daily Red leaderboard · ${monthLabel(date.slice(0, 7))}`, viewer })],
-      components: buttons('Battle RED'),
+      components: buttons('Battle RED', guildId),
       allowed_mentions: { parse: [] },
     };
   }
@@ -583,7 +603,7 @@ export function createBot({
   function weeklyMessage(guildId, date) {
     return {
       embeds: [boardEmbed(guildId, date, { title: `📊 Weekly leaderboard · ${monthLabel(date.slice(0, 7))}`, showToday: false })],
-      components: buttons('Battle RED'),
+      components: buttons('Battle RED', guildId),
       allowed_mentions: { parse: [] },
     };
   }
@@ -602,10 +622,10 @@ export function createBot({
     }).slice(0, 50);
   }
 
-  function reminderMessage(date, ids) {
+  function reminderMessage(guildId, date, ids) {
     return {
       content: `⏰ Today's Daily Red (No. ${dayNumber(date)}) is waiting for ${ids.map((id) => `<@${id}>`).join(' ')}. Beat RED before midnight!`,
-      components: buttons('Battle RED'),
+      components: buttons('Battle RED', guildId),
       allowed_mentions: { users: ids }, // only the people who asked
     };
   }
@@ -656,7 +676,7 @@ export function createBot({
       for (const guildId of store.reminderGuilds()) {
         await once(`remind:${today}`, guildId, 'reminder', async () => {
           const ids = remindees(guildId, today);
-          if (ids.length) await post(guildId, reminderMessage(today, ids));
+          if (ids.length) await post(guildId, reminderMessage(guildId, today, ids));
         });
       }
     }
@@ -766,17 +786,9 @@ export function createBot({
     }),
     // How many servers the bot has been added to (null if it can't tell).
     async servers() {
-      if (!posting) return null;
-      if (serverCache && serverCache.until > Date.now()) return serverCache.count;
-      try {
-        const guilds = await discord('GET', '/users/@me/guilds');
-        serverCache = { count: guilds.length, until: Date.now() + 60 * 1000 };
-        return guilds.length;
-      } catch (err) {
-        log.warn(`Daily Red bot couldn't list its servers: ${err.message}`);
-        return null;
-      }
+      return (await guildIds())?.length ?? null;
     },
+    guildIds,
     get loggedIn() { return Boolean(store.getSetting('gateway_identified')); },
     async start() {
       if (!posting) return;

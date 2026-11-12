@@ -214,6 +214,23 @@ img { image-rendering: pixelated; }
 .played-result { margin: 0; font-size: 20px; font-weight: 800; }
 .played-next { margin: 2px 0 0; font: 500 16px var(--font-pixel); color: var(--muted); }
 
+.signin-note { margin: 8px 0 0; font-size: 14px; color: var(--muted); }
+.button-discord { display: flex; align-items: center; justify-content: center; text-decoration: none; }
+
+.account {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  margin: 0 0 16px;
+  font-size: 14px;
+}
+.account-avatar { width: 24px; height: 24px; border-radius: 50%; background: var(--line); image-rendering: auto; }
+.account-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-room { max-width: 100%; min-height: 32px; border: 2px solid var(--line); border-radius: 8px; color: var(--text); background: var(--surface); font: inherit; }
+.account-signout { color: var(--muted); }
+.account-note { flex-basis: 100%; margin: 0; color: var(--muted); }
+
 .hero-links { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; margin: 14px 0 0; }
 .practice-note { font-size: 14px; color: var(--muted); }
 

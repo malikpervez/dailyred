@@ -38,6 +38,7 @@ Discord app ──▶ <app id>.discordsays.com (Discord's proxy) ──HTTPS─�
 - [4. Connect it to Discord](#4-connect-it-to-discord)
 - [5. Play](#5-play)
 - [6. Post the day's battles in #general (the bot)](#6-post-the-days-battles-in-general-the-bot)
+- [Play in the browser (friends who aren't App Testers)](#play-in-the-browser-friends-who-arent-app-testers)
 - [Updating and backups](#updating-and-backups)
 - [How it works](#how-it-works)
 - [Troubleshooting](#troubleshooting)
@@ -115,9 +116,12 @@ In the [Discord Developer Portal](https://discord.com/developers/applications):
    `DISCORD_CLIENT_ID`. You can also set the icon and description people see.
 3. **OAuth2**: click **Reset Secret** and copy it. That's your
    `DISCORD_CLIENT_SECRET`; keep it private. Under **Redirects** add
-   `https://127.0.0.1`, and keep it the **only** redirect. Discord needs one
-   for the sign-in to work, even though the Activity never uses it; with two
-   or more, sign-in fails with *Missing "redirect_uri" in request*.
+   `https://<your public address>/auth/callback` (the address from step 3,
+   e.g. `https://nas.tailxxxx.ts.net/auth/callback`; it's what lets friends
+   [play in the browser](#play-in-the-browser-friends-who-arent-app-testers)),
+   or `https://127.0.0.1` if you won't use that. Keep it the **only**
+   redirect: the Activity's sign-in needs exactly one, and with two or more it
+   fails with *Missing "redirect_uri" in request*.
 4. **Bot**: turn **Public Bot** off, so only you can add the app to servers.
 5. **Installation**: leave **Guild Install** ticked. Add **User Install** too
    if you want to start it in DMs. Install link: **Discord Provided Link**.
@@ -305,6 +309,31 @@ with `RECAP_TIME` / `RECAP_TIMEZONE` (an IANA name such as `America/Chicago`;
 the Monday leaderboard and reminders use the same zone) and `REMINDER_TIME`.
 If a server has no #general, the bot uses its system channel (where "welcome"
 messages go). The recap is skipped on days nobody in the server played.
+
+## Play in the browser (friends who aren't App Testers)
+
+Until Discord verifies an Activity, only you and your App Testers can open it
+(see [Discord's limits](#before-you-start-discords-limits)). Everyone else can
+play on the website and sign in with Discord there; their battles count
+exactly the same: on the live card, the leaderboard, streaks and the Master
+race.
+
+1. Set `PUBLIC_URL` (step 6, e.g. `https://nas.tailxxxx.ts.net`) and press **Up**.
+2. **Developer Portal > OAuth2 > Redirects**: make the only redirect
+   `https://<your public address>/auth/callback`. Remove `https://127.0.0.1`
+   (the Activity keeps working: it just needs exactly one).
+3. Open `https://<your public address>/api/interactions`: `websiteSignIn`
+   says "On" and shows the redirect it expects.
+
+The bot's messages now have a **🌐 Play in browser** button. It opens the site
+for that server; the player presses **Sign in with Discord to battle**,
+Discord asks them to authorize Daily Red (their name, avatar and which
+servers they're in), and they're back on the page, signed in for 30 days.
+If they're in several servers with Daily Red, a menu picks which one the
+battle counts for.
+
+On a website with sign-in, the battle that counts needs it, so nobody can
+play signed out first as a free practice run.
 
 ## Updating and backups
 
