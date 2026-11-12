@@ -672,13 +672,13 @@ export function createBot({
 
   // After the button's leaderboard is posted: the one before it in the server
   // is deleted, so the channel only ever has the latest.
-  async function replaceOldBoard(guildId, interactionToken) {
+  async function replaceOldBoard(guildId, interactionToken, viewer) {
     if (!posting) return;
     try {
       await new Promise((ok) => setTimeout(ok, followUpDelay)); // Discord needs a moment to post it
       const posted = await discord('GET', `/webhooks/${clientId}/${interactionToken}/messages/@original`);
       const previous = JSON.parse(store.getSetting(`board:${guildId}`) ?? 'null');
-      store.setSetting(`board:${guildId}`, JSON.stringify({ channelId: posted.channel_id, messageId: posted.id }));
+      store.setSetting(`board:${guildId}`, JSON.stringify({ channelId: posted.channel_id, messageId: posted.id, viewer }));
       if (previous && previous.messageId !== posted.id) {
         await discord('DELETE', `/channels/${previous.channelId}/messages/${previous.messageId}`).catch((err) => {
           if (err.status !== 404) throw err;
@@ -687,6 +687,28 @@ export function createBot({
     } catch (err) {
       log.warn(`Daily Red bot couldn't tidy up the old leaderboard in server ${guildId}: ${err.message}`);
     }
+  }
+
+  // Brings the server's posted leaderboard up to date (after a battle), so
+  // it never shows old standings. Queued like the card's edits. Never throws.
+  function refreshBoard(guildId) {
+    if (!posting) return Promise.resolve();
+    const queueKey = `board:${guildId}`;
+    const run = async () => {
+      const saved = JSON.parse(store.getSetting(queueKey) ?? 'null');
+      if (!saved) return;
+      try {
+        await discord('PATCH', `/channels/${saved.channelId}/messages/${saved.messageId}`, leaderboardMessage(guildId, saved.viewer ?? null));
+      } catch (err) {
+        if (err.status === 404 || err.status === 403) store.setSetting(queueKey, 'null'); // deleted, or not ours to edit
+        throw err;
+      }
+    };
+    const next = (queues.get(queueKey) ?? Promise.resolve()).then(run)
+      .catch((err) => log.warn(`Daily Red bot couldn't update the leaderboard in server ${guildId}: ${err.message}`));
+    queues.set(queueKey, next);
+    next.finally(() => { if (queues.get(queueKey) === next) queues.delete(queueKey); });
+    return next;
   }
 
   // Mondays: the same leaderboard, for everyone.
@@ -817,7 +839,7 @@ export function createBot({
     const id = body.data?.custom_id ?? body.data?.name;
     if (body.type === 3 && id === BOARD_BUTTON && body.guild_id) {
       const viewer = body.member?.user?.id ?? body.user?.id;
-      if (body.token) replaceOldBoard(body.guild_id, body.token);
+      if (body.token) replaceOldBoard(body.guild_id, body.token, viewer ? String(viewer) : null);
       return { type: 4, data: leaderboardMessage(body.guild_id, viewer ? String(viewer) : null) };
     }
     if (body.type === 3 && id === PLAY_BUTTON) {
@@ -877,6 +899,7 @@ export function createBot({
   return {
     updateCard,
     ensureCard,
+    refreshBoard,
     tick,
     leaderboard,
     hallOfFame,

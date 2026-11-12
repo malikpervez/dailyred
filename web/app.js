@@ -727,6 +727,17 @@ async function start() {
   } else if (!practiceSeed) {
     // The website: signed in with Discord (a cookie), or offer it.
     const web = await webSession().catch(() => null); // no server API: a plain website
+    // The ▶️ link is for a server this sign-in doesn't know (the bot joined it
+    // after you signed in): sign in again to pick it up. Discord remembers
+    // you said yes, so it only takes a moment. Once per visit.
+    const relogin = `dailyred-relogin:${linkedServer}`;
+    let tried = true;
+    try { tried = sessionStorage.getItem(relogin) === '1'; } catch { /* blocked: don't loop */ }
+    if (web?.user && linkedServer && !web.rooms.some((r) => r.room === `g:${linkedServer}`) && !tried) {
+      try { sessionStorage.setItem(relogin, '1'); } catch { /* fine */ }
+      location.replace(`auth/login?g=${linkedServer}`);
+      return;
+    }
     if (web?.user) {
       setState('loading');
       ui.loadingText.textContent = 'Loading your stats…';

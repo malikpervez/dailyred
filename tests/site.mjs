@@ -271,9 +271,10 @@ async function signInTest(browser) {
   const fakeDiscord = async (url) => {
     if (url.endsWith('/oauth2/token')) return json(200, { access_token: 'token-ash', expires_in: 604800 });
     if (url.endsWith('/users/@me')) return json(200, { id: '80351110224678912', username: 'ash', global_name: 'Ash', avatar: null });
-    if (url.endsWith('/users/@me/guilds')) return json(200, [{ id: '42', name: 'Pallet Town' }]);
+    if (url.endsWith('/users/@me/guilds')) return json(200, guilds);
     return json(404, {});
   };
+  const guilds = [{ id: '42', name: 'Pallet Town' }]; // the player's servers
   const store = openStore(':memory:');
   store.savePlayer({ id: '1', name: 'Misty', avatarUrl: '', stats: {} });
   store.joinRoom('g:42', '1');
@@ -335,6 +336,17 @@ async function signInTest(browser) {
     assert.match(await page.textContent('#board-list .is-you'), /^Ash \(you\)Ran from RED/);
     const saved = store.roomResults('g:42', '2026-11-12').get('80351110224678912');
     assert.deepEqual([saved.won, saved.gaveUp], [false, true], 'saved on the server for the server');
+
+    // The bot is added to another server after this sign-in. Its ▶️ link
+    // signs in again by itself to pick the new server up, and today's battle
+    // shows on that server's board straight away.
+    guilds.push({ id: '77', name: 'Cerulean City' });
+    store.joinRoom('g:77', '1');
+    await page.goto(`${site}/?g=77`);
+    await page.waitForURL(`${site}/?g=77`);
+    await page.waitForFunction(() => document.querySelector('#board-heading')?.textContent === 'Today in Cerulean City', null, { timeout: 30000 });
+    await page.waitForFunction(() => document.querySelector('#board-list .board-row.is-you'));
+    assert.match(await page.textContent('#board-list .is-you'), /^Ash \(you\)Ran from RED/);
     assert.deepEqual(errors, [], 'no page errors');
 
     await page.goto(`${site}/auth/logout`);

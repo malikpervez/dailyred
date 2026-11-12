@@ -340,11 +340,19 @@ export function createApp({
     if (query.get('settle') === '1') settle(player);
     store.savePlayer(player);
     const room = allowRoom(user, checkRoom(query.get('room')));
-    if (room) store.joinRoom(room, user.id);
-    // Opening the Activity in a server puts up today's card if it's missing.
+    const joined = room ? store.joinRoom(room, user.id) : false;
+    // Opening the game for a server puts up today's card if it's missing. A
+    // player new to the server who already played today (somewhere else)
+    // goes on its card and leaderboard straight away.
     if (bot && room?.startsWith('g:') && query.get('date')) {
       try {
-        bot.ensureCard(room.slice(2), checkDate(query.get('date')));
+        const date = checkDate(query.get('date'));
+        if (joined && resultFor(player.stats, date)) {
+          bot.updateCard(room.slice(2), date);
+          bot.refreshBoard?.(room.slice(2));
+        } else {
+          bot.ensureCard(room.slice(2), date);
+        }
       } catch {
         // a bad date from the page shouldn't stop it signing in
       }
@@ -385,7 +393,10 @@ export function createApp({
     store.savePlayer(player);
     if (room) store.joinRoom(room, user.id);
     // A finished battle also brings the card back down if it scrolled up.
-    if (bot && room?.startsWith('g:')) bot.updateCard(room.slice(2), date, { bump: body.event === 'result' });
+    if (bot && room?.startsWith('g:')) {
+      bot.updateCard(room.slice(2), date, { bump: body.event === 'result' });
+      if (body.event === 'result') bot.refreshBoard?.(room.slice(2)); // the posted Leaderboard too
+    }
     return { stats };
   }
 

@@ -330,3 +330,30 @@ test('the website can sign in with Discord: login, callback, a signed cookie, on
     site.close();
   }
 });
+
+test("opening the game for a server you're new to puts today's result on its card and leaderboard", async () => {
+  const calls = [];
+  const bot = {
+    status: () => ({ posting: true }),
+    ensureCard: (g, d) => calls.push(['ensure', g, d]),
+    updateCard: (g, d, o) => calls.push(['update', g, d, o?.bump ?? false]),
+    refreshBoard: (g) => calls.push(['board', g]),
+  };
+  const store = openStore(':memory:');
+  const site = createServer(createApp({ webRoot, store, clientId: '1234567890', clientSecret: 'secret', fetch: fakeDiscord, now: () => new Date('2026-11-06T12:00:00Z'), bot }));
+  await new Promise((ok) => site.listen(0, '127.0.0.1', ok));
+  const url = `http://127.0.0.1:${site.address().port}`;
+  const as = (path, init = {}) => fetch(url + path, { ...init, headers: { Authorization: 'Bearer token-ash', 'Content-Type': 'application/json' } });
+  try {
+    await as('/api/battle', { method: 'POST', body: JSON.stringify({ event: 'start', date: '2026-11-06', room: 'g:1' }) });
+    await as('/api/battle', { method: 'POST', body: JSON.stringify({ event: 'result', date: '2026-11-06', room: 'g:1', won: true, monsLeft: 3 }) });
+    assert.deepEqual(calls.splice(0), [['update', '1', '2026-11-06', false], ['update', '1', '2026-11-06', true], ['board', '1']]);
+
+    await as('/api/me?date=2026-11-06&room=g:2'); // the bot's link from another server, after playing
+    assert.deepEqual(calls.splice(0), [['update', '2', '2026-11-06', false], ['board', '2']]);
+    await as('/api/me?date=2026-11-06&room=g:2'); // already there: only make sure the card exists
+    assert.deepEqual(calls.splice(0), [['ensure', '2', '2026-11-06']]);
+  } finally {
+    site.close();
+  }
+});

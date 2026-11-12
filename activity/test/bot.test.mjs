@@ -562,3 +562,27 @@ test("today's card lists the day's six (never anyone's lead), and still posts if
   const broken = make(() => { throw new Error('no data'); });
   assert.equal(broken.cardMessage(GUILD, '2026-11-13').embeds[0].description, 'Nobody has battled RED yet today.');
 });
+
+test('the posted Leaderboard updates itself when a battle finishes', async () => {
+  const { store, bot, discord, player } = setup({ clock: new Date('2026-11-12T15:00:00Z') });
+  player('1', 'Ash', { wins: 1, winStreak: 1, lastPlayed: '2026-11-11', lastResult: 'won' });
+  store.saveResult({ playerId: '1', date: '2026-11-11', won: true, monsLeft: 3, redLeft: 0, turns: 20 });
+  bot.interaction({ type: 3, guild_id: GUILD, token: 'tok1', member: { user: { id: '1' } }, data: { custom_id: 'dailyred:board' } });
+  await new Promise((ok) => setTimeout(ok, 30));
+  assert.deepEqual(JSON.parse(store.getSetting(`board:${GUILD}`)), { channelId: 'c-general', messageId: 'orig-tok1', viewer: '1' });
+
+  // Misty plays and wins: the same leaderboard message is edited.
+  player('2', 'Misty', { wins: 1, winStreak: 1, lastPlayed: '2026-11-12', lastResult: 'won' });
+  store.saveResult({ playerId: '2', date: '2026-11-12', won: true, monsLeft: 5, redLeft: 0, turns: 12 });
+  await bot.refreshBoard(GUILD);
+  const edit = discord.edits().at(-1);
+  assert.equal(edit.path, '/channels/c-general/messages/orig-tok1');
+  const race = edit.body.embeds[0].fields.find((f) => f.name === '🏆 Master race').value;
+  assert.match(race, /<@2> · \*\*1W\*\* 0L · ✅ beat RED today/);
+  assert.equal(edit.body.embeds[0].fields.find((f) => f.name === '➡️ Standing').value, '<@1> is 2nd, level on wins with <@2> but behind on tiebreaks.');
+
+  // Deleted by someone: forgotten, nothing more to edit.
+  discord.deleted.add('orig-tok1');
+  await bot.refreshBoard(GUILD);
+  assert.equal(JSON.parse(store.getSetting(`board:${GUILD}`)), null);
+});

@@ -159,7 +159,8 @@ export function openStore(file) {
     savePlayer({ id, name, avatarUrl, stats }) {
       putPlayer.run(id, name, avatarUrl, JSON.stringify(stats), Date.now());
     },
-    joinRoom: (room, playerId) => { joinRoom.run(room, playerId); },
+    // True if the player wasn't in the room before.
+    joinRoom: (room, playerId) => joinRoom.run(room, playerId).changes > 0,
     roomPlayers: (room) => roomPlayers.all(room).map(toPlayer),
 
     // The first result saved for a player and day stays (like their stats).
