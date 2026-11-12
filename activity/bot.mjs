@@ -4,7 +4,9 @@
 //   - The live card: one message per server per day in #general (or the
 //     channel named by DAILYRED_CHANNEL), posted when the first battle of the
 //     day starts there and edited as players start and finish. It shows each
-//     player's result, Pokémon left, turns and streak, never their team.
+//     player's result, Pokémon left, turns and streak (never their team), and
+//     the month's Master race. When someone finishes and the card has
+//     scrolled up (BUMP_AFTER newer messages), it moves back to the bottom.
 //   - The morning recap: yesterday's results ranked, win streak leaders, the
 //     month's Master race, the server's days-in-a-row streak and who didn't
 //     play, at RECAP_TIME in RECAP_TIMEZONE (06:00 America/New_York by default).
@@ -36,6 +38,9 @@ const PLAY_BUTTON = 'dailyred:play';
 const BOARD_BUTTON = 'dailyred:board';
 const REMIND_BUTTON = 'dailyred:remind';
 const MAX_LINES = 25;
+// The card moves to the bottom of the channel when a battle finishes and
+// it's no longer among the channel's last this-many messages.
+const BUMP_AFTER = 10;
 
 export const inviteUrl = (clientId) =>
   `https://discord.com/oauth2/authorize?client_id=${clientId}&scope=bot%20applications.commands&permissions=${BOT_PERMISSIONS}`;
@@ -234,11 +239,16 @@ export function createBot({
       finished.length && `${wins} of ${finished.length} beat RED`,
       battling.length && `${battling.length} battling`,
     ].filter(Boolean).join(' · ');
+    // The month's top three, so every update is a leaderboard update too.
+    const month = date.slice(0, 7);
+    const race = monthStandings(room, month).filter((x) => x.wins > 0).slice(0, 3);
+    const raceLine = race.length ? `🏆 ${monthName(month)} race: ${race.map((x) => `${who(x.id, crowned)} ${x.wins}`).join(' · ')}` : '';
+    const description = cap(lines).join('\n') || 'Nobody has battled RED yet today.';
     return {
       embeds: [{
         color: RED,
         title: `Daily Red No. ${dayNumber(date)} · ${dateLabel(date)}`,
-        description: cap(lines).join('\n') || 'Nobody has battled RED yet today.',
+        description: raceLine ? `${description}\n\n${raceLine}` : description,
         thumbnail,
         footer: { text: `${summary ? `${summary} · ` : ''}New team at midnight, your time` },
       }],
@@ -247,13 +257,34 @@ export function createBot({
     };
   }
 
-  // Posts or edits the server's card for `date`. Never throws.
-  function updateCard(guildId, date) {
+  // Whether the card has scrolled up: not among the channel's latest
+  // messages. If the bot can't tell, it isn't moved.
+  async function buried(card) {
+    try {
+      const recent = await discord('GET', `/channels/${card.channelId}/messages?limit=${BUMP_AFTER}`);
+      return recent.length >= BUMP_AFTER && !recent.some((m) => m.id === card.messageId);
+    } catch {
+      return false;
+    }
+  }
+
+  // Posts or edits the server's card for `date`. With `bump` (a battle just
+  // finished), a card that has scrolled up is deleted and posted again at
+  // the bottom, so the update is seen. Never throws.
+  function updateCard(guildId, date, { bump = false } = {}) {
     if (!posting) return Promise.resolve();
     const queueKey = `${guildId}:${date}`;
     const run = async () => {
       const message = cardMessage(guildId, date);
-      const card = store.getCard(guildId, date);
+      let card = store.getCard(guildId, date);
+      if (card && bump && await buried(card)) {
+        try {
+          await discord('DELETE', `/channels/${card.channelId}/messages/${card.messageId}`);
+          card = null;
+        } catch (err) {
+          if (err.status === 404) card = null; // already gone; otherwise edit it where it is
+        }
+      }
       if (card) {
         try {
           await discord('PATCH', `/channels/${card.channelId}/messages/${card.messageId}`, message);

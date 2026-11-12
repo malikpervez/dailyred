@@ -203,6 +203,31 @@ export function renderBoard(list, players, tab = 'today') {
   }));
 }
 
+// Where you stand in the month's Master race, for the result screen: e.g.
+// "You're 2nd in the November race, 1 win behind Ash." `players` from GET
+// /api/board, `month` the month's name.
+export function standingText(players, month) {
+  const race = players.filter(TABS.month.filter).sort(TABS.month.sort);
+  const i = race.findIndex((p) => p.you);
+  if (i < 0) return '';
+  const me = race[i];
+  const leader = race[0];
+  const wins = (n) => `${n} ${n === 1 ? 'win' : 'wins'}`;
+  const place = (n) => `${n}${{ 1: 'st', 2: 'nd', 3: 'rd' }[n % 100 > 10 && n % 100 < 14 ? 0 : n % 10] ?? 'th'}`;
+  if (race.length === 1) return `You're the only one in the ${month} race so far, with ${wins(me.monthWins)}.`;
+  if (leader.monthWins === 0) return `Nobody has beaten RED yet in ${month}. The first win takes the lead!`;
+  if (i === 0) {
+    const gap = me.monthWins - race[1].monthWins;
+    return gap > 0
+      ? `You lead the ${month} race with ${wins(me.monthWins)}, ${wins(gap)} ahead of ${race[1].name}.`
+      : `You lead the ${month} race on tiebreaks, level with ${race[1].name} on ${wins(me.monthWins)}.`;
+  }
+  const gap = leader.monthWins - me.monthWins;
+  return gap > 0
+    ? `You're ${place(i + 1)} in the ${month} race, ${wins(gap)} behind ${leader.name}.`
+    : `You're ${place(i + 1)} in the ${month} race, level with ${leader.name} on ${wins(me.monthWins)} but behind on tiebreaks.`;
+}
+
 // The Hall of Fame: hallOfFame from GET /api/board, newest month first.
 export function renderHallOfFame(list, hallOfFame) {
   list.replaceChildren(...hallOfFame.map(({ month, masters }) => {

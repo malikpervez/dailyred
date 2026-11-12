@@ -12,10 +12,13 @@ import { EMPTY } from '../../web/daily.js';
 const GUILD = '111';
 const quiet = { log() {}, warn() {} };
 
-// A fake discord.com/api: channels, messages (posted / edited / deleted).
+// A fake discord.com/api: channels, messages (posted / edited / deleted) and
+// each channel's history (chatter() adds other people's messages).
 function fakeDiscord({ channels = [{ id: 'c-rules', type: 0, name: 'rules' }, { id: 'c-general', type: 0, name: 'general' }], systemChannel = 'c-sys', noAccess = false } = {}) {
   const calls = [];
   const deleted = new Set();
+  const history = new Map(); // channel id -> message ids, oldest first
+  const said = (channel, id) => history.set(channel, [...(history.get(channel) ?? []), id]);
   let nextId = 1;
   const json = (status, body) => new Response(body == null ? null : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   const fetch = async (url, init = {}) => {
@@ -27,12 +30,31 @@ function fakeDiscord({ channels = [{ id: 'c-rules', type: 0, name: 'rules' }, { 
     if (path === `/guilds/${GUILD}`) return json(200, { id: GUILD, system_channel_id: systemChannel });
     if (path === '/users/@me/guilds') return json(200, [{ id: GUILD, name: 'Test server' }]);
     let m = /^\/channels\/([^/]+)\/messages$/.exec(path);
-    if (m && init.method === 'POST') return json(200, { id: `m${nextId++}`, channel_id: m[1] });
+    if (m && init.method === 'POST') {
+      const id = `m${nextId++}`;
+      said(m[1], id);
+      return json(200, { id, channel_id: m[1] });
+    }
+    if (m && init.method === 'GET') {
+      const limit = Number(new URL(url).searchParams.get('limit') ?? 50);
+      return json(200, (history.get(m[1]) ?? []).filter((id) => !deleted.has(id)).slice(-limit).reverse().map((id) => ({ id })));
+    }
     m = /^\/channels\/([^/]+)\/messages\/([^/]+)$/.exec(path);
     if (m && init.method === 'PATCH') return deleted.has(m[2]) ? json(404, { message: 'Unknown Message' }) : json(200, { id: m[2] });
+    if (m && init.method === 'DELETE') {
+      if (deleted.has(m[2])) return json(404, { message: 'Unknown Message' });
+      deleted.add(m[2]);
+      return json(204);
+    }
     return json(404, { message: 'Not found' });
   };
-  return { fetch, calls, deleted, posts: () => calls.filter((c) => c.method === 'POST'), edits: () => calls.filter((c) => c.method === 'PATCH') };
+  return {
+    fetch, calls, deleted,
+    chatter: (channel, n) => { for (let i = 0; i < n; i++) said(channel, `chat${nextId++}`); },
+    posts: () => calls.filter((c) => c.method === 'POST'),
+    edits: () => calls.filter((c) => c.method === 'PATCH'),
+    deletes: () => calls.filter((c) => c.method === 'DELETE'),
+  };
 }
 
 function setup({ discord = fakeDiscord(), clock = new Date('2026-11-12T15:00:00Z'), publicKey = null } = {}) {
@@ -76,6 +98,8 @@ test('the live card goes to #general and is edited as players start and finish',
     '<@2> Lost to RED, he had 2 left · 22 turns · 📅 3 days in a row',
     '⬛⬛⬛⬛⬛⬛',
     '<@3> ⚔️ Battling RED…',
+    '',
+    '🏆 November race: <@1> 1',
   ].join('\n'));
   assert.match(edit.body.embeds[0].footer.text, /^1 of 2 beat RED · 1 battling · New team at midnight/);
   assert.doesNotMatch(JSON.stringify(edit.body), /Pikachu|lead/i, "the card never shows anyone's team");
@@ -380,4 +404,52 @@ test('🔔 Reminders: players opt in with the button and get one mention a day i
 
   assert.match(press('1').data.content, /^🔕 Reminders off/);
   assert.deepEqual(store.reminders(GUILD).sort(), ['2', '3', '5']);
+});
+
+test('when a battle finishes and the card has scrolled up, it moves back to the bottom', async () => {
+  const discord = fakeDiscord();
+  const { store, bot, player } = setup({ discord });
+  player('1', 'Ash', { pending: '2026-11-12' });
+  await bot.updateCard(GUILD, '2026-11-12');
+  assert.equal(store.getCard(GUILD, '2026-11-12').messageId, 'm1');
+
+  // A few messages later it's still in view: edited in place.
+  discord.chatter('c-general', 5);
+  await bot.updateCard(GUILD, '2026-11-12', { bump: true });
+  assert.deepEqual([discord.posts().length, discord.edits().length, discord.deletes().length], [1, 1, 0]);
+
+  // Starting a battle never moves it, even when it has scrolled up.
+  discord.chatter('c-general', 20);
+  await bot.updateCard(GUILD, '2026-11-12');
+  assert.deepEqual([discord.posts().length, discord.deletes().length], [1, 0]);
+
+  // Finishing does: the old card is deleted and posted again at the bottom.
+  store.saveResult({ playerId: '1', date: '2026-11-12', won: true, monsLeft: 2, redLeft: 0, turns: 20 });
+  player('1', 'Ash', { wins: 1, winStreak: 1, dayStreak: 1, lastPlayed: '2026-11-12', lastResult: 'won' });
+  await bot.updateCard(GUILD, '2026-11-12', { bump: true });
+  assert.equal(discord.deletes()[0].path, '/channels/c-general/messages/m1');
+  assert.equal(discord.posts().length, 2);
+  const moved = store.getCard(GUILD, '2026-11-12').messageId;
+  assert.notEqual(moved, 'm1');
+  assert.match(description(discord.posts().at(-1)), /^<@1> \*\*Beat RED\*\*/);
+
+  // The server's result endpoint asks for the move.
+  discord.chatter('c-general', 20);
+  player('2', 'Misty', { pending: '2026-11-12' });
+  const app = createApp({ webRoot: '.', store, clientId: '999', clientSecret: 's', bot, now: () => new Date('2026-11-12T15:00:00Z'),
+    fetch: async () => new Response(JSON.stringify({ id: '2', username: 'misty' }), { status: 200 }) });
+  const server = createServer(app);
+  await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/api/battle`, {
+      method: 'POST', headers: { Authorization: 'Bearer t', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'result', date: '2026-11-12', room: `g:${GUILD}`, won: false, monsLeft: 0, redLeft: 3, turns: 25 }),
+    });
+    assert.equal(res.status, 200);
+    await new Promise((ok) => setTimeout(ok, 50)); // the card updates in the background
+    assert.equal(discord.deletes().at(-1).path, `/channels/c-general/messages/${moved}`);
+    assert.equal(discord.posts().length, 3);
+  } finally {
+    server.close();
+  }
 });

@@ -222,8 +222,11 @@ The bot posts these in each server's **#general**:
 - **The live card**: one message per day, posted when the first battle of the
   day starts and edited as people start and finish. Each player shows their
   result, how many Pokémon they had left, turns and streak, with 🟥⬛ squares
-  ("🏃 Ran from RED on turn 3" if they gave up). Nobody's team or lead is
-  shown.
+  ("🏃 Ran from RED on turn 3" if they gave up), and the month's top three in
+  the Master race. Nobody's team or lead is shown. When someone finishes and
+  the card has scrolled up (10 or more newer messages in the channel), the
+  bot deletes it and posts it again at the bottom, so there's still one card
+  a day and nobody gets pinged.
 - **The morning recap**: at 6:00 AM Eastern, yesterday's results ranked (wins
   first, then Pokémon left, then fewest turns), win streak leaders, the
   month's Master race, how many days in a row the server has played, and who
@@ -248,7 +251,9 @@ it, and a **🔔 Reminders** button that turns that person's reminder on or off
 (also a checkbox under the board in the Activity). Apart from reminders,
 mentions in the messages never ping anyone.
 
-In the Activity, **Share image** after a battle opens Discord's share dialog
+In the Activity, the result screen says where the battle leaves you in the
+month's race ("You're 2nd in the November race, 1 win behind Ash"), and
+**Share image** opens Discord's share dialog
 with a picture of the result (Discord shows that dialog on desktop and in the
 browser; on phones, press and hold the picture to save it).
 

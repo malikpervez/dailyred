@@ -7,7 +7,7 @@ import {
   today, dailySeed, dayNumber, msUntilTomorrow, loadStats, resultFor, currentStreaks,
   markBattleStarted, recordResult, settleAbandonedGame, useStatsStorage,
 } from './daily.js';
-import { inDiscord, connectDiscord, renderBoard, renderHallOfFame } from './discord.js';
+import { inDiscord, connectDiscord, renderBoard, renderHallOfFame, standingText } from './discord.js';
 import { loadTeams, startBattle, choose, forfeit, detach } from './battle/engine.js';
 import { createBattleView, spriteUrl } from './battle/view.js';
 import { drawShareImage, canvasToBlob } from './share.js';
@@ -40,6 +40,7 @@ const ui = {
   turnLabel: $('turn-label'),
   battleDone: $('battle-done'),
   doneTitle: $('done-title'),
+  doneStanding: $('done-standing'),
   shareText: $('share-text'),
   shareImage: $('share-image'),
   shareButton: $('share-result'),
@@ -422,7 +423,7 @@ function endBattle(won, tie = false) {
     recordResult(stats, battle.date, won);
     // How it went, for the server's board and the Discord bot's card.
     const alive = (side) => (view.state?.[side].party ?? []).filter((p) => p !== 'fnt').length;
-    discord?.report('result', battle.date, won, {
+    battle.reported = discord?.report('result', battle.date, won, {
       monsLeft: alive('p1'), redLeft: alive('p2'), turns: battle.turns ?? 0, gaveUp: !won && battle.ran,
     });
   }
@@ -487,6 +488,24 @@ async function makeShareImage(o) {
 
 let shareBlob = null;
 
+// In a Discord server: where the battle leaves you in the month's race,
+// once the server has the result.
+async function showStanding(current) {
+  ui.doneStanding.hidden = true;
+  if (!current.official || !current.reported || !discord?.room) return;
+  try {
+    await current.reported;
+    const { players } = await discord.board(current.date);
+    if (battle !== current) return; // already left
+    boardPlayers = players;
+    const month = new Date(`${current.date}T12:00:00`).toLocaleDateString('en-US', { month: 'long' });
+    ui.doneStanding.textContent = standingText(players, month);
+    ui.doneStanding.hidden = !ui.doneStanding.textContent;
+  } catch (err) {
+    console.warn("Couldn't load the month's standings", err);
+  }
+}
+
 async function showDone(won) {
   const o = outcome(won);
   ui.doneTitle.textContent = won ? 'You beat RED!' : 'RED won this time.';
@@ -496,6 +515,7 @@ async function showDone(won) {
   ui.shareButton.hidden = true;
   ui.battleDone.hidden = false;
   ui.battleDone.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  showStanding(battle);
   shareBlob = null;
   try {
     const { blob, url } = await makeShareImage(o);

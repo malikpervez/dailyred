@@ -915,6 +915,7 @@ img { image-rendering: pixelated; }
 }
 
 .done-title { margin: 0 0 8px; font-size: 24px; font-weight: 800; }
+.done-standing { margin: -2px 0 12px; font-weight: 650; color: var(--muted); }
 
 .share-text {
   margin: 0 auto 12px;

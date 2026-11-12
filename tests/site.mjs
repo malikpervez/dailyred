@@ -200,6 +200,32 @@ try {
   ]);
   assert.deepEqual(board.hall, ['Oct 2026 | 👑 Ash | 21 wins']);
 
+  step('the result screen says where you stand in the month\'s race');
+  const standings = await page.evaluate(async () => {
+    const { standingText } = await import('./discord.js');
+    const p = (name, monthWins, monthLosses, you = false) => ({ name, monthWins, monthLosses, monthLeft: 0, monthTurns: 0, you });
+    return [
+      standingText([p('Ash', 5, 1), p('You', 4, 0, true), p('Brock', 3, 2)], 'November'),
+      standingText([p('Ash', 5, 1), p('Brock', 3, 2), p('You', 1, 3, true)], 'November'),
+      standingText([p('You', 5, 0, true), p('Ash', 4, 1)], 'November'),
+      standingText([p('You', 5, 0, true), p('Ash', 5, 1)], 'November'),
+      standingText([p('Ash', 5, 0), p('You', 5, 1, true)], 'November'),
+      standingText([p('You', 1, 0, true), p('Ash', 0, 0)], 'November'),
+      standingText([p('You', 0, 1, true), p('Ash', 0, 2)], 'November'),
+      standingText([p('You', 1, 0, true)], 'November'),
+    ];
+  });
+  assert.deepEqual(standings, [
+    "You're 2nd in the November race, 1 win behind Ash.",
+    "You're 3rd in the November race, 4 wins behind Ash.",
+    'You lead the November race with 5 wins, 1 win ahead of Ash.',
+    'You lead the November race on tiebreaks, level with Ash on 5 wins.',
+    "You're 2nd in the November race, level with Ash on 5 wins but behind on tiebreaks.",
+    "You're the only one in the November race so far, with 1 win.",
+    'Nobody has beaten RED yet in November. The first win takes the lead!',
+    "You're the only one in the November race so far, with 1 win.",
+  ]);
+
   step('?seed= shows that seed\'s team as a practice team');
   await page.goto(`${server.url}/?seed=12345`);
   await page.waitForSelector('.app[data-state="home"]');

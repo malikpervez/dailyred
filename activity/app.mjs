@@ -264,7 +264,8 @@ export function createApp({
     }
     store.savePlayer(player);
     if (room) store.joinRoom(room, user.id);
-    if (bot && room?.startsWith('g:')) bot.updateCard(room.slice(2), date);
+    // A finished battle also brings the card back down if it scrolled up.
+    if (bot && room?.startsWith('g:')) bot.updateCard(room.slice(2), date, { bump: body.event === 'result' });
     return { stats };
   }
 
