@@ -112,7 +112,9 @@ test('exchanges the OAuth2 code with the client secret', async () => {
   assert.equal((await ok.json()).access_token, 'token-ash');
   assert.deepEqual(calls.token.at(-1), { client_id: '1234567890', client_secret: 'secret', grant_type: 'authorization_code', code: 'code-ash' });
 
-  assert.equal((await post('/api/token', { code: 'stolen' })).status, 401);
+  const refused = await post('/api/token', { code: 'stolen' });
+  assert.equal(refused.status, 401);
+  assert.equal((await refused.json()).error, 'Discord sign-in failed (invalid_grant)', "Discord's reason is passed on");
   assert.equal((await post('/api/token', {})).status, 400);
   assert.equal((await fetch(`${base}/api/token`, { method: 'POST', body: 'not json' })).status, 400);
 });

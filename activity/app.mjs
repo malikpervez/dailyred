@@ -146,7 +146,10 @@ export function createApp({
     });
     if (!ok || !body.access_token) {
       console.warn(`Discord token exchange failed (HTTP ${status}): ${body.error || ''} ${body.error_description || ''}`);
-      throw new HttpError(401, 'Discord sign-in failed');
+      // Discord's error code says what to fix (it never contains the secret):
+      // invalid_client = wrong DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET.
+      const hint = body.error === 'invalid_client' ? ': check DISCORD_CLIENT_SECRET on the server' : '';
+      throw new HttpError(401, `Discord sign-in failed (${body.error || `HTTP ${status}`}${hint})`);
     }
     return { access_token: body.access_token, expires_in: body.expires_in, scope: body.scope };
   }
