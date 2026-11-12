@@ -115,8 +115,9 @@ In the [Discord Developer Portal](https://discord.com/developers/applications):
    `DISCORD_CLIENT_ID`. You can also set the icon and description people see.
 3. **OAuth2**: click **Reset Secret** and copy it. That's your
    `DISCORD_CLIENT_SECRET`; keep it private. Under **Redirects** add
-   `https://127.0.0.1`. Discord needs a redirect for the sign-in to work,
-   even though the Activity never uses it.
+   `https://127.0.0.1`, and keep it the **only** redirect. Discord needs one
+   for the sign-in to work, even though the Activity never uses it; with two
+   or more, sign-in fails with *Missing "redirect_uri" in request*.
 4. **Bot**: turn **Public Bot** off, so only you can add the app to servers.
 5. **Installation**: leave **Guild Install** ticked. Add **User Install** too
    if you want to start it in DMs. Install link: **Discord Provided Link**.
@@ -359,7 +360,10 @@ block Discord's proxy.
 - Nothing in the log: the page couldn't reach `/api`. Check the proxy or tunnel
   forwards everything under the hostname, not just `/`.
 
-Also check the `https://127.0.0.1` redirect from step 2.3.
+Also check the `https://127.0.0.1` redirect from step 2.3. *Couldn't sign in
+with Discord (OAuth2 Error: invalid_request: Missing "redirect_uri" in
+request)* means **OAuth2 > Redirects** is empty or has more than one entry:
+leave exactly `https://127.0.0.1`, save, then close and reopen the Activity.
 
 **Seeing the browser console.** The easiest way is to open Discord in a web
 browser (discord.com/app), start the Activity there and use the browser's dev
