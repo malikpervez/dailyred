@@ -931,6 +931,18 @@ img { image-rendering: pixelated; }
 
 .done-buttons { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 
+.share-image {
+  display: block;
+  width: 100%;
+  max-width: 600px;
+  height: auto;
+  margin: 0 auto 12px;
+  border-radius: 10px;
+  /* Long-press saves it on phones, where Discord's share dialog isn't offered. */
+  -webkit-touch-callout: default;
+}
+.share-note { margin: 10px 0 0; font-size: 14px; color: var(--muted); }
+
 /* --- Type colours ---------------------------------------------------------------------------- */
 
 [data-type="Normal"] { --type: #a3a27a; }
@@ -990,6 +1002,36 @@ img { image-rendering: pixelated; }
 .board-row[data-today="won"] .board-today { color: var(--on-red); background: var(--red); border-color: var(--red); }
 .board-row[data-today="battling"] .board-today { border-style: dashed; }
 .board-row[data-today="none"] .board-today { color: var(--muted); border-color: transparent; }
+
+.reminder {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.reminder input { width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--red); flex: none; }
+
+.hall { margin-top: 16px; }
+.hall-title { margin: 0 0 6px; font: 700 17px/1.2 var(--font-pixel); }
+.hall-list { margin: 0; padding: 0; list-style: none; }
+.hall-row {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.hall-row:last-child { border-bottom: none; }
+.hall-month { font: 600 14px/1.2 var(--font-pixel); color: var(--muted); }
+.hall-names { overflow: hidden; font-weight: 650; white-space: nowrap; text-overflow: ellipsis; }
+.hall-record { color: var(--muted); }
 
 /* --- Dialogs and footer ---------------------------------------------------------------------- */
 

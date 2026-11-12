@@ -135,11 +135,11 @@ test('the recap goes out once, at 6:00 in New York, with yesterday ranked', asyn
   assert.equal(description(recap), [
     '**2 of 3 beat RED** · this server has played 3 days in a row',
     '',
-    '👑 <@1> **Beat RED** with 5 left · 16 turns · 🔥 6-day win streak',
+    '🥇 <@1> **Beat RED** with 5 left · 16 turns · 🔥 6-day win streak',
     '🟥🟥🟥🟥🟥⬛',
-    '**2.** <@2> **Beat RED** with 1 left · 24 turns · 🔥 2-day win streak',
+    '🥈 <@2> **Beat RED** with 1 left · 24 turns · 🔥 2-day win streak',
     '🟥⬛⬛⬛⬛⬛',
-    '**3.** <@3> Lost to RED, he had 1 left · 30 turns',
+    '🥉 <@3> Lost to RED, he had 1 left · 30 turns',
     '⬛⬛⬛⬛⬛⬛',
     '',
     '🔥 Win streaks: <@1> 6 · <@2> 2',
@@ -187,7 +187,7 @@ test('buttons: signed requests only; Battle RED launches the Activity; Leaderboa
     player('3', 'Brock', { pending: '2026-11-12' });
     await bot.updateCard(GUILD, '2026-11-12');
     const buttons = discord.posts().at(-1).body.components[0].components.map((b) => b.custom_id);
-    assert.deepEqual(buttons, ['dailyred:play', 'dailyred:board']);
+    assert.deepEqual(buttons, ['dailyred:play', 'dailyred:board', 'dailyred:remind']);
   } finally {
     server.close();
   }
@@ -220,6 +220,7 @@ test('on the 1st, after the recap, the Pokémon Master of the Month is announced
     '🥈 <@2> 3 wins, 2 losses',
     '🥉 <@3> 1 win, 0 losses',
     '',
+    '<@1> wears the 👑 all December and joins the Hall of Fame.',
     "Everyone's streaks start over today. Good luck in December!",
   ].join('\n'));
   assert.equal(month.body.embeds[0].footer.text, '3 trainers battled RED 10 times in November');
@@ -272,4 +273,111 @@ test("opening the Activity posts today's card if someone already played, includi
   await bot.ensureCard(GUILD, '2026-11-13');
   assert.equal(discord.posts().length, 1, 'nobody has played on the 13th');
   assert.equal(await bot.servers(), 1);
+});
+
+test('a run-away shows as "Ran from RED on turn N"', async () => {
+  const { store, bot, discord, player } = setup();
+  player('1', 'Ash', { losses: 1, dayStreak: 4, lastPlayed: '2026-11-12', lastResult: 'lost' });
+  store.saveResult({ playerId: '1', date: '2026-11-12', won: false, monsLeft: 6, redLeft: 6, turns: 3, gaveUp: true });
+  await bot.updateCard(GUILD, '2026-11-12');
+  assert.equal(description(discord.posts()[0]), '<@1> 🏃 Ran from RED on turn 3\n🟥🟥🟥🟥🟥🟥');
+});
+
+test("last month's Master wears a 👑 all month and joins the Hall of Fame", async () => {
+  const discord = fakeDiscord();
+  const { publicKey } = generateKeyPairSync('ed25519');
+  const rawKey = publicKey.export({ format: 'der', type: 'spki' }).subarray(12).toString('hex');
+  const { store, bot, player, setClock } = setup({ discord, publicKey: rawKey, clock: new Date('2026-11-01T12:00:00Z') });
+  player('1', 'Ash', { wins: 2, lastPlayed: '2026-10-31', lastResult: 'won' });
+  player('2', 'Misty', { wins: 1, lastPlayed: '2026-10-30', lastResult: 'won' });
+  for (const [id, date] of [['1', '2026-10-30'], ['1', '2026-10-31'], ['2', '2026-10-30']]) {
+    store.saveResult({ playerId: id, date, won: true, monsLeft: 2, redLeft: 0, turns: 20 });
+  }
+  await bot.tick(); // Nov 1: October's Master is announced and saved
+  assert.deepEqual(store.masters(GUILD).map((m) => [m.month, m.playerId, m.wins]), [['2026-10', '1', 2]]);
+
+  setClock(new Date('2026-11-12T15:00:00Z'));
+  store.saveResult({ playerId: '1', date: '2026-11-12', won: true, monsLeft: 3, redLeft: 0, turns: 15 });
+  player('1', 'Ash', { wins: 3, winStreak: 1, dayStreak: 1, lastPlayed: '2026-11-12', lastResult: 'won' });
+  await bot.updateCard(GUILD, '2026-11-12');
+  assert.match(description(discord.posts().at(-1)), /^<@1> 👑 \*\*Beat RED\*\* with 3 left/);
+
+  const board = bot.interaction({ type: 3, guild_id: GUILD, data: { custom_id: 'dailyred:board' } });
+  assert.equal(board.data.embeds[0].description, [
+    '**1.** <@1> 👑 🏆 1 this month · 🔥 1 · best 1 · 3W 0L (100%)',
+    '**2.** <@2> 🏆 0 this month · 🔥 0 · best 0 · 1W 0L (100%)',
+    '',
+    '🏛️ **Hall of Fame**',
+    '**Oct 2026** <@1> (2 wins)',
+  ].join('\n'));
+
+  // The crown is only for the month after: in December it's November's Master.
+  setClock(new Date('2026-12-05T15:00:00Z'));
+  assert.equal(bot.crownedOn(GUILD, '2026-12-05').size, 0);
+
+  // The page's board shows it too.
+  const app = createApp({ webRoot: '.', store, clientId: '999', clientSecret: 's', bot, now: () => new Date('2026-11-12T15:00:00Z'),
+    fetch: async () => new Response(JSON.stringify({ id: '2', username: 'misty' }), { status: 200 }) });
+  const server = createServer(app);
+  await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/api/board?room=g:${GUILD}&date=2026-11-12`, { headers: { Authorization: 'Bearer t' } });
+    const { players, hallOfFame } = await res.json();
+    assert.deepEqual(players.map((p) => [p.id, p.master]), [['1', true], ['2', false]]);
+    assert.deepEqual(hallOfFame, [{ month: '2026-10', masters: [{ id: '1', name: 'Ash', avatarUrl: '', wins: 2, losses: 0 }] }]);
+  } finally {
+    server.close();
+  }
+});
+
+test('Mondays at 6:00 the weekly leaderboard follows the recap, once', async () => {
+  const { store, bot, discord, player } = setup({ clock: new Date('2026-11-16T11:00:00Z') }); // Mon 6:00 AM EST
+  player('1', 'Ash', { wins: 3, losses: 1, winStreak: 2, lastPlayed: '2026-11-15', lastResult: 'won' });
+  player('2', 'Misty', { wins: 1, losses: 2, lastPlayed: '2026-11-11', lastResult: 'lost' });
+  for (const [id, date, won] of [['1', '2026-11-15', true], ['1', '2026-11-14', true], ['1', '2026-11-13', false], ['2', '2026-11-11', false], ['2', '2026-11-10', true]]) {
+    store.saveResult({ playerId: id, date, won, monsLeft: won ? 2 : 0, redLeft: won ? 0 : 3, turns: 20 });
+  }
+  await bot.tick();
+  const [recap, weekly] = discord.posts();
+  assert.equal(recap.body.embeds[0].title, "Yesterday's results · Daily Red No. 15");
+  assert.equal(weekly.body.embeds[0].title, '📊 Weekly leaderboard · November 2026');
+  assert.equal(description(weekly), [
+    '🥇 <@1> 2W 1L this month · 🔥 2',
+    '🥈 <@2> 1W 1L this month · 🔥 0',
+    '',
+    '🔥 Longest win streaks: <@1> 2',
+    '📈 Most wins ever: <@1> 3 · <@2> 1',
+  ].join('\n'));
+  await bot.tick();
+  assert.equal(discord.posts().length, 2, 'only once');
+});
+
+test('🔔 Reminders: players opt in with the button and get one mention a day if they have not played', async () => {
+  const { publicKey } = generateKeyPairSync('ed25519');
+  const rawKey = publicKey.export({ format: 'der', type: 'spki' }).subarray(12).toString('hex');
+  const discord = fakeDiscord();
+  const { store, bot, player, setClock } = setup({ discord, publicKey: rawKey, clock: new Date('2026-11-12T21:59:00Z') }); // 4:59 PM EST
+  player('1', 'Ash', { lastPlayed: '2026-11-11', lastResult: 'won', wins: 1 });
+  player('2', 'Misty', { lastPlayed: '2026-11-12', lastResult: 'won', wins: 1 }); // already played today
+  player('3', 'Brock', { pending: '2026-11-12' }); // battling right now
+  player('4', 'Erika'); // didn't ask
+  const press = (userId) => bot.interaction({ type: 3, guild_id: GUILD, member: { user: { id: userId } }, data: { custom_id: 'dailyred:remind' } });
+  for (const id of ['1', '2', '3', '5']) assert.match(press(id).data.content, /^🔔 Reminders on: .* 5:00 PM Eastern/);
+  assert.equal(press('1').data.flags, 64);
+  assert.match(press('1').data.content, /^🔔 Reminders on/, 'the second press turned it off, the third back on');
+  assert.deepEqual(store.reminders(GUILD).sort(), ['1', '2', '3', '5']);
+
+  await bot.tick();
+  assert.equal(discord.posts().length, 0, 'not before 17:00');
+  setClock(new Date('2026-11-12T22:00:00Z'));
+  await bot.tick();
+  const [reminder] = discord.posts();
+  // 5 pressed the button without ever playing: reminded too.
+  assert.match(reminder.body.content, /^⏰ Today's Daily Red \(No\. 12\) is waiting for <@1> <@5>\. /);
+  assert.deepEqual(reminder.body.allowed_mentions, { users: ['1', '5'] }, 'pings only who asked and has not played');
+  await bot.tick();
+  assert.equal(discord.posts().length, 1, 'once a day');
+
+  assert.match(press('1').data.content, /^🔕 Reminders off/);
+  assert.deepEqual(store.reminders(GUILD).sort(), ['2', '3', '5']);
 });

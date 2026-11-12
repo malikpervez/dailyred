@@ -7,9 +7,10 @@ import {
   today, dailySeed, dayNumber, msUntilTomorrow, loadStats, resultFor, currentStreaks,
   markBattleStarted, recordResult, settleAbandonedGame, useStatsStorage,
 } from './daily.js';
-import { inDiscord, connectDiscord, renderBoard } from './discord.js';
+import { inDiscord, connectDiscord, renderBoard, renderHallOfFame } from './discord.js';
 import { loadTeams, startBattle, choose, forfeit, detach } from './battle/engine.js';
 import { createBattleView, spriteUrl } from './battle/view.js';
+import { drawShareImage, canvasToBlob } from './share.js';
 
 const $ = (id) => document.getElementById(id);
 const app = document.querySelector('.app');
@@ -40,6 +41,14 @@ const ui = {
   battleDone: $('battle-done'),
   doneTitle: $('done-title'),
   shareText: $('share-text'),
+  shareImage: $('share-image'),
+  shareButton: $('share-result'),
+  shareNote: $('share-note'),
+  reminder: $('reminder'),
+  reminderBox: $('reminder-box'),
+  reminderTime: $('reminder-time'),
+  hall: $('hall'),
+  hallList: $('hall-list'),
 };
 
 // ?seed=123 shows the team for that seed instead of today's, for testing and
@@ -287,13 +296,33 @@ for (const button of document.querySelectorAll('[data-board]')) {
   });
 }
 
+ui.reminderBox.addEventListener('change', async () => {
+  const on = ui.reminderBox.checked;
+  ui.reminderBox.disabled = true;
+  try {
+    ui.reminderBox.checked = (await discord.setReminder(on)).on;
+  } catch (err) {
+    console.warn("Couldn't change the reminder", err);
+    ui.reminderBox.checked = !on;
+  } finally {
+    ui.reminderBox.disabled = false;
+  }
+});
+
 async function refreshBoard() {
   if (!discord?.room) return;
   clearTimeout(boardTimer);
   try {
-    const { players } = await discord.board(today());
+    const { players, hallOfFame = [], reminders = null } = await discord.board(today());
     boardPlayers = players;
     renderBoard(ui.boardList, players, boardTab);
+    ui.hall.hidden = !hallOfFame.length;
+    renderHallOfFame(ui.hallList, hallOfFame);
+    ui.reminder.hidden = !reminders;
+    if (reminders) {
+      ui.reminderBox.checked = reminders.on;
+      ui.reminderTime.textContent = reminders.time;
+    }
     ui.boardNote.textContent = !players.length ? 'Nobody has played here yet. Be the first to battle RED!'
       : boardTab === 'month' ? 'Most wins this month becomes the Pokémon Master of the Month. Streaks start over on the 1st.' : '';
   } catch (err) {
@@ -393,7 +422,9 @@ function endBattle(won, tie = false) {
     recordResult(stats, battle.date, won);
     // How it went, for the server's board and the Discord bot's card.
     const alive = (side) => (view.state?.[side].party ?? []).filter((p) => p !== 'fnt').length;
-    discord?.report('result', battle.date, won, { monsLeft: alive('p1'), redLeft: alive('p2'), turns: battle.turns ?? 0 });
+    discord?.report('result', battle.date, won, {
+      monsLeft: alive('p1'), redLeft: alive('p2'), turns: battle.turns ?? 0, gaveUp: !won && battle.ran,
+    });
   }
   const text = won ? 'You defeated RED!'
     : tie ? 'Both last Pokémon fell at once. A draw counts as a loss.'
@@ -402,21 +433,114 @@ function endBattle(won, tie = false) {
   view.end(text, () => showDone(won));
 }
 
-function shareText(won) {
-  const left = (view.state?.p1.party ?? []).map((p) => (p === 'fnt' ? '⬛' : '🟥'));
-  const redLeft = (view.state?.p2.party ?? []).filter((p) => p !== 'fnt').length;
-  const head = practiceSeed || !battle.official ? 'Daily Red (practice)' : `Daily Red No. ${dayNumber(battle.date)}`;
-  const line = won
-    ? `Beat RED with ${left.filter((x) => x === '🟥').length} left`
-    : `Lost to RED (he had ${redLeft} left)`;
-  return `${head}\n${line}\n${left.join('')}`;
+// How the battle went, for the share text and picture.
+function outcome(won) {
+  const state = view.state;
+  const left = (side) => (state?.[side].party ?? []).filter((p) => p !== 'fnt').length;
+  const fainted = (side) => new Set(state?.[side].fainted ?? []);
+  const practice = Boolean(practiceSeed) || !battle.official;
+  return {
+    won,
+    ran: !won && battle.ran,
+    practice,
+    title: practice ? 'Daily Red (practice)' : `Daily Red No. ${dayNumber(battle.date)}`,
+    turns: battle.turns ?? 0,
+    left: left('p1'),
+    redLeft: left('p2'),
+    grid: (state?.p1.party ?? []).map((p) => (p === 'fnt' ? '⬛' : '🟥')).join(''),
+    // The day's order (not the battle order, which would show the lead).
+    team: teams.team.map((m) => ({ num: m.num, shiny: m.shiny, fainted: fainted('p1').has(m.num) })),
+    red: teams.red.map((m) => ({ num: m.num, fainted: fainted('p2').has(m.num) })),
+  };
 }
 
-function showDone(won) {
+function shareText(o) {
+  const line = o.won ? `Beat RED with ${o.left} left`
+    : o.ran ? `Ran from RED on turn ${o.turns || 1}`
+    : `Lost to RED (he had ${o.redLeft} left)`;
+  return `${o.title}\n${line}\n${o.grid}`;
+}
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+async function makeShareImage(o) {
+  const streak = o.practice ? 0 : currentStreaks(stats, battle.date).winStreak;
+  const detail = [
+    o.won ? `${o.left} of 6 left` : o.ran ? null : `RED had ${o.redLeft} left`,
+    o.turns ? plural(o.turns, 'turn') : null,
+    streak > 1 ? `${streak}-day win streak` : null,
+  ].filter(Boolean).join(' · ');
+  const label = new Date(`${battle.date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const canvas = await drawShareImage({
+    title: o.title,
+    date: o.practice ? '' : label,
+    outcome: o.won ? 'won' : o.ran ? 'ran' : 'lost',
+    headline: o.won ? 'Beat RED!' : o.ran ? `Ran from RED on turn ${o.turns || 1}` : 'Lost to RED',
+    detail: detail || (o.ran ? 'Live to battle another day' : ''),
+    team: o.team,
+    red: o.red,
+    footer: discord?.user?.name ?? 'Daily Red',
+  });
+  // A data: URL for the preview (Discord's Activity frame may not allow blob: images).
+  return { blob: await canvasToBlob(canvas), url: canvas.toDataURL('image/png') };
+}
+
+let shareBlob = null;
+
+async function showDone(won) {
+  const o = outcome(won);
   ui.doneTitle.textContent = won ? 'You beat RED!' : 'RED won this time.';
-  ui.shareText.textContent = shareText(won);
+  ui.shareText.textContent = shareText(o);
+  ui.shareNote.hidden = true;
+  ui.shareImage.hidden = true;
+  ui.shareButton.hidden = true;
   ui.battleDone.hidden = false;
   ui.battleDone.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  shareBlob = null;
+  try {
+    const { blob, url } = await makeShareImage(o);
+    if (ui.battleDone.hidden) return; // already left
+    shareBlob = blob;
+    ui.shareImage.src = url;
+    ui.shareImage.alt = ui.shareText.textContent.replace(/\n/g, '. ');
+    ui.shareImage.hidden = false;
+    ui.shareButton.hidden = false;
+  } catch (err) {
+    console.warn("Couldn't draw the share picture", err);
+  }
+}
+
+// Discord: its share dialog (desktop and web). Elsewhere: the phone's share
+// sheet, or a download.
+async function shareImage() {
+  if (!shareBlob) return;
+  const note = (text) => { ui.shareNote.textContent = text; ui.shareNote.hidden = !text; };
+  const name = `daily-red-${battle?.date ?? 'result'}.png`;
+  note('');
+  ui.shareButton.disabled = true;
+  try {
+    if (discord) {
+      await discord.shareImage(shareBlob);
+      return;
+    }
+    const file = new File([shareBlob], name, { type: 'image/png' });
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], text: ui.shareText.textContent });
+      return;
+    }
+    const link = document.createElement('a');
+    link.href = ui.shareImage.src;
+    link.download = name;
+    link.click();
+  } catch (err) {
+    if (err?.name === 'AbortError') return; // closed the share sheet
+    console.warn('Sharing failed', err);
+    note(inDiscord
+      ? "Discord's share dialog isn't available here. Press and hold the picture to save it, or copy the text."
+      : "Couldn't share the picture. Press and hold (or right-click) it to save it.");
+  } finally {
+    ui.shareButton.disabled = false;
+  }
 }
 
 function leaveBattle() {
@@ -447,6 +571,7 @@ function askToRun() {
 }
 
 $('back-home').addEventListener('click', leaveBattle);
+ui.shareButton.addEventListener('click', shareImage);
 $('copy-result').addEventListener('click', async (event) => {
   const button = event.currentTarget;
   try {

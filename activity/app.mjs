@@ -5,7 +5,9 @@
 //   POST /api/token    { code } -> { access_token }    OAuth2 code exchange
 //   GET  /api/me       ?room=&settle=1 -> { user, stats }
 //   POST /api/battle   { event: 'start' | 'result', date, won, room } -> { stats }
-//   GET  /api/board    ?room=&date= -> { players: [...] }
+//   GET  /api/board    ?room=&date= -> { players, hallOfFame, reminders }
+//   POST /api/reminder { room, on } -> { on, time }     the bot's daily reminder
+//   POST /api/share    PNG image -> { url }             for Discord's share dialog
 //
 // Every /api call except config and token needs "Authorization: Bearer
 // <Discord access token>"; the token is checked against Discord's API and
@@ -20,6 +22,7 @@ import {
   EMPTY, addDays, currentStreaks, markBattleStarted, recordResult, resultFor, settleAbandonedGame,
   useStatsStorage,
 } from '../web/daily.js';
+import { previousMonth } from './bot.mjs';
 
 // daily.js saves through this; the server saves players itself.
 useStatsStorage({ read: () => null, write: () => {} });
@@ -43,6 +46,8 @@ const COMPRESSIBLE = new Set(['.html', '.js', '.mjs', '.css', '.json', '.svg', '
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ROOM = /^[gc]:\d{1,20}$/; // g:<server id> or c:<channel id> (DMs)
 const TOKEN_CACHE_MS = 10 * 60 * 1000;
+const MAX_SHARE_BYTES = 2 * 1024 * 1024;
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -64,6 +69,7 @@ export function createApp({
   const root = resolve(webRoot);
   const gzipCache = new Map(); // path -> { mtimeMs, body }
   const tokenCache = new Map(); // access token -> { user, expires }
+  const lastShare = new Map(); // user id -> time of their last image upload
 
   // --- Static files ------------------------------------------------------------
 
@@ -155,8 +161,10 @@ export function createApp({
   }
 
   // The signed-in Discord user, from the request's access token.
+  const bearer = (req) => /^Bearer (\S{1,512})$/.exec(req.headers.authorization || '')?.[1];
+
   async function requireUser(req) {
-    const token = /^Bearer (\S{1,512})$/.exec(req.headers.authorization || '')?.[1];
+    const token = bearer(req);
     if (!token) throw new HttpError(401, 'Not signed in');
     const cached = tokenCache.get(token);
     if (cached && cached.expires > Date.now()) return cached.user;
@@ -247,6 +255,7 @@ export function createApp({
         store.saveResult({
           playerId: user.id, date, won: body.won,
           monsLeft: count(body.monsLeft, 6), redLeft: count(body.redLeft, 6), turns: count(body.turns, 1000),
+          gaveUp: !body.won && body.gaveUp === true, // pressed RUN
         });
       }
       recordResult(stats, date, body.won); // ignored if the day already has a result
@@ -259,11 +268,26 @@ export function createApp({
     return { stats };
   }
 
+  // The server's Pokémon Masters (bot.mjs saves them on the 1st), newest
+  // first, grouped by month. DMs and group DMs have none.
+  function hallOfFame(room) {
+    if (!room.startsWith('g:')) return [];
+    const months = new Map();
+    for (const m of store.masters(room.slice(2))) {
+      if (!months.has(m.month)) months.set(m.month, { month: m.month, masters: [] });
+      months.get(m.month).masters.push({ id: m.playerId, name: m.name, avatarUrl: m.avatarUrl, wins: m.wins, losses: m.losses });
+    }
+    return [...months.values()];
+  }
+
   function board(user, query) {
     const room = checkRoom(query.get('room'), { required: true });
     const date = checkDate(query.get('date'));
     const results = store.roomResults(room, date);
     const month = store.monthTotals(room, date.slice(0, 7)); // the Master of the Month race
+    const hall = hallOfFame(room);
+    // Last month's Master(s) wear the crown all this month.
+    const crowned = new Set(hall.find((h) => h.month === previousMonth(date.slice(0, 7)))?.masters.map((m) => m.id));
     const players = store.roomPlayers(room).map(({ id, name, avatarUrl, stats }) => {
       const full = { ...EMPTY, ...stats };
       const result = resultFor(full, date);
@@ -276,13 +300,51 @@ export function createApp({
         result: result ? results.get(id) ?? { won: result === 'won' } : null,
         monthWins: month.get(id)?.wins ?? 0, monthLosses: month.get(id)?.losses ?? 0,
         monthLeft: month.get(id)?.monsLeft ?? 0, monthTurns: month.get(id)?.turns ?? 0,
+        master: crowned.has(id),
         you: id === user.id,
       };
     });
     const order = { won: 0, lost: 1, battling: 2 };
     players.sort((a, b) => (order[a.today] ?? 3) - (order[b.today] ?? 3)
       || b.winStreak - a.winStreak || b.dayStreak - a.dayStreak || b.wins - a.wins || a.name.localeCompare(b.name));
-    return { date, players };
+    // The daily reminder: only in servers, and only when the bot can post.
+    const reminders = bot?.status().posting && room.startsWith('g:')
+      ? { on: store.hasReminder(room.slice(2), user.id), time: bot.reminderNote }
+      : null;
+    return { date, players, hallOfFame: hall, reminders };
+  }
+
+  // POST /api/reminder: the same switch as the bot's 🔔 Reminders button.
+  function reminder(user, body) {
+    const room = checkRoom(body.room, { required: true });
+    if (!room.startsWith('g:') || !bot?.status().posting) throw new HttpError(400, 'Reminders only work in a server with the bot');
+    if (typeof body.on !== 'boolean') throw new HttpError(400, 'Missing on');
+    store.joinRoom(room, user.id);
+    return { on: bot.toggleReminder(room.slice(2), user.id, body.on), time: bot.reminderNote };
+  }
+
+  // POST /api/share: puts the result image on Discord's CDN (with the
+  // player's own token) so the Activity can open Discord's share dialog.
+  async function share(req) {
+    const user = await requireUser(req);
+    if (Date.now() - (lastShare.get(user.id) ?? 0) < 5000) throw new HttpError(429, 'One moment…');
+    const image = await readBody(req, MAX_SHARE_BYTES);
+    if (image.length < PNG.length || !image.subarray(0, PNG.length).equals(PNG)) throw new HttpError(400, 'Expected a PNG image');
+    lastShare.set(user.id, Date.now());
+    if (lastShare.size > 5000) lastShare.clear();
+    const form = new FormData();
+    form.append('file', new Blob([image], { type: 'image/png' }), 'daily-red.png');
+    const response = await fetch(`${discordApi}/applications/${clientId}/attachment`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${bearer(req)}` },
+      body: form,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.attachment?.url) {
+      console.warn(`Discord image upload failed (HTTP ${response.status}): ${data.message ?? ''}`);
+      throw new HttpError(502, "Discord didn't take the image");
+    }
+    return { url: data.attachment.url };
   }
 
   // --- Routing ------------------------------------------------------------------
@@ -301,6 +363,11 @@ export function createApp({
       result = battle(user, await readJson(req));
     } else if (route === 'GET /api/board') {
       result = board(await requireUser(req), url.searchParams);
+    } else if (route === 'POST /api/reminder') {
+      const user = await requireUser(req);
+      result = reminder(user, await readJson(req));
+    } else if (route === 'POST /api/share') {
+      result = await share(req);
     } else if (route === 'GET /api/interactions') {
       // Open this in a browser to check the bot's setup (no secrets shown).
       const status = bot?.status() ?? { publicKey: 'missing', posting: false };
@@ -315,7 +382,7 @@ export function createApp({
           : status.publicKey === 'invalid'
             ? 'DISCORD_PUBLIC_KEY is set but isn\'t a valid key: copy it again from General Information > Public Key.'
             : 'DISCORD_PUBLIC_KEY isn\'t reaching the server: add it to the environment (and to the compose file\'s environment: list), then Up.',
-        bot: status.posting ? 'On: posts the live card and recaps.' : 'Off: DISCORD_BOT_TOKEN isn\'t set.',
+        bot: status.posting ? 'On: posts the live card, recaps, Monday leaderboards and reminders.' : 'Off: DISCORD_BOT_TOKEN isn\'t set.',
       };
     } else if (route === 'POST /api/interactions') {
       // Discord's button presses (bot.mjs), signed with the app's key.

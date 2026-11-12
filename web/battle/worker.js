@@ -126,7 +126,9 @@ function snapshot(client) {
     // first request at 0 HP until it sees their real HP.
     const party = s.team.map((p) => (p.fainted ? 'fnt' : p.status ? 'status' : 'ok'));
     while (party.length < 6) party.push('unknown');
-    return { name: s.name, active, party };
+    // Which Pokémon fainted, by Pokédex number (for the share image).
+    const fainted = s.team.filter((p) => p.fainted).map((p) => p.species.num);
+    return { name: s.name, active, party, fainted };
   };
   return { p1: side(client.p1, true), p2: side(client.p2, false), turn: client.turn };
 }

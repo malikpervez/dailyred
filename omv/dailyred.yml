@@ -30,6 +30,7 @@ services:
       DAILYRED_CHANNEL: ${DAILYRED_CHANNEL:-general}
       RECAP_TIME: ${RECAP_TIME:-06:00}
       RECAP_TIMEZONE: ${RECAP_TIMEZONE:-America/New_York}
+      REMINDER_TIME: ${REMINDER_TIME:-17:00}
     ports:
       - "8380:8080"
     volumes:

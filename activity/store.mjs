@@ -5,7 +5,10 @@
 //                 the same shape web/daily.js keeps in localStorage
 //   room_players  who has played in which Discord server (or DM / group DM),
 //                 for the "Today in this server" list
-//   results       each player's daily result: won, Pokémon left, RED's left, turns
+//   results       each player's daily result: won, Pokémon left, RED's left, turns,
+//                 and whether they ran from the battle
+//   masters       each server's Pokémon Master(s) of the Month (Hall of Fame)
+//   reminders     who asked the bot for a daily reminder, per server
 //   cards         the bot's live card for each server and day (bot.mjs)
 //   recaps        which morning recaps (date) and monthly announcements
 //                 ('month:YYYY-MM') have been posted
@@ -57,7 +60,23 @@ export function openStore(file) {
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS masters (
+      guild_id  TEXT NOT NULL,
+      month     TEXT NOT NULL,
+      player_id TEXT NOT NULL,
+      wins      INTEGER NOT NULL,
+      losses    INTEGER NOT NULL,
+      PRIMARY KEY (guild_id, month, player_id)
+    );
+    CREATE TABLE IF NOT EXISTS reminders (
+      guild_id  TEXT NOT NULL,
+      player_id TEXT NOT NULL,
+      PRIMARY KEY (guild_id, player_id)
+    );
   `);
+  // Added after the first release: databases made before it get the column.
+  const hasColumn = (table, column) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+  if (!hasColumn('results', 'gave_up')) db.exec('ALTER TABLE results ADD COLUMN gave_up INTEGER NOT NULL DEFAULT 0');
 
   const getPlayer = db.prepare('SELECT id, name, avatar_url, stats FROM players WHERE id = ?');
   const putPlayer = db.prepare(`
@@ -71,11 +90,11 @@ export function openStore(file) {
     WHERE r.room = ? ORDER BY p.updated_at DESC LIMIT 200
   `);
   const putResult = db.prepare(`
-    INSERT OR IGNORE INTO results (player_id, date, won, mons_left, red_left, turns, finished_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO results (player_id, date, won, mons_left, red_left, turns, gave_up, finished_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const roomResults = db.prepare(`
-    SELECT r.player_id, r.won, r.mons_left, r.red_left, r.turns FROM results r
+    SELECT r.player_id, r.won, r.mons_left, r.red_left, r.turns, r.gave_up FROM results r
     JOIN room_players rp ON rp.player_id = r.player_id WHERE rp.room = ? AND r.date = ?
   `);
   const roomDates = db.prepare(`
@@ -109,6 +128,20 @@ export function openStore(file) {
   `);
   const getRecap = db.prepare('SELECT 1 FROM recaps WHERE guild_id = ? AND date = ?');
   const putRecap = db.prepare('INSERT OR IGNORE INTO recaps (guild_id, date, posted_at) VALUES (?, ?, ?)');
+  const putMaster = db.prepare('INSERT OR IGNORE INTO masters (guild_id, month, player_id, wins, losses) VALUES (?, ?, ?, ?, ?)');
+  const getMasters = db.prepare(`
+    SELECT m.month, m.player_id, m.wins, m.losses, p.name, p.avatar_url FROM masters m
+    LEFT JOIN players p ON p.id = m.player_id WHERE m.guild_id = ? ORDER BY m.month DESC, p.name LIMIT 60
+  `);
+  const addReminder = db.prepare('INSERT OR IGNORE INTO reminders (guild_id, player_id) VALUES (?, ?)');
+  const removeReminder = db.prepare('DELETE FROM reminders WHERE guild_id = ? AND player_id = ?');
+  const getReminder = db.prepare('SELECT 1 FROM reminders WHERE guild_id = ? AND player_id = ?');
+  const guildReminders = db.prepare('SELECT player_id FROM reminders WHERE guild_id = ?');
+  const reminderGuilds = db.prepare('SELECT DISTINCT guild_id FROM reminders');
+  const roomsSince = db.prepare(`
+    SELECT DISTINCT rp.room FROM results r JOIN room_players rp ON rp.player_id = r.player_id
+    WHERE r.date >= ? AND rp.room LIKE 'g:%'
+  `);
   const getSetting = db.prepare('SELECT value FROM settings WHERE key = ?');
   const putSetting = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value');
 
@@ -116,7 +149,7 @@ export function openStore(file) {
     id: row.id, name: row.name, avatarUrl: row.avatar_url, stats: JSON.parse(row.stats),
   };
   const toResult = (row) => ({
-    won: Boolean(row.won), monsLeft: row.mons_left, redLeft: row.red_left, turns: row.turns,
+    won: Boolean(row.won), monsLeft: row.mons_left, redLeft: row.red_left, turns: row.turns, gaveUp: Boolean(row.gave_up),
   });
 
   return {
@@ -129,8 +162,8 @@ export function openStore(file) {
     roomPlayers: (room) => roomPlayers.all(room).map(toPlayer),
 
     // The first result saved for a player and day stays (like their stats).
-    saveResult({ playerId, date, won, monsLeft = null, redLeft = null, turns = null }) {
-      putResult.run(playerId, date, won ? 1 : 0, monsLeft, redLeft, turns, Date.now());
+    saveResult({ playerId, date, won, monsLeft = null, redLeft = null, turns = null, gaveUp = false }) {
+      putResult.run(playerId, date, won ? 1 : 0, monsLeft, redLeft, turns, gaveUp ? 1 : 0, Date.now());
     },
     // Map of player id -> { won, monsLeft, redLeft, turns } for a room's players on a day.
     roomResults: (room, date) => new Map(roomResults.all(room, date).map((row) => [row.player_id, toResult(row)])),
@@ -152,6 +185,18 @@ export function openStore(file) {
     saveCard: (guildId, date, channelId, messageId) => { putCard.run(guildId, date, channelId, messageId); },
     recapPosted: (guildId, date) => Boolean(getRecap.get(guildId, date)),
     markRecapPosted: (guildId, date) => { putRecap.run(guildId, date, Date.now()); },
+    // Pokémon Masters of the Month, newest first: [{ month, playerId, name, avatarUrl, wins, losses }].
+    saveMaster: (guildId, month, playerId, wins, losses) => { putMaster.run(guildId, month, playerId, wins, losses); },
+    masters: (guildId) => getMasters.all(guildId).map((row) => ({
+      month: row.month, playerId: row.player_id, name: row.name ?? 'Trainer', avatarUrl: row.avatar_url ?? '', wins: row.wins, losses: row.losses,
+    })),
+    // Daily reminders (bot.mjs).
+    setReminder: (guildId, playerId, on) => { (on ? addReminder : removeReminder).run(guildId, playerId); },
+    hasReminder: (guildId, playerId) => Boolean(getReminder.get(guildId, playerId)),
+    reminders: (guildId) => guildReminders.all(guildId).map((row) => row.player_id),
+    reminderGuilds: () => reminderGuilds.all().map((row) => row.guild_id),
+    // Servers where anyone finished a battle on or after `date`.
+    roomsSince: (date) => roomsSince.all(date).map((row) => row.room),
     getSetting: (key) => getSetting.get(key)?.value ?? null,
     setSetting: (key, value) => { putSetting.run(key, String(value)); },
 

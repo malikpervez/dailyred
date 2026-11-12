@@ -11,7 +11,9 @@
 //                          Battle RED / Leaderboard buttons (POST /api/interactions)
 //   DAILYRED_CHANNEL       the channel the bot posts in, default general
 //   RECAP_TIME             when the morning recap goes out, default 06:00
-//   RECAP_TIMEZONE         ...in this time zone, default America/New_York
+//   RECAP_TIMEZONE         ...in this time zone, default America/New_York (Monday
+//                          leaderboards and reminders use it too)
+//   REMINDER_TIME          when players who asked for it get their daily reminder, default 17:00
 //   PUBLIC_URL             this site's public address, for the picture in the bot's
 //                          messages (optional), e.g. https://nas.example.ts.net
 //   PORT                   default 8080
@@ -56,11 +58,13 @@ if ((env.DISCORD_BOT_TOKEN || env.DISCORD_PUBLIC_KEY) && env.DISCORD_CLIENT_ID) 
     channelName: env.DAILYRED_CHANNEL || 'general',
     recapTime: env.RECAP_TIME || '06:00',
     recapTimeZone: env.RECAP_TIMEZONE || 'America/New_York',
+    reminderTime: env.REMINDER_TIME || '17:00',
     publicUrl: env.PUBLIC_URL || null,
   });
   bot.start();
   if (env.DISCORD_BOT_TOKEN) {
-    console.log(`Daily Red bot on: posts in #${env.DAILYRED_CHANNEL || 'general'}, recap at ${env.RECAP_TIME || '06:00'} ${env.RECAP_TIMEZONE || 'America/New_York'}.`
+    console.log(`Daily Red bot on: posts in #${env.DAILYRED_CHANNEL || 'general'}, recap at ${env.RECAP_TIME || '06:00'} (leaderboard on Mondays),`
+      + ` reminders at ${env.REMINDER_TIME || '17:00'}, ${env.RECAP_TIMEZONE || 'America/New_York'}.`
       + ` Add it to a server: ${inviteUrl(env.DISCORD_CLIENT_ID)}`);
   } else {
     console.log('DISCORD_BOT_TOKEN is not set: nothing is posted in Discord (the buttons endpoint still works).');

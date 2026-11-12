@@ -217,12 +217,13 @@ like reloading the website.
 
 ## 6. Post the day's battles in #general (the bot)
 
-The bot posts two kinds of message in each server's **#general**:
+The bot posts these in each server's **#general**:
 
 - **The live card**: one message per day, posted when the first battle of the
   day starts and edited as people start and finish. Each player shows their
-  result, how many Pokémon they had left, turns and streak, with 🟥⬛ squares.
-  Nobody's team or lead is shown.
+  result, how many Pokémon they had left, turns and streak, with 🟥⬛ squares
+  ("🏃 Ran from RED on turn 3" if they gave up). Nobody's team or lead is
+  shown.
 - **The morning recap**: at 6:00 AM Eastern, yesterday's results ranked (wins
   first, then Pokémon left, then fewest turns), win streak leaders, the
   month's Master race, how many days in a row the server has played, and who
@@ -231,11 +232,25 @@ The bot posts two kinds of message in each server's **#general**:
   player with the most wins last month, with the runners-up. Ties go to fewer
   losses, then more Pokémon left over the month, then fewer turns; if it's
   still a tie they share the title. Everyone's streaks start over that day
-  (the best win streak is kept).
+  (the best win streak is kept). The Master wears a 👑 next to their name all
+  the next month (card, recap, leaderboards) and joins the server's **Hall of
+  Fame**.
+- **The weekly leaderboard**: every Monday right after the recap, the month's
+  standings so far, the longest win streaks, the most wins ever and the
+  reigning Master.
+- **Reminders** (opt-in): at 5:00 PM Eastern, one message mentioning the
+  players who asked for it and haven't battled yet that day. Nobody else is
+  pinged, and there's no message if everyone who asked has played.
 
-Both have a **Battle RED** button that opens the Activity and a **Leaderboard**
-button that shows the server's leaderboard to whoever presses it. Mentions in
-the messages never ping anyone.
+They have a **Battle RED** button that opens the Activity, a **Leaderboard**
+button that shows the server's leaderboard and Hall of Fame to whoever presses
+it, and a **🔔 Reminders** button that turns that person's reminder on or off
+(also a checkbox under the board in the Activity). Apart from reminders,
+mentions in the messages never ping anyone.
+
+In the Activity, **Share image** after a battle opens Discord's share dialog
+with a picture of the result (Discord shows that dialog on desktop and in the
+browser; on phones, press and hold the picture to save it).
 
 1. **Developer Portal > your app > Bot**: press **Reset Token** and copy it.
    Leave the privileged intents off; the bot doesn't need them.
@@ -251,6 +266,7 @@ the messages never ping anyone.
          DAILYRED_CHANNEL: ${DAILYRED_CHANNEL:-general}
          RECAP_TIME: ${RECAP_TIME:-06:00}
          RECAP_TIMEZONE: ${RECAP_TIMEZONE:-America/New_York}
+         REMINDER_TIME: ${REMINDER_TIME:-17:00}
    ```
 
    Then in the environment box add `DISCORD_BOT_TOKEN=` (step 1),
@@ -277,7 +293,8 @@ the messages never ping anyone.
 
 Play a battle in the server: the card appears in #general within a second or
 two. Change the channel with `DAILYRED_CHANNEL` (without the `#`), or the time
-with `RECAP_TIME` / `RECAP_TIMEZONE` (an IANA name such as `America/Chicago`).
+with `RECAP_TIME` / `RECAP_TIMEZONE` (an IANA name such as `America/Chicago`;
+the Monday leaderboard and reminders use the same zone) and `REMINDER_TIME`.
 If a server has no #general, the bot uses its system channel (where "welcome"
 messages go). The recap is skipped on days nobody in the server played.
 

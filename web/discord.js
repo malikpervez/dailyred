@@ -67,7 +67,7 @@ export async function connectDiscord() {
     // Sends 'start' / 'result' to the server, in order. Each one is retried
     // for a while: if a result never arrived, the server would count the
     // battle as abandoned (a loss) next time.
-    // For a result, `details` is { monsLeft, redLeft, turns } for the board and the bot.
+    // For a result, `details` is { monsLeft, redLeft, turns, gaveUp } for the board and the bot.
     report(event, date, won, details = {}) {
       const body = { event, date, room, ...(event === 'result' && { won, ...details }) };
       reports = reports.then(() => retry(() => call('POST', 'api/battle', body)))
@@ -77,6 +77,22 @@ export async function connectDiscord() {
     },
 
     board: (date) => room ? call('GET', `api/board?room=${room}&date=${date}`) : Promise.resolve({ players: [] }),
+
+    // The bot's daily reminder for this server (the same as its 🔔 button).
+    setReminder: (on) => call('POST', 'api/reminder', { room, on }),
+
+    // Puts the result picture on Discord's CDN (through our server, with the
+    // player's token), then opens Discord's "share" dialog with it.
+    async shareImage(blob) {
+      const response = await fetch('api/share', {
+        method: 'POST',
+        headers: { 'Content-Type': 'image/png', Authorization: `Bearer ${token}` },
+        body: blob,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      await sdk.commands.openShareMomentDialog({ mediaUrl: data.url });
+    },
 
     // The two lines under "Playing Daily Red" in Discord.
     setPresence(details, state) {
@@ -105,12 +121,13 @@ const TABS = {
     detail(p) {
       const r = p.result;
       if (!r) return `${p.wins}W ${p.losses}L · ${p.winStreak} win streak`;
+      if (r.gaveUp) return [`Ran on turn ${r.turns || 1}`, `🔥 ${p.winStreak}`].join(' · ');
       const how = r.won
         ? `${r.monsLeft != null ? `${r.monsLeft} left` : 'Won'}`
         : `${r.redLeft != null ? `RED had ${r.redLeft} left` : 'Lost'}`;
       return [how, r.turns ? `${r.turns} turns` : null, `🔥 ${p.winStreak}`].filter(Boolean).join(' · ');
     },
-    badge: (p) => TODAY_LABEL[p.today] ?? 'Not yet',
+    badge: (p) => (p.result?.gaveUp ? 'Ran from RED' : TODAY_LABEL[p.today] ?? 'Not yet'),
     squares: (p) => squares(p.result?.monsLeft),
   },
   month: {
@@ -160,6 +177,14 @@ export function renderBoard(list, players, tab = 'today') {
     const name = document.createElement('span');
     name.className = 'board-name';
     name.textContent = `${tab === 'today' ? '' : `${i + 1}. `}${p.you ? `${p.name} (you)` : p.name}`;
+    if (p.master) {
+      // Last month's Pokémon Master.
+      const crown = document.createElement('span');
+      crown.className = 'board-crown';
+      crown.textContent = ' 👑';
+      crown.title = "Last month's Pokémon Master";
+      name.append(crown);
+    }
 
     const today = document.createElement('span');
     today.className = 'board-today';
@@ -174,6 +199,25 @@ export function renderBoard(list, players, tab = 'today') {
     grid.textContent = view.squares(p);
 
     row.append(avatar, name, today, streak, grid);
+    return row;
+  }));
+}
+
+// The Hall of Fame: hallOfFame from GET /api/board, newest month first.
+export function renderHallOfFame(list, hallOfFame) {
+  list.replaceChildren(...hallOfFame.map(({ month, masters }) => {
+    const row = document.createElement('li');
+    row.className = 'hall-row';
+    const label = document.createElement('span');
+    label.className = 'hall-month';
+    label.textContent = new Date(`${month}-15T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+    const names = document.createElement('span');
+    names.className = 'hall-names';
+    names.textContent = `👑 ${masters.map((m) => m.name).join(' & ')}`;
+    const record = document.createElement('span');
+    record.className = 'hall-record';
+    record.textContent = `${masters[0].wins} ${masters[0].wins === 1 ? 'win' : 'wins'}`;
+    row.append(label, names, record);
     return row;
   }));
 }

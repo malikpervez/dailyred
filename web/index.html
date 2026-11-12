@@ -78,6 +78,14 @@
         </div>
         <ol class="board-list" id="board-list"></ol>
         <p class="section-note" id="board-note"></p>
+        <label class="reminder" id="reminder" hidden>
+          <input type="checkbox" id="reminder-box">
+          <span>🔔 Mention me in the server at <span id="reminder-time"></span> on days I haven't played</span>
+        </label>
+        <div class="hall" id="hall" hidden>
+          <h3 class="hall-title">🏛️ Hall of Fame</h3>
+          <ol class="hall-list" id="hall-list"></ol>
+        </div>
       </section>
 
       <section class="team" id="team" aria-labelledby="team-heading">
@@ -129,11 +137,14 @@
       </div>
       <div class="battle-done" id="battle-done" hidden>
         <p class="done-title" id="done-title"></p>
+        <img class="share-image" id="share-image" alt="" width="600" height="360" hidden>
         <pre class="share-text" id="share-text"></pre>
         <div class="done-buttons">
-          <button class="button button-primary" id="copy-result" type="button">Copy result</button>
+          <button class="button button-primary" id="share-result" type="button" hidden>Share image</button>
+          <button class="button" id="copy-result" type="button">Copy result</button>
           <button class="button" id="back-home" type="button">Back to today</button>
         </div>
+        <p class="share-note" id="share-note" hidden></p>
       </div>
     </div>
   </main>

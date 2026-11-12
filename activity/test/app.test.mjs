@@ -36,6 +36,10 @@ async function fakeDiscord(url, init = {}) {
     const user = USERS[init.headers.Authorization.replace('Bearer ', '')];
     return user ? json(200, user) : json(401, { message: '401: Unauthorized' });
   }
+  if (url.endsWith('/applications/1234567890/attachment')) {
+    calls.upload = { auth: init.headers.Authorization, file: init.body.get('file') };
+    return json(200, { attachment: { url: 'https://cdn.discordapp.com/ephemeral-attachments/1/2/daily-red.png' } });
+  }
   return json(404, {});
 }
 
@@ -163,14 +167,18 @@ test("the board lists the server's players, today's results first", async () => 
   ]);
   assert.match(players[1].avatarUrl, /^https:\/\/cdn\.discordapp\.com\/embed\/avatars\/[0-5]\.png$/);
   // How Ash's battle went, for the board's squares and the leaderboard tabs.
-  assert.deepEqual(players[0].result, { won: true, monsLeft: 4, redLeft: 0, turns: 18 });
+  assert.deepEqual(players[0].result, { won: true, monsLeft: 4, redLeft: 0, turns: 18, gaveUp: false });
   assert.deepEqual([players[0].bestWinStreak, players[0].played, players[0].winRate], [1, 1, 100]);
   assert.deepEqual([players[0].monthWins, players[0].monthLosses, players[1].monthWins], [1, 0, 0]);
   assert.equal(players[1].result, null);
+  assert.equal(players[0].master, false);
 
   // Other servers have their own lists.
   const other = await (await get(`/api/board?room=g:43&date=${TODAY}`, 'token-gary')).json();
   assert.deepEqual(other.players, []);
+  // No Masters yet, and no reminders without the bot.
+  assert.deepEqual([other.hallOfFame, other.reminders], [[], null]);
+  assert.equal((await post('/api/reminder', { room: 'g:42', on: true }, 'token-gary')).status, 400);
   assert.equal((await get(`/api/board?room=nope&date=${TODAY}`, 'token-gary')).status, 400);
 });
 
@@ -208,4 +216,33 @@ test('a battle left unfinished on an earlier day is settled before a new one', a
   assert.equal(stats.losses, 1);
   assert.equal(stats.lastPlayed, '2026-11-08');
   assert.equal(stats.pending, '2026-11-09');
+});
+
+test('running away is saved as a loss that was given up', async () => {
+  clock = new Date('2026-11-10T12:00:00Z');
+  await battle('token-gary', { event: 'start', date: '2026-11-10' });
+  await battle('token-gary', { event: 'result', date: '2026-11-10', won: false, gaveUp: true, monsLeft: 6, redLeft: 6, turns: 2 });
+  await battle('token-ash', { event: 'start', date: '2026-11-10' });
+  await battle('token-ash', { event: 'result', date: '2026-11-10', won: true, gaveUp: true, monsLeft: 1, redLeft: 0, turns: 30 });
+  const { players } = await (await get('/api/board?room=g:42&date=2026-11-10', 'token-gary')).json();
+  const result = (name) => players.find((p) => p.name === name).result;
+  assert.deepEqual(result('gary'), { won: false, monsLeft: 6, redLeft: 6, turns: 2, gaveUp: true });
+  assert.equal(result('Ash').gaveUp, false, 'a win is never a run-away');
+});
+
+test('the share image goes to Discord with the player\'s own token', async () => {
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(100)]);
+  const upload = (body, token = 'token-ash') => fetch(`${base}/api/share`, {
+    method: 'POST', headers: { 'Content-Type': 'image/png', ...(token && { Authorization: `Bearer ${token}` }) }, body,
+  });
+  assert.equal((await upload(png, null)).status, 401);
+  assert.equal((await upload(Buffer.from('<svg/>'))).status, 400);
+  const res = await upload(png);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { url: 'https://cdn.discordapp.com/ephemeral-attachments/1/2/daily-red.png' });
+  assert.equal(calls.upload.auth, 'Bearer token-ash');
+  assert.equal(calls.upload.file.size, png.length);
+  assert.equal(calls.upload.file.type, 'image/png');
+  assert.equal((await upload(png)).status, 429, 'one upload every few seconds');
+  assert.equal((await upload(Buffer.alloc(3 * 1024 * 1024), 'token-gary')).status, 413);
 });

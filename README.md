@@ -78,6 +78,11 @@ web/index.html + app.js            today's page, the lead picker, stats (daily.j
   shows his Pokémon's summary, with how its moves hit yours.
 - **Text speed:** Normal or Fast, remembered in the browser. Tapping the
   battle screen skips ahead.
+- **Sharing:** after the battle, the result as text (🟥⬛ squares) and as a
+  picture of both teams with the fainted Pokémon greyed out (`web/share.js`).
+  Your team is drawn in the day's order, so it doesn't give away your lead.
+  **Share image** opens Discord's share dialog in the Activity, or the phone's
+  share sheet (or a download) on the website.
 - **Move animations** (`web/battle/fx.js`) use FireRed's own animation
   graphics (`web/battle/fx-sprites.js` lists them). They aren't a port of
   FireRed's animation scripts: about 80 moves have their own short recipe
@@ -149,8 +154,9 @@ Daily Red can also run inside Discord as an Activity, with Discord sign-in,
 stats that follow you across devices, a "Today in this server" board with
 Today / This month / Streaks / All time tabs, and (with the bot) a live card
 in #general that fills in as people play, a recap of yesterday every morning
-at 6:00 Eastern like Wordle, and the Pokémon Master of the Month (most wins)
-on the 1st. It's
+at 6:00 Eastern like Wordle, a leaderboard every Monday, opt-in 🔔 reminders,
+and the Pokémon Master of the Month (most wins) on the 1st, who wears a 👑
+the next month and joins the server's Hall of Fame. It's
 one Docker image that runs on an x86_64 or arm64 machine, e.g. a Raspberry Pi
 NAS, and builds in a minute or two. Setup:
 [docs/discord-activity.md](docs/discord-activity.md).

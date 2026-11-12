@@ -24,6 +24,7 @@ services:
       DAILYRED_CHANNEL: ${DAILYRED_CHANNEL:-general}
       RECAP_TIME: ${RECAP_TIME:-06:00}
       RECAP_TIMEZONE: ${RECAP_TIMEZONE:-America/New_York}
+      REMINDER_TIME: ${REMINDER_TIME:-17:00}
     ports:
       # For a reverse proxy on the Pi. Not needed with the tunnel below.
       - "${DAILYRED_PORT:-8380}:8080"

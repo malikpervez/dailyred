@@ -9,7 +9,7 @@
 // Needs the built site: scripts/fetch-vendor.sh, scripts/get-sprites.sh and
 // `npm run build` in activity/. Screenshots go to tests/output/.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
@@ -127,7 +127,7 @@ try {
   await page.click('.action:has-text("RUN")');
   await page.click('#run-dialog button[value="run"]');
   assert.equal(await playToTheEnd(page), 'RED won this time.');
-  assert.match(await page.textContent('#share-text'), /^Daily Red \(practice\)/);
+  assert.match(await page.textContent('#share-text'), /^Daily Red \(practice\)\nRan from RED on turn \d+\n/);
   await page.click('#back-home');
   let stats = await page.evaluate(() => window.dailyRed.stats);
   assert.equal(stats.wins + stats.losses, 0, 'practice runs are not recorded');
@@ -139,6 +139,20 @@ try {
   const title = await playToTheEnd(page);
   const won = title === 'You beat RED!';
   assert.match(await page.textContent('#share-text'), /^Daily Red No\. 12\n(Beat RED with \d left|Lost to RED \(he had \d left\))\n[🟥⬛]{6}$/u);
+
+  step('the result picture is drawn, with a Share image button');
+  await page.waitForSelector('#share-image', { state: 'visible', timeout: 10000 });
+  assert.ok(await page.isVisible('#share-result'));
+  const picture = await page.evaluate(async () => {
+    const img = document.getElementById('share-image');
+    await img.decode();
+    const bytes = new Uint8Array(await (await fetch(img.src)).arrayBuffer());
+    let binary = '';
+    for (const b of bytes) binary += String.fromCharCode(b);
+    return { width: img.naturalWidth, height: img.naturalHeight, png: btoa(binary) };
+  });
+  assert.deepEqual([picture.width, picture.height], [1200, 720]);
+  writeFileSync(join(OUT, 'share.png'), Buffer.from(picture.png, 'base64'));
   await page.screenshot({ path: join(OUT, 'result.png'), fullPage: true });
   await page.click('#back-home');
   stats = await page.evaluate(() => window.dailyRed.stats);
@@ -165,6 +179,26 @@ try {
   stats = await page.evaluate(() => window.dailyRed.stats);
   assert.deepEqual([stats.losses, stats.lastPlayed, stats.lastResult], [won ? 1 : 2, '2026-11-13', 'lost']);
   assert.equal(await page.textContent('#stat-day-streak'), '2');
+
+  step("the server board shows run-aways, last month's Master's 👑 and the Hall of Fame");
+  const board = await page.evaluate(async () => {
+    const { renderBoard, renderHallOfFame } = await import('./discord.js');
+    const list = document.createElement('ol');
+    const base = { avatarUrl: '', wins: 3, losses: 1, winStreak: 0, dayStreak: 2, bestWinStreak: 2, played: 4, winRate: 75 };
+    renderBoard(list, [
+      { ...base, id: '1', name: 'Ash', today: 'won', master: true, result: { won: true, monsLeft: 3, redLeft: 0, turns: 18 } },
+      { ...base, id: '2', name: 'Misty', today: 'lost', result: { won: false, monsLeft: 6, redLeft: 6, turns: 2, gaveUp: true } },
+    ], 'today');
+    const hall = document.createElement('ol');
+    renderHallOfFame(hall, [{ month: '2026-10', masters: [{ id: '1', name: 'Ash', wins: 21, losses: 4 }] }]);
+    const cells = (row) => [...row.children].map((c) => c.textContent).filter(Boolean).join(' | ');
+    return { rows: [...list.children].map(cells), hall: [...hall.children].map(cells) };
+  });
+  assert.deepEqual(board.rows, [
+    'Ash 👑 | Beat RED | 3 left · 18 turns · 🔥 0 | 🟥🟥🟥⬛⬛⬛',
+    'Misty | Ran from RED | Ran on turn 2 · 🔥 0 | 🟥🟥🟥🟥🟥🟥',
+  ]);
+  assert.deepEqual(board.hall, ['Oct 2026 | 👑 Ash | 21 wins']);
 
   step('?seed= shows that seed\'s team as a practice team');
   await page.goto(`${server.url}/?seed=12345`);

@@ -6,14 +6,19 @@
 //     day starts there and edited as players start and finish. It shows each
 //     player's result, Pokémon left, turns and streak, never their team.
 //   - The morning recap: yesterday's results ranked, win streak leaders, the
-//     server's days-in-a-row streak and who didn't play, at RECAP_TIME in
-//     RECAP_TIMEZONE (06:00 America/New_York by default).
+//     month's Master race, the server's days-in-a-row streak and who didn't
+//     play, at RECAP_TIME in RECAP_TIMEZONE (06:00 America/New_York by default).
 //   - Pokémon Master of the Month: on the 1st, right after the recap, the
 //     player with the most wins last month (ties: fewer losses, then more
-//     Pokémon left, then fewer turns; still tied = co-Masters). Streaks start
+//     Pokémon left, then fewer turns; still tied = co-Masters). They're kept
+//     in the Hall of Fame, and wear a 👑 all the next month. Streaks start
 //     over that day (web/daily.js).
-//   - Buttons on all of them: "Battle RED" launches the Activity, "Leaderboard" shows
-//     the server's leaderboard to whoever pressed it. Discord sends button
+//   - The weekly leaderboard: Mondays, right after the recap.
+//   - Daily reminders: players who press "Reminders" get mentioned at
+//     REMINDER_TIME (17:00 by default) on days they haven't played yet.
+//   - Buttons on all of them: "Battle RED" launches the Activity,
+//     "Leaderboard" shows the leaderboard and Hall of Fame to whoever pressed
+//     it, "Reminders" turns their reminder on or off. Discord sends button
 //     presses to POST /api/interactions (app.mjs), checked with the app's
 //     public key.
 //
@@ -24,10 +29,12 @@ import { EMPTY, addDays, currentStreaks, dayNumber, resultFor } from '../web/dai
 
 const API = 'https://discord.com/api/v10';
 const RED = 0xd63a3a;
+const GOLD = 0xf0b232;
 // View Channel, Send Messages, Embed Links, Read Message History.
 export const BOT_PERMISSIONS = 1024 + 2048 + 16384 + 65536;
 const PLAY_BUTTON = 'dailyred:play';
 const BOARD_BUTTON = 'dailyred:board';
+const REMIND_BUTTON = 'dailyred:remind';
 const MAX_LINES = 25;
 
 export const inviteUrl = (clientId) =>
@@ -38,6 +45,22 @@ export const inviteUrl = (clientId) =>
 const squares = (left) => (left == null ? '' : '🟥'.repeat(left) + '⬛'.repeat(Math.max(0, 6 - left)));
 const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
 const dateLabel = (date) => new Date(`${date}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+const monthLabel = (month) => new Date(`${month}-15T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+const monthName = (month) => new Date(`${month}-15T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+const shortMonth = (month) => new Date(`${month}-15T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+export const nextMonth = (month) => {
+  const [y, m] = month.split('-').map(Number);
+  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+};
+export const previousMonth = (month) => {
+  const [y, m] = month.split('-').map(Number);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+};
+const timeLabel = (hhmm) => {
+  const [h, m] = hhmm.split(':').map(Number);
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+};
+const zoneLabel = (zone) => ({ 'America/New_York': 'Eastern', 'America/Chicago': 'Central', 'America/Denver': 'Mountain', 'America/Los_Angeles': 'Pacific' }[zone] ?? zone);
 
 // Wins first (more Pokémon left, then fewer turns), then losses (RED left with
 // fewer, then more of yours left, then fewer turns).
@@ -53,21 +76,19 @@ export function compareMonths(a, b) {
   return b.wins - a.wins || a.losses - b.losses || b.monsLeft - a.monsLeft || a.turns - b.turns;
 }
 
-const monthLabel = (month) => new Date(`${month}-15T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-const monthName = (month) => new Date(`${month}-15T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
-const nextMonth = (month) => {
-  const [y, m] = month.split('-').map(Number);
-  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
-};
+// `crowned`: the set of player ids who are the reigning Pokémon Master.
+const who = (id, crowned) => `<@${id}>${crowned?.has(id) ? ' 👑' : ''}`;
 
-function resultLine(player, result, streaks) {
+function resultLine(player, result, streaks, crowned) {
   const turns = result.turns ? ` · ${plural(result.turns, 'turn')}` : '';
   let line;
   if (result.won) {
-    line = `<@${player.id}> **Beat RED**${result.monsLeft != null ? ` with ${result.monsLeft} left` : ''}${turns}`;
+    line = `${who(player.id, crowned)} **Beat RED**${result.monsLeft != null ? ` with ${result.monsLeft} left` : ''}${turns}`;
     if (streaks.winStreak > 1) line += ` · 🔥 ${streaks.winStreak}-day win streak`;
+  } else if (result.gaveUp) {
+    line = `${who(player.id, crowned)} 🏃 Ran from RED${result.turns ? ` on turn ${result.turns}` : ''}`;
   } else {
-    line = `<@${player.id}> Lost to RED${result.redLeft != null ? `, he had ${result.redLeft} left` : ''}${turns}`;
+    line = `${who(player.id, crowned)} Lost to RED${result.redLeft != null ? `, he had ${result.redLeft} left` : ''}${turns}`;
     if (streaks.dayStreak > 1) line += ` · 📅 ${streaks.dayStreak} days in a row`;
   }
   const grid = squares(result.monsLeft);
@@ -75,6 +96,8 @@ function resultLine(player, result, streaks) {
 }
 
 const cap = (lines) => (lines.length > MAX_LINES ? [...lines.slice(0, MAX_LINES), `…and ${lines.length - MAX_LINES} more`] : lines);
+const MEDALS = ['🥇', '🥈', '🥉'];
+const rank = (i) => MEDALS[i] ?? `**${i + 1}.**`;
 
 // --- The bot -------------------------------------------------------------------------------
 
@@ -86,6 +109,7 @@ export function createBot({
   channelName = 'general',
   recapTime = '06:00',
   recapTimeZone = 'America/New_York',
+  reminderTime = '17:00',
   publicUrl = null,
   fetch = globalThis.fetch,
   now = () => new Date(),
@@ -109,9 +133,9 @@ export function createBot({
     });
   }
   const posting = Boolean(token); // without a bot token, only the buttons work
-  const channels = new Map(); // guild id -> { id, until } or { missing, until }
+  const channels = new Map(); // guild id -> { id, until }
   const queues = new Map(); // guild:date -> promise, so card edits don't race
-  const failedRecaps = new Map(); // guild:date -> time of the last failed try
+  const failed = new Map(); // what:guild:date -> time of the last failed try
   let serverCache = null;
   let timer = null;
 
@@ -152,14 +176,33 @@ export function createBot({
     return id;
   }
 
+  async function post(guildId, message) {
+    const channelId = await channelFor(guildId);
+    if (!channelId) throw new Error('no channel to post in');
+    return discord('POST', `/channels/${channelId}/messages`, message);
+  }
+
   const buttons = (label) => (key ? [{
     type: 1,
     components: [
       { type: 2, style: 3, label, emoji: { name: '▶️' }, custom_id: PLAY_BUTTON },
       { type: 2, style: 2, label: 'Leaderboard', custom_id: BOARD_BUTTON },
+      { type: 2, style: 2, label: 'Reminders', emoji: { name: '🔔' }, custom_id: REMIND_BUTTON },
     ],
   }] : []);
   const thumbnail = publicUrl ? { url: `${publicUrl.replace(/\/$/, '')}/sprites/front/25.png` } : undefined;
+
+  // Wall-clock date and "HH:MM" in the recap's time zone.
+  function zonedNow() {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+      timeZone: recapTimeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', weekday: 'short',
+    }).formatToParts(now()).map((p) => [p.type, p.value]));
+    return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}`, weekday: parts.weekday };
+  }
+
+  // The reigning Pokémon Master(s) on `date`: last month's.
+  const crownedOn = (guildId, date) => new Set(store.masters(guildId)
+    .filter((m) => m.month === previousMonth(date.slice(0, 7))).map((m) => m.playerId));
 
   // --- The live card --------------------------------------------------------------------
 
@@ -177,13 +220,14 @@ export function createBot({
 
   function cardMessage(guildId, date) {
     const room = `g:${guildId}`;
+    const crowned = crownedOn(guildId, date);
     const { results, players } = dayResults(room, date);
     const finished = players.filter((p) => results.has(p.id))
       .sort((a, b) => compareResults(results.get(a.id), results.get(b.id)));
     const battling = players.filter((p) => !results.has(p.id) && p.stats.pending === date);
     const lines = [
-      ...finished.map((p) => resultLine(p, results.get(p.id), currentStreaks(p.stats, date))),
-      ...battling.map((p) => `<@${p.id}> ⚔️ Battling RED…`),
+      ...finished.map((p) => resultLine(p, results.get(p.id), currentStreaks(p.stats, date), crowned)),
+      ...battling.map((p) => `${who(p.id, crowned)} ⚔️ Battling RED…`),
     ];
     const wins = finished.filter((p) => results.get(p.id).won).length;
     const summary = [
@@ -243,14 +287,6 @@ export function createBot({
 
   // --- The morning recap -----------------------------------------------------------------
 
-  // Wall-clock date and "HH:MM" in the recap's time zone.
-  function zonedNow() {
-    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
-      timeZone: recapTimeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-    }).formatToParts(now()).map((p) => [p.type, p.value]));
-    return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
-  }
-
   // How many days in a row (ending on `date`) someone in the room finished a battle.
   function serverStreak(room, date) {
     let streak = 0;
@@ -263,15 +299,21 @@ export function createBot({
     return streak;
   }
 
+  // Everyone in the room who battled in `month`, best first.
+  function monthStandings(room, month) {
+    return [...store.monthTotals(room, month)].map(([id, totals]) => ({ id, ...totals })).sort(compareMonths);
+  }
+
   function recapMessage(guildId, date) {
     const room = `g:${guildId}`;
+    const today = addDays(date, 1);
+    const crowned = crownedOn(guildId, date);
     const { results, players } = dayResults(room, date);
     const finished = players.filter((p) => results.has(p.id))
       .sort((a, b) => compareResults(results.get(a.id), results.get(b.id)));
     const left = players.filter((p) => !results.has(p.id) && p.stats.pending === date);
     const recent = new Set(store.recentPlayers(room, addDays(date, -7), date));
     const missed = players.filter((p) => recent.has(p.id) && !results.has(p.id) && p.stats.pending !== date);
-    const today = addDays(date, 1);
     const streaks = players
       .map((p) => ({ p, s: currentStreaks(p.stats, today).winStreak }))
       .filter((x) => x.s > 0)
@@ -283,8 +325,8 @@ export function createBot({
     const lines = [
       `**${wins} of ${finished.length} beat RED**${streak > 1 ? ` · this server has played ${streak} days in a row` : ''}`,
       '',
-      ...cap(finished.map((p, i) => `${i === 0 ? '👑' : `**${i + 1}.**`} ${resultLine(p, results.get(p.id), currentStreaks(p.stats, date))}`)),
-      ...left.map((p) => `<@${p.id}> Left the battle (counts as a loss)`),
+      ...cap(finished.map((p, i) => `${rank(i)} ${resultLine(p, results.get(p.id), currentStreaks(p.stats, date), crowned)}`)),
+      ...left.map((p) => `${who(p.id, crowned)} Left the battle (counts as a loss)`),
     ];
     const race = monthStandings(room, date.slice(0, 7)).filter((x) => x.wins > 0).slice(0, 3);
     const extras = [
@@ -308,15 +350,16 @@ export function createBot({
 
   // --- Pokémon Master of the Month ----------------------------------------------------------
 
-  // Everyone in the room who battled in `month`, best first.
-  function monthStandings(room, month) {
-    return [...store.monthTotals(room, month)].map(([id, totals]) => ({ id, ...totals })).sort(compareMonths);
+  // The month's winners: everyone tied for first, if anyone won a battle.
+  function mastersOf(standings) {
+    const best = standings[0];
+    return best && best.wins > 0 ? standings.filter((x) => compareMonths(x, best) === 0) : [];
   }
 
   function monthMessage(guildId, month) {
     const standings = monthStandings(`g:${guildId}`, month);
+    const masters = mastersOf(standings);
     const best = standings[0];
-    const masters = best && best.wins > 0 ? standings.filter((x) => compareMonths(x, best) === 0) : [];
     const rate = (x) => Math.round((x.wins / Math.max(1, x.played)) * 100);
     const record = (x) => `**${plural(x.wins, 'win')}**, ${plural(x.losses, 'loss', 'losses')} (${rate(x)}%)`;
     const lines = [];
@@ -331,11 +374,15 @@ export function createBot({
     if (others.length) {
       lines.push('', ...others.map((x, i) => `${['🥈', '🥉'][i] ?? `**${masters.length + i + 1}.**`} <@${x.id}> ${plural(x.wins, 'win')}, ${plural(x.losses, 'loss', 'losses')}`));
     }
-    lines.push('', `Everyone's streaks start over today. Good luck in ${monthName(nextMonth(month))}!`);
+    const next = monthName(nextMonth(month));
+    lines.push('');
+    if (masters.length === 1) lines.push(`<@${best.id}> wears the 👑 all ${next} and joins the Hall of Fame.`);
+    else if (masters.length > 1) lines.push(`They wear the 👑 all ${next} and join the Hall of Fame.`);
+    lines.push(`Everyone's streaks start over today. Good luck in ${next}!`);
     const battles = standings.reduce((n, x) => n + x.played, 0);
     return {
       embeds: [{
-        color: 0xf0b232,
+        color: GOLD,
         title: `🏆 Pokémon Master of ${monthLabel(month)}`,
         description: lines.join('\n'),
         thumbnail,
@@ -347,61 +394,13 @@ export function createBot({
   }
 
   async function postMonth(guildId, month) {
-    const channelId = await channelFor(guildId);
-    if (!channelId) throw new Error('no channel to post in');
-    await discord('POST', `/channels/${channelId}/messages`, monthMessage(guildId, month));
+    await post(guildId, monthMessage(guildId, month));
+    for (const m of mastersOf(monthStandings(`g:${guildId}`, month))) store.saveMaster(guildId, month, m.id, m.wins, m.losses);
     store.markRecapPosted(guildId, `month:${month}`);
-  }
-
-  async function postRecap(guildId, date) {
-    const channelId = await channelFor(guildId);
-    if (!channelId) throw new Error('no channel to post in');
-    await discord('POST', `/channels/${channelId}/messages`, recapMessage(guildId, date));
-    store.markRecapPosted(guildId, date);
-  }
-
-  // Runs every minute: from RECAP_TIME on, posts yesterday's recap in every
-  // server where someone finished a battle yesterday (once; failed tries are
-  // retried every 30 minutes).
-  async function tick() {
-    if (!posting) return;
-    const { date: todayZoned, time } = zonedNow();
-    if (time < recapTime) return;
-    const date = addDays(todayZoned, -1);
-    for (const room of store.roomsWithResults(date)) {
-      const guildId = room.slice(2);
-      const failKey = `${guildId}:${date}`;
-      if (store.recapPosted(guildId, date)) continue;
-      if (Date.now() - (failedRecaps.get(failKey) ?? 0) < 30 * 60 * 1000) continue;
-      try {
-        await postRecap(guildId, date);
-        failedRecaps.delete(failKey);
-      } catch (err) {
-        failedRecaps.set(failKey, Date.now());
-        log.warn(`Daily Red bot couldn't post the recap for server ${guildId}: ${err.message}`);
-      }
-    }
-    // On the 1st, after the recap: last month's Pokémon Master.
-    if (!todayZoned.endsWith('-01')) return;
-    const month = date.slice(0, 7);
-    for (const room of store.roomsInMonth(month)) {
-      const guildId = room.slice(2);
-      const failKey = `${guildId}:month:${month}`;
-      if (store.recapPosted(guildId, `month:${month}`)) continue;
-      if (Date.now() - (failedRecaps.get(failKey) ?? 0) < 30 * 60 * 1000) continue;
-      try {
-        await postMonth(guildId, month);
-        failedRecaps.delete(failKey);
-      } catch (err) {
-        failedRecaps.set(failKey, Date.now());
-        log.warn(`Daily Red bot couldn't post the Master of the Month for server ${guildId}: ${err.message}`);
-      }
-    }
   }
 
   // --- Leaderboard --------------------------------------------------------------------------
 
-  // Everyone in the room: current and best win streak, wins, losses, win rate.
   // Everyone in the room: this month's wins (the Master race), current and
   // best win streak, all-time wins, losses and win rate.
   function leaderboard(room, date) {
@@ -424,10 +423,26 @@ export function createBot({
       ) || b.winStreak - a.winStreak || b.wins - a.wins || a.name.localeCompare(b.name));
   }
 
+  // The Hall of Fame: past Masters, newest first, grouped by month.
+  function hallOfFame(guildId) {
+    const months = new Map();
+    for (const m of store.masters(guildId)) {
+      if (!months.has(m.month)) months.set(m.month, []);
+      months.get(m.month).push(m);
+    }
+    return [...months].map(([month, masters]) => ({ month, masters }));
+  }
+
+  const hallLines = (guildId, limit) => hallOfFame(guildId).slice(0, limit)
+    .map(({ month, masters }) => `**${shortMonth(month)}** ${masters.map((m) => `<@${m.playerId}>`).join(' & ')} (${plural(masters[0].wins, 'win')})`);
+
   function leaderboardMessage(guildId) {
     const { date } = zonedNow();
+    const crowned = crownedOn(guildId, date);
     const rows = leaderboard(`g:${guildId}`, date).slice(0, 15);
-    const lines = rows.map((p, i) => `**${i + 1}.** <@${p.id}> 🏆 ${p.monthWins} this month · 🔥 ${p.winStreak} · best ${p.bestWinStreak} · ${p.wins}W ${p.losses}L (${p.winRate}%)`);
+    const lines = rows.map((p, i) => `**${i + 1}.** ${who(p.id, crowned)} 🏆 ${p.monthWins} this month · 🔥 ${p.winStreak} · best ${p.bestWinStreak} · ${p.wins}W ${p.losses}L (${p.winRate}%)`);
+    const hall = hallLines(guildId, 12);
+    if (hall.length) lines.push('', '🏛️ **Hall of Fame**', ...hall);
     return {
       flags: 64, // only the person who pressed the button sees it
       embeds: [{
@@ -438,6 +453,106 @@ export function createBot({
       }],
       allowed_mentions: { parse: [] },
     };
+  }
+
+  // Mondays: the month's standings so far, for everyone.
+  function weeklyMessage(guildId, date) {
+    const crowned = crownedOn(guildId, date);
+    const rows = leaderboard(`g:${guildId}`, date);
+    const race = rows.filter((p) => p.monthWins + p.monthLosses > 0).slice(0, 10);
+    const lines = race.length
+      ? race.map((p, i) => `${rank(i)} ${who(p.id, crowned)} ${p.monthWins}W ${p.monthLosses}L this month · 🔥 ${p.winStreak}`)
+      : [`Nobody has battled RED yet in ${monthName(date.slice(0, 7))}.`];
+    const streaks = [...rows].filter((p) => p.winStreak > 0).sort((a, b) => b.winStreak - a.winStreak).slice(0, 3);
+    if (streaks.length) lines.push('', `🔥 Longest win streaks: ${streaks.map((p) => `<@${p.id}> ${p.winStreak}`).join(' · ')}`);
+    const allTime = [...rows].sort((a, b) => b.wins - a.wins || b.winRate - a.winRate).slice(0, 3).filter((p) => p.wins > 0);
+    if (allTime.length) lines.push(`📈 Most wins ever: ${allTime.map((p) => `<@${p.id}> ${p.wins}`).join(' · ')}`);
+    if (crowned.size) lines.push(`👑 Reigning Master: ${[...crowned].map((id) => `<@${id}>`).join(' & ')}`);
+    return {
+      embeds: [{
+        color: RED,
+        title: `📊 Weekly leaderboard · ${monthLabel(date.slice(0, 7))}`,
+        description: lines.join('\n'),
+        thumbnail,
+        footer: { text: 'Most wins this month becomes the Pokémon Master of the Month' },
+      }],
+      components: buttons('Battle RED'),
+      allowed_mentions: { parse: [] },
+    };
+  }
+
+  // --- Reminders ---------------------------------------------------------------------------------
+
+  const reminderNote = `${timeLabel(reminderTime)} ${zoneLabel(recapTimeZone)}`;
+
+  // Opted-in players in the server who haven't battled (or started) on
+  // `date`, including ones who pressed the button but never played yet.
+  // At most 50, so the message stays under Discord's length limit.
+  function remindees(guildId, date) {
+    return store.reminders(guildId).filter((id) => {
+      const stats = { ...EMPTY, ...store.getPlayer(id)?.stats };
+      return stats.lastPlayed !== date && stats.pending !== date;
+    }).slice(0, 50);
+  }
+
+  function reminderMessage(date, ids) {
+    return {
+      content: `⏰ Today's Daily Red (No. ${dayNumber(date)}) is waiting for ${ids.map((id) => `<@${id}>`).join(' ')}. Beat RED before midnight!`,
+      components: buttons('Battle RED'),
+      allowed_mentions: { users: ids }, // only the people who asked
+    };
+  }
+
+  // --- Scheduled posts ----------------------------------------------------------------------------
+
+  // Runs `fn` once per key, retrying failures every 30 minutes.
+  async function once(postedKey, guildId, what, fn) {
+    if (store.recapPosted(guildId, postedKey)) return;
+    const failKey = `${guildId}:${postedKey}`;
+    if (Date.now() - (failed.get(failKey) ?? 0) < 30 * 60 * 1000) return;
+    try {
+      await fn();
+      store.markRecapPosted(guildId, postedKey);
+      failed.delete(failKey);
+    } catch (err) {
+      failed.set(failKey, Date.now());
+      log.warn(`Daily Red bot couldn't post the ${what} for server ${guildId}: ${err.message}`);
+    }
+  }
+
+  // Runs every minute. From RECAP_TIME: yesterday's recap in every server
+  // where someone finished a battle; on the 1st, last month's Pokémon Master;
+  // on Mondays, the weekly leaderboard. From REMINDER_TIME: today's reminder.
+  async function tick() {
+    if (!posting) return;
+    const { date: today, time, weekday } = zonedNow();
+    if (time >= recapTime) {
+      const date = addDays(today, -1);
+      for (const room of store.roomsWithResults(date)) {
+        const guildId = room.slice(2);
+        await once(date, guildId, 'recap', () => post(guildId, recapMessage(guildId, date)));
+      }
+      if (today.endsWith('-01')) {
+        const month = date.slice(0, 7);
+        for (const room of store.roomsInMonth(month)) {
+          const guildId = room.slice(2);
+          await once(`month:${month}`, guildId, 'Master of the Month', () => postMonth(guildId, month));
+        }
+      } else if (weekday === 'Mon') {
+        for (const room of store.roomsSince(addDays(today, -7))) {
+          const guildId = room.slice(2);
+          await once(`week:${today}`, guildId, 'weekly leaderboard', () => post(guildId, weeklyMessage(guildId, today)));
+        }
+      }
+    }
+    if (time >= reminderTime) {
+      for (const guildId of store.reminderGuilds()) {
+        await once(`remind:${today}`, guildId, 'reminder', async () => {
+          const ids = remindees(guildId, today);
+          if (ids.length) await post(guildId, reminderMessage(today, ids));
+        });
+      }
+    }
   }
 
   // --- Interactions (button presses) -----------------------------------------------------------
@@ -455,12 +570,27 @@ export function createBot({
     }
   }
 
+  // Turns a player's reminder on or off in a server; returns the new state.
+  function toggleReminder(guildId, playerId, on = !store.hasReminder(guildId, playerId)) {
+    store.setReminder(guildId, playerId, on);
+    return on;
+  }
+
+  const reminderReply = (on) => (on
+    ? `🔔 Reminders on: you'll be mentioned in #${channelName} at ${reminderNote} on days you haven't battled RED yet. Press Reminders again to stop.`
+    : '🔕 Reminders off. Press Reminders again any time to turn them back on.');
+
   // The response to a (verified) interaction.
   function interaction(body) {
     if (body.type === 1) return { type: 1 }; // PING
     const id = body.data?.custom_id ?? body.data?.name;
     if (body.type === 3 && id === BOARD_BUTTON && body.guild_id) return { type: 4, data: leaderboardMessage(body.guild_id) };
     if (body.type === 3 && id === PLAY_BUTTON) return { type: 12 }; // LAUNCH_ACTIVITY
+    if (body.type === 3 && id === REMIND_BUTTON && body.guild_id) {
+      const userId = body.member?.user?.id ?? body.user?.id;
+      if (!userId) return { type: 4, data: { flags: 64, content: "Couldn't tell who pressed that." } };
+      return { type: 4, data: { flags: 64, content: reminderReply(toggleReminder(body.guild_id, String(userId))) } };
+    }
     if (body.type === 2) return { type: 12 }; // the app's launch command
     return { type: 4, data: { flags: 64, content: "That button doesn't do anything any more." } };
   }
@@ -504,11 +634,16 @@ export function createBot({
     ensureCard,
     tick,
     leaderboard,
+    hallOfFame,
+    crownedOn,
+    toggleReminder,
+    reminderNote,
     verifyRequest,
     interaction,
     cardMessage,
     recapMessage,
     monthMessage,
+    weeklyMessage,
     get canVerify() { return Boolean(key); },
     // For GET /api/interactions: what's set up (never the secrets themselves).
     status: () => ({
@@ -516,6 +651,7 @@ export function createBot({
       posting,
       channel: `#${channelName}`,
       recap: `${recapTime} ${recapTimeZone}`,
+      reminders: `${reminderTime} ${recapTimeZone}`,
     }),
     // How many servers the bot has been added to (null if it can't tell).
     async servers() {
