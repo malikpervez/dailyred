@@ -41,6 +41,10 @@ export const BOT_PERMISSIONS = 1024 + 2048 + 16384 + 65536;
 const PLAY_BUTTON = 'dailyred:play';
 const BOARD_BUTTON = 'dailyred:board';
 const REMIND_BUTTON = 'dailyred:remind';
+const BANNER_ON = 'dailyred:banner-on';
+const BANNER_OFF = 'dailyred:banner-off';
+const MANAGE_GUILD = 1n << 5n;
+const ADMINISTRATOR = 1n << 3n;
 const MAX_LINES = 25;
 // The card moves to the bottom of the channel when a battle finishes and
 // it's no longer among the channel's last this-many messages.
@@ -276,7 +280,7 @@ export function createBot({
   // Adds /dailyred to Discord (once; POST adds or updates just this command,
   // leaving the Activity's own launch command alone).
   async function registerCommand() {
-    const version = '1';
+    const version = '2';
     if (store.getSetting('command:dailyred') === version) return;
     await discord('POST', `/applications/${clientId}/commands`, {
       name: 'dailyred',
@@ -285,10 +289,21 @@ export function createBot({
       contexts: [0], // in servers
       integration_types: [0],
     });
+    await discord('POST', `/applications/${clientId}/commands`, {
+      name: 'dailyred-preview',
+      type: 1,
+      description: "Admins: preview today's card with the Daily Red banner, and turn it on or off",
+      contexts: [0],
+      integration_types: [0],
+      default_member_permissions: String(MANAGE_GUILD), // only shown to people who can manage the server
+    });
     store.setSetting('command:dailyred', version);
-    log.log('Daily Red bot added the /dailyred command.');
+    log.log('Daily Red bot added the /dailyred and /dailyred-preview commands.');
   }
   const thumbnail = site ? { url: `${site}/sprites/front/25.png` } : undefined;
+  // Drawn at build time (banner.mjs). Bump v= if the picture changes, so
+  // Discord fetches it again instead of using its copy.
+  const bannerUrl = site ? `${site}/sprites/banner.png?v=1` : null;
 
   // Wall-clock date and "HH:MM" in the recap's time zone.
   function zonedNow() {
@@ -334,7 +349,8 @@ export function createBot({
     return { results, players };
   }
 
-  function cardMessage(guildId, date) {
+  // `banner`: the Daily Red banner over the card (bannerOn() by default).
+  function cardMessage(guildId, date, { banner = bannerOn(guildId) } = {}) {
     const room = `g:${guildId}`;
     const crowned = crownedOn(guildId, date);
     const { results, players } = dayResults(room, date);
@@ -355,17 +371,61 @@ export function createBot({
     const race = monthStandings(room, month).filter((x) => x.wins > 0).slice(0, 3);
     const raceLine = race.length ? `🏆 ${monthName(month)} race: ${race.map((x) => `${who(x.id, crowned)} ${x.wins}`).join(' · ')}` : '';
     const description = [teamLine(date), cap(lines).join('\n') || 'Nobody has battled RED yet today.'].filter(Boolean).join('\n\n');
+    const card = {
+      color: RED,
+      title: `Daily Red No. ${dayNumber(date)} · ${dateLabel(date)}`,
+      description: raceLine ? `${description}\n\n${raceLine}` : description,
+      thumbnail: banner && bannerUrl ? undefined : thumbnail, // the banner has Pikachu already
+      footer: { text: `${summary ? `${summary} · ` : ''}New team at midnight, your time` },
+    };
     return {
-      embeds: [{
-        color: RED,
-        title: `Daily Red No. ${dayNumber(date)} · ${dateLabel(date)}`,
-        description: raceLine ? `${description}\n\n${raceLine}` : description,
-        thumbnail,
-        footer: { text: `${summary ? `${summary} · ` : ''}New team at midnight, your time` },
-      }],
+      // The banner as its own embed, so it sits on top of the card.
+      embeds: banner && bannerUrl ? [{ color: RED, image: { url: bannerUrl } }, card] : [card],
       components: buttons('Battle RED', guildId),
       allowed_mentions: { parse: [] },
     };
+  }
+
+  // --- The banner over the card (off until a server admin turns it on) ----------------
+
+  function bannerOn(guildId) {
+    return Boolean(bannerUrl) && store.getSetting(`banner:${guildId}`) === 'on';
+  }
+
+  // /dailyred-preview (server admins only): today's card with the banner,
+  // seen only by whoever typed it, and a button to turn it on or off.
+  function previewMessage(guildId) {
+    if (!bannerUrl) return { flags: 64, content: "The banner needs PUBLIC_URL set on the server (it's where Discord gets the picture)." };
+    const on = bannerOn(guildId);
+    const { embeds } = cardMessage(guildId, zonedNow().date, { banner: true });
+    return {
+      flags: 64,
+      content: on
+        ? '**Preview, only you can see this.** The banner is **on**: everyone sees today\'s card like this.'
+        : '**Preview, only you can see this.** This is today\'s card with the banner. Everyone else still sees it without.',
+      embeds,
+      components: [{
+        type: 1,
+        components: [on
+          ? { type: 2, style: 4, label: 'Turn the banner off', custom_id: BANNER_OFF }
+          : { type: 2, style: 3, label: 'Turn the banner on for everyone', custom_id: BANNER_ON }],
+      }],
+      allowed_mentions: { parse: [] },
+    };
+  }
+
+  // The switch: only people who can manage the server. Today's card (if it's
+  // up) changes straight away.
+  function setBanner(body, on) {
+    const permissions = BigInt(body.member?.permissions ?? 0);
+    if (!(permissions & MANAGE_GUILD) && !(permissions & ADMINISTRATOR)) {
+      return { type: 4, data: { flags: 64, content: 'Only people who can manage this server can change the banner.' } };
+    }
+    store.setSetting(`banner:${body.guild_id}`, on ? 'on' : 'off');
+    const today = zonedNow().date;
+    if (store.getCard(body.guild_id, today)) updateCard(body.guild_id, today);
+    log.log(`Daily Red bot: the card banner is ${on ? 'on' : 'off'} in server ${body.guild_id}.`);
+    return { type: 7, data: previewMessage(body.guild_id) }; // UPDATE_MESSAGE: the preview shows the new state
   }
 
   // Whether the card has scrolled up: not among the channel's latest
@@ -849,6 +909,8 @@ export function createBot({
       }
       return { type: 12 }; // LAUNCH_ACTIVITY
     }
+    if (body.type === 2 && id === 'dailyred-preview' && body.guild_id) return { type: 4, data: previewMessage(body.guild_id) };
+    if (body.type === 3 && (id === BANNER_ON || id === BANNER_OFF) && body.guild_id) return setBanner(body, id === BANNER_ON);
     if (body.type === 2 && id === 'dailyred') {
       if (!body.guild_id) return { type: 4, data: { flags: 64, content: 'Daily Red is played in servers: try /dailyred in one.' } };
       return { type: 4, data: commandMessage(body.guild_id, String(body.member?.user?.id ?? body.user?.id ?? '')) };
@@ -914,6 +976,7 @@ export function createBot({
     weeklyMessage,
     howToMessage,
     commandMessage,
+    previewMessage,
     get canVerify() { return Boolean(key); },
     // For GET /api/interactions: what's set up (never the secrets themselves).
     status: () => ({

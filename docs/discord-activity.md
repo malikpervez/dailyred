@@ -253,6 +253,13 @@ The bot posts these in each server's **#general**:
   players who asked for it and haven't battled yet that day. Nobody else is
   pinged, and there's no message if everyone who asked has played.
 
+**The banner** (optional): today's card can have the Daily Red banner on top
+(the logo with Pikachu and RED, drawn when the image is built). It's off until
+someone who can manage the server types **`/dailyred-preview`**: that shows
+them, and only them, today's card with the banner, with a button to turn it
+on for everyone (and later off again). Needs `PUBLIC_URL`, since Discord
+fetches the picture from your server.
+
 They have a **▶️ Battle RED** button, a **Leaderboard** button and a
 **🔔 Reminders** button. **▶️ Battle RED** opens the website for that server
 ([play in the browser](#play-in-the-browser-friends-who-arent-app-testers));

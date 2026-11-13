@@ -4,6 +4,8 @@
 //
 //   web/sprites/front/<dex number>.png        front-shiny/, back/, back-shiny/
 //   web/sprites/fx/<name>.png                 from graphics/battle_anims/sprites/
+//   web/sprites/trainers/red.png              RED
+//   web/sprites/banner.png                    the banner over the bot's daily card (banner.mjs)
 //
 // The source PNGs are 16-colour indexed images with colour 0 transparent, so
 // they're used as they are; the shiny versions swap in shiny.pal. Deoxys's
@@ -17,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { deflateSync, inflateSync, crc32 } from 'node:zlib';
 import { Dex } from '@pkmn/sim';
 import { FX_SPRITES } from '../web/battle/fx-sprites.js';
+import { drawBanner } from './banner.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const source = process.argv[2];
@@ -158,3 +161,16 @@ for (const [name, fx] of Object.entries(FX_SPRITES)) {
   writeFileSync(join(out, 'fx', `${name}.png`), rewrite(png, { palette }));
 }
 console.log(`Wrote ${Object.keys(FX_SPRITES).length} animation sheets to ${join(out, 'fx')}`);
+
+// --- RED --------------------------------------------------------------------------------
+
+// The picture comes with a placeholder palette; red.pal has his real colours.
+const trainers = join(source, 'graphics/trainers');
+mkdirSync(join(out, 'trainers'), { recursive: true });
+writeFileSync(join(out, 'trainers/red.png'), rewrite(readFileSync(join(trainers, 'front_pics/red_front_pic.png')), {
+  palette: readPalette(join(trainers, 'palettes/red.pal')),
+}));
+console.log(`Wrote RED's picture to ${join(out, 'trainers')}`);
+
+writeFileSync(join(out, 'banner.png'), drawBanner({ sprites: out }));
+console.log(`Wrote the card banner to ${join(out, 'banner.png')}`);

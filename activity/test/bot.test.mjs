@@ -537,8 +537,10 @@ test('/dailyred shows your day privately; old Activity buttons point to the webs
   await bot.start();
   bot.stop();
   const added = discord.calls.filter((c) => c.path === '/applications/999/commands');
-  assert.equal(added.length, 1, 'added once');
-  assert.deepEqual([added[0].method, added[0].body.name, added[0].body.contexts], ['POST', 'dailyred', [0]]);
+  assert.deepEqual(added.map((c) => [c.method, c.body.name, c.body.contexts, c.body.default_member_permissions]), [
+    ['POST', 'dailyred', [0], undefined],
+    ['POST', 'dailyred-preview', [0], '32'], // only for people who can manage the server
+  ], 'added once');
 });
 
 test("today's card lists the day's six (never anyone's lead), and still posts if that fails", async () => {
@@ -585,4 +587,53 @@ test('the posted Leaderboard updates itself when a battle finishes', async () =>
   discord.deleted.add('orig-tok1');
   await bot.refreshBoard(GUILD);
   assert.equal(JSON.parse(store.getSetting(`board:${GUILD}`)), null);
+});
+
+test("the banner over today's card: off until an admin previews it and turns it on", async () => {
+  const discord = fakeDiscord();
+  const store = openStore(':memory:');
+  const bot = createBot({ token: 'bot-token', clientId: '999', store, fetch: discord.fetch, log: quiet, now: () => new Date('2026-11-12T15:00:00Z'), publicUrl: 'https://nas.example.ts.net' });
+  store.savePlayer({ id: '1', name: 'Ash', avatarUrl: '', stats: { ...EMPTY, pending: '2026-11-12' } });
+  store.joinRoom(`g:${GUILD}`, '1');
+  await bot.updateCard(GUILD, '2026-11-12');
+  const plain = discord.posts()[0].body;
+  assert.equal(plain.embeds.length, 1, 'off to start with: the card looks as before');
+  assert.equal(plain.embeds[0].thumbnail.url, 'https://nas.example.ts.net/sprites/front/25.png');
+
+  const preview = bot.interaction({ type: 2, guild_id: GUILD, member: { user: { id: '1' }, permissions: '32' }, data: { name: 'dailyred-preview' } });
+  assert.equal(preview.type, 4);
+  assert.equal(preview.data.flags, 64, 'only the admin sees the preview');
+  assert.deepEqual(preview.data.embeds[0], { color: 0xd63a3a, image: { url: 'https://nas.example.ts.net/sprites/banner.png?v=1' } });
+  assert.equal(preview.data.embeds[1].title, 'Daily Red No. 12 · Thu, Nov 12');
+  assert.equal(preview.data.embeds[1].thumbnail, undefined, 'no Pikachu in the corner under the banner');
+  assert.equal(preview.data.components[0].components[0].custom_id, 'dailyred:banner-on');
+  assert.equal(discord.edits().length, 0, "previewing doesn't touch the real card");
+
+  const press = (permissions, id) => bot.interaction({ type: 3, guild_id: GUILD, member: { user: { id: '1' }, permissions }, data: { custom_id: id } });
+  const refused = press('2048', 'dailyred:banner-on'); // can send messages, can't manage the server
+  assert.match(refused.data.content, /^Only people who can manage this server/);
+  assert.equal(bot.cardMessage(GUILD, '2026-11-12').embeds.length, 1);
+
+  const on = press(String(1n << 5n), 'dailyred:banner-on');
+  assert.equal(on.type, 7, 'the preview updates in place');
+  assert.equal(on.data.components[0].components[0].custom_id, 'dailyred:banner-off');
+  await new Promise((ok) => setTimeout(ok, 20));
+  const edited = discord.edits().at(-1).body;
+  assert.equal(edited.embeds[0].image.url, 'https://nas.example.ts.net/sprites/banner.png?v=1', "today's card gets it straight away");
+  assert.equal(bot.cardMessage(GUILD, '2026-11-13').embeds.length, 2, "and tomorrow's");
+
+  press(String(1n << 3n), 'dailyred:banner-off'); // administrators can too
+  assert.equal(bot.cardMessage(GUILD, '2026-11-13').embeds.length, 1);
+});
+
+test('the banner is drawn at build time from the sprites', async () => {
+  const { existsSync } = await import('node:fs');
+  const sprites = new URL('../../web/sprites/', import.meta.url).pathname;
+  if (!existsSync(`${sprites}trainers/red.png`)) return; // scripts/get-sprites.sh hasn't run here
+  const { drawBanner } = await import('../banner.mjs');
+  const { decodePng } = await import('../png.mjs');
+  const png = drawBanner({ sprites });
+  const { width, height, data } = decodePng(png);
+  assert.deepEqual([width, height], [680, 240]);
+  assert.deepEqual([...data.subarray(0, 4)], [0x5f, 0xa8, 0xe8, 255], 'sky in the top corner');
 });

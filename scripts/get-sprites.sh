@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Fetches the Pokémon battle sprites and move animation graphics from
-# pret/pokefirered (only graphics/pokemon/ and graphics/battle_anims/sprites/,
-# at a pinned commit) and writes them to web/sprites/ with
+# Fetches the Pokémon battle sprites, move animation graphics and RED's trainer
+# picture from pret/pokefirered (only graphics/pokemon/,
+# graphics/battle_anims/sprites/ and RED's picture, at a pinned commit) and writes them to web/sprites/ with
 # activity/build-sprites.mjs. Needs git and Node, and `npm ci` in activity/.
 set -euo pipefail
 
@@ -10,11 +10,11 @@ PRET_URL="https://github.com/pret/pokefirered.git"
 PRET_COMMIT="037335f4c725d7c9aecdac87066f2002b4bd7e14"
 SRC="${1:-$(mktemp -d)}"
 
-if [ ! -d "$SRC/graphics/battle_anims/sprites" ]; then
+if [ ! -f "$SRC/graphics/trainers/front_pics/red_front_pic.png" ]; then
   echo ">> Fetching pret/pokefirered graphics @ ${PRET_COMMIT:0:10}"
-  git init -q "$SRC"
-  git -C "$SRC" remote add origin "$PRET_URL"
-  git -C "$SRC" sparse-checkout set --no-cone /graphics/pokemon/ /graphics/battle_anims/sprites/
+  [ -d "$SRC/.git" ] || { git init -q "$SRC" && git -C "$SRC" remote add origin "$PRET_URL"; }
+  git -C "$SRC" sparse-checkout set --no-cone /graphics/pokemon/ /graphics/battle_anims/sprites/ \
+    /graphics/trainers/front_pics/red_front_pic.png /graphics/trainers/palettes/red.pal
   git -C "$SRC" fetch -q --depth 1 --filter=blob:none origin "$PRET_COMMIT"
   git -C "$SRC" checkout -q FETCH_HEAD
 fi
