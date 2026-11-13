@@ -29,6 +29,8 @@ COPY scripts/get-sprites.sh scripts/
 RUN scripts/get-sprites.sh /tmp/pokefirered && rm -rf /tmp/pokefirered
 COPY activity/build-sdk.mjs activity/build-battle.mjs activity/team-of-day.mjs activity/
 COPY web/battle/ web/battle/
+# The bag's rules (the battle engine checks items with them).
+COPY web/economy.js web/
 RUN cd activity && npm run build
 
 # --- 2. The server -------------------------------------------------------------------

@@ -3,8 +3,10 @@
 //
 //   GET  /api/config   { clientId }                    (no sign-in needed)
 //   POST /api/token    { code } -> { access_token }    OAuth2 code exchange
-//   GET  /api/me       ?room=&settle=1 -> { user, stats }
-//   POST /api/battle   { event: 'start' | 'result', date, won, room } -> { stats }
+//   GET  /api/me       ?room=&settle=1&date= -> { user, stats, wallet }
+//   POST /api/battle   { event: 'start' | 'result', date, won, room } -> { stats, wallet, prize }
+//   POST /api/shop     { date, item, quantity } -> { wallet }    the PokéMart
+//   POST /api/bag/use  { date, item } -> { wallet }              an item in today's battle
 //   GET  /api/board    ?room=&date= -> { players, hallOfFame, reminders }
 //   POST /api/reminder { room, on } -> { on, time }     the bot's daily reminder
 //   POST /api/share    PNG image -> { url }             for Discord's share dialog
@@ -37,6 +39,7 @@ import {
 } from '../web/daily.js';
 import { previousMonth } from './bot.mjs';
 import { dayNumber } from '../web/daily.js';
+import { walletFor, earn, buy, useItem, usedIn, economyOpen, EconomyError } from '../web/economy.js';
 
 // daily.js saves through this; the server saves players itself.
 useStatsStorage({ read: () => null, write: () => {} });
@@ -320,6 +323,40 @@ export function createApp({
     return date;
   }
 
+  // --- Money and items (web/economy.js) --------------------------------------------
+  // The wallet is the player's, whichever server they play for. It's only
+  // saved when it changes, always on the player's own date.
+
+  const walletOf = (id, date) => walletFor(store.getWallet(id), date);
+
+  function spend(user, date, change) {
+    if (!economyOpen(date)) throw new HttpError(400, 'The PokéMart and the bag open on Monday, Nov 16.');
+    if (!store.getPlayer(user.id)) store.savePlayer(loadPlayer(user));
+    const wallet = walletOf(user.id, date);
+    try {
+      change(wallet);
+    } catch (err) {
+      if (err instanceof EconomyError) throw new HttpError(400, err.message);
+      throw err;
+    }
+    store.saveWallet(user.id, wallet);
+    return { wallet };
+  }
+
+  // POST /api/shop
+  const shop = (user, body) => {
+    const date = checkDate(body.date);
+    return spend(user, date, (wallet) => buy(wallet, body.item, body.quantity ?? 1));
+  };
+
+  // POST /api/bag/use: only during today's official battle.
+  function useFromBag(user, body) {
+    const date = checkDate(body.date);
+    const { stats } = loadPlayer(user);
+    if (stats.pending !== date || resultFor(stats, date)) throw new HttpError(409, "Items are only for today's battle, while it's on.");
+    return spend(user, date, (wallet) => useItem(wallet, date, body.item));
+  }
+
   function checkRoom(room, { required = false } = {}) {
     if (room == null || room === '') {
       if (required) throw new HttpError(400, 'Missing room');
@@ -362,7 +399,11 @@ export function createApp({
         // a bad date from the page shouldn't stop it signing in
       }
     }
-    return { user, stats: player.stats };
+    let date = now().toISOString().slice(0, 10);
+    try {
+      if (query.get('date')) date = checkDate(query.get('date'));
+    } catch { /* the server's date will do */ }
+    return { user, stats: player.stats, wallet: walletOf(user.id, date) };
   }
 
   function battle(user, body) {
@@ -378,6 +419,8 @@ export function createApp({
       recordResult(stats, stats.pending, false);
     }
 
+    const wallet = walletOf(user.id, date);
+    let prize = 0;
     if (body.event === 'start') {
       markBattleStarted(stats, date);
     } else if (body.event === 'result') {
@@ -385,24 +428,26 @@ export function createApp({
       // How it went, for the board and the bot (older pages don't send these).
       const count = (value, max) => (Number.isInteger(value) && value >= 0 && value <= max ? value : null);
       if (!resultFor(stats, date)) {
-        store.saveResult({
-          playerId: user.id, date, won: body.won,
-          monsLeft: count(body.monsLeft, 6), redLeft: count(body.redLeft, 6), turns: count(body.turns, 1000),
+        const result = {
+          won: body.won, monsLeft: count(body.monsLeft, 6), redLeft: count(body.redLeft, 6), turns: count(body.turns, 1000),
           gaveUp: !body.won && body.gaveUp === true, // pressed RUN
-        });
+        };
+        store.saveResult({ playerId: user.id, date, ...result, items: usedIn(wallet, date) });
+        prize = earn(wallet, date, result); // once a day: the first result counts
       }
       recordResult(stats, date, body.won); // ignored if the day already has a result
     } else {
       throw new HttpError(400, 'Unknown event');
     }
     store.savePlayer(player);
+    if (prize) store.saveWallet(user.id, wallet);
     if (room) store.joinRoom(room, user.id);
     // A finished battle also brings the card back down if it scrolled up.
     if (bot && room?.startsWith('g:')) {
       bot.updateCard(room.slice(2), date, { bump: body.event === 'result' });
       if (body.event === 'result') bot.refreshBoard?.(room.slice(2)); // the posted Leaderboard too
     }
-    return { stats };
+    return { stats, wallet, prize };
   }
 
   // The server's Pokémon Masters (bot.mjs saves them on the 1st), newest
@@ -510,6 +555,12 @@ export function createApp({
     } else if (route === 'POST /api/battle') {
       const user = await requireUser(req);
       result = battle(user, await readJson(req));
+    } else if (route === 'POST /api/shop') {
+      const user = await requireUser(req);
+      result = shop(user, await readJson(req));
+    } else if (route === 'POST /api/bag/use') {
+      const user = await requireUser(req);
+      result = useFromBag(user, await readJson(req));
     } else if (route === 'GET /api/board') {
       result = board(await requireUser(req), url.searchParams);
     } else if (route === 'POST /api/reminder') {

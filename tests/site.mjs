@@ -47,6 +47,65 @@ function startServer() {
 const step = (name) => console.log(`- ${name}`);
 const DAY1 = new Date('2026-11-12T10:00:00');
 const DAY2 = new Date('2026-11-13T10:00:00');
+const DAY3 = new Date('2026-11-16T10:00:00'); // Monday: money and items start
+
+// Whether the battle panel is waiting for the player (moves, party or the Shift question).
+const choosing = () => ['.commands', '.party', '.confirm'].some((s) => !document.querySelector(s).hidden);
+const waitToChoose = (page) => page.waitForFunction(choosing, null, { timeout: 30000 });
+const waitForTurn = (page) => page.waitForFunction((check) => !new Function(`return (${check})()`)(), choosing.toString(), { timeout: 30000 }).catch(() => {});
+
+// Sends in the next Pokémon / stays in after RED loses one, until the move menu is up.
+async function toCommands(page) {
+  for (let i = 0; i < 20; i++) {
+    await waitToChoose(page);
+    if (await page.isVisible('.commands')) return;
+    if (await page.isVisible('.confirm')) {
+      await page.click('.confirm-no');
+    } else {
+      await page.click('.party-mon:not(:disabled)');
+      await page.click('.sum-shift');
+    }
+    await waitForTurn(page);
+  }
+}
+
+// Plays moves (staying in after RED loses one) until your Pokémon in battle
+// is hurt, then uses `item` on it from the bag.
+async function useItemWhenHurt(page, item) {
+  for (let i = 0; i < 60; i++) {
+    await waitToChoose(page);
+    if (await page.isVisible('.confirm')) {
+      await page.click('.confirm-no');
+    } else if (await page.isVisible('.party')) {
+      await page.click('.party-mon:not(:disabled)');
+      await page.click('.sum-shift');
+    } else {
+      const [hp, max] = (await page.textContent('.infobox-you .hp-numbers')).split('/').map((t) => Number(t.trim()));
+      if (hp > 0 && hp < max) {
+        await page.click('.action:has-text("BAG")');
+        await page.click(`.bag-item:has-text("${item.toUpperCase()}")`);
+        await page.click('.party-mon:has-text("IN BATTLE")');
+        await page.waitForFunction((text) => document.querySelector('.log-list').textContent.includes(text), `used ${item}!`, { timeout: 30000 });
+        return;
+      }
+      await page.click('.move:not(:disabled)');
+    }
+    await waitForTurn(page);
+  }
+  throw new Error(`never got to use ${item}`);
+}
+
+// The bag at the start of a battle: "won't have any effect" on a Pokémon at full HP.
+async function checkNoEffect(page, item) {
+  await page.click('.action:has-text("BAG")');
+  await page.click(`.bag-item:has-text("${item.toUpperCase()}")`);
+  await page.click('.party-mon:has-text("IN BATTLE")');
+  assert.equal(await page.textContent('.party-head'), "It won't have any effect.");
+  await page.click('.party-cancel');
+  assert.ok(await page.isVisible('.bag'));
+  await page.click('.bag-cancel');
+  assert.ok(await page.isVisible('.commands'));
+}
 
 let shiftSeen = false;
 
@@ -71,6 +130,7 @@ async function playToTheEnd(page) {
     else if (await page.isVisible('.commands')) await page.click('.move:not(:disabled)', quick).catch(() => {});
     else await page.waitForTimeout(25);
   }
+  if (!(await page.isVisible('#battle-done'))) await page.screenshot({ path: join(OUT, 'stuck.png'), fullPage: true }); // to see why
   await page.waitForSelector('#battle-done', { state: 'visible', timeout: 5000 });
   return page.textContent('#done-title');
 }
@@ -91,6 +151,8 @@ try {
   assert.equal(await page.locator('#team-list .mon-card').count(), 6);
   assert.equal(await page.locator('#red-list .red-mon').count(), 6);
   assert.equal(await page.textContent('#red-lead-name'), 'Pikachu');
+  assert.equal(await page.textContent('#wallet-heading'), 'Coming Monday, Nov 16: your bag', 'the bag is announced');
+  assert.ok(await page.isHidden('#open-shop'));
   // What each held item does, written out on every card.
   const items = await page.$$eval('#team-list .mon-item-desc', (els) => els.map((e) => e.textContent));
   assert.equal(items.length, 6);
@@ -121,6 +183,7 @@ try {
   assert.equal((await page.evaluate(() => window.dailyRed.stats)).pending, '2026-11-12');
   assert.equal(await page.textContent('.infobox-you .ib-name'), team[3]);
   assert.ok(await page.isHidden('#practice-chip'));
+  assert.ok(await page.isHidden('.action:has-text("BAG")'), 'no bag in official battles before Nov 16');
   await page.screenshot({ path: join(OUT, 'battle.png') });
   assert.equal(await page.getAttribute('[data-anims="on"]', 'aria-pressed'), 'true', 'animations start on');
 
@@ -186,6 +249,22 @@ try {
   await page.waitForSelector('.commands', { state: 'visible', timeout: 30000 });
   assert.equal(await page.textContent('.infobox-you .ib-name'), team[3]);
   assert.ok(await page.isVisible('#practice-chip'));
+
+  step("practice runs get this week's free bag, and nothing is used up");
+  await page.click('.action:has-text("BAG")');
+  assert.deepEqual(await page.$$eval('.bag-item', (els) => els.map((e) => `${e.querySelector('.bag-name').textContent} ${e.querySelector('.bag-count').textContent}`)),
+    ['FULL RESTORE ×3', 'REVIVE ×2', 'MAX REVIVE ×1']);
+  assert.equal(await page.textContent('.bag-left'), '4 more this battle');
+  await page.screenshot({ path: join(OUT, 'bag.png') });
+  await page.click('.bag-cancel');
+  await checkNoEffect(page, 'Revive');
+  await useItemWhenHurt(page, 'Full Restore');
+  await page.waitForFunction(() => document.querySelector('.log-list').textContent.includes('had its HP restored.'), null, { timeout: 10000 });
+  await toCommands(page);
+  await page.click('.action:has-text("BAG")');
+  assert.equal(await page.textContent('.bag-item:has-text("FULL RESTORE") .bag-count'), '×2');
+  assert.equal(await page.textContent('.bag-left'), '3 more this battle');
+  await page.click('.bag-cancel');
   await page.click('.action:has-text("RUN")');
   assert.equal(await page.textContent('#run-dialog-text'), 'Give up this practice run?');
   await page.click('#run-dialog button[value="run"]');
@@ -210,6 +289,42 @@ try {
   stats = await page.evaluate(() => window.dailyRed.stats);
   assert.deepEqual([stats.losses, stats.lastPlayed, stats.lastResult], [won ? 1 : 2, '2026-11-13', 'lost']);
   assert.equal(await page.textContent('#stat-day-streak'), '2');
+
+  step('Monday Nov 16: the bag refills, the PokéMart sells, items work in the battle that counts, and it pays');
+  await page.clock.setSystemTime(DAY3);
+  await page.evaluate(() => localStorage.setItem('dailyred-wallet', JSON.stringify({
+    month: '2026-11', cash: 5000, earned: 5000, spent: 0, bought: {}, week: '2026-11-09', freeUsed: { revive: 2 },
+  })));
+  await page.reload();
+  await page.waitForSelector('.app[data-state="home"]');
+  await page.evaluate(() => window.dailyRed.setSpeed('fast'));
+  assert.equal(await page.textContent('#wallet-heading'), 'Your bag');
+  assert.equal(await page.textContent('#wallet-cash'), '₽5,000');
+  assert.deepEqual(await page.$$eval('#wallet-items li', (els) => els.map((e) => e.textContent)),
+    ['Full Restore×3free', 'Revive×2free', 'Max Revive×1free'], "last week's Revives are back");
+  await page.click('#open-shop');
+  assert.equal(await page.locator('.shop-row').count(), 10);
+  await page.click('.shop-buy[aria-label="Buy a Hyper Potion for ₽1,200"]');
+  await page.waitForFunction(() => document.getElementById('shop-note').textContent === 'Bought: Hyper Potion.');
+  assert.equal(await page.textContent('#shop-cash'), '₽3,800');
+  await page.screenshot({ path: join(OUT, 'shop.png') });
+  await page.click('#shop-dialog button[type="submit"]');
+  assert.equal(await page.textContent('#wallet-cash'), '₽3,800');
+  await page.screenshot({ path: join(OUT, 'home-bag.png'), fullPage: true });
+
+  await page.click('#play');
+  await page.waitForSelector('.commands', { state: 'visible', timeout: 30000 });
+  await checkNoEffect(page, 'Hyper Potion');
+  await useItemWhenHurt(page, 'Hyper Potion');
+  let wallet = await page.evaluate(() => window.dailyRed.wallet);
+  assert.deepEqual([wallet.bought.hyperpotion ?? 0, wallet.battle], [0, { date: '2026-11-16', used: 1 }]);
+  await playToTheEnd(page);
+  await page.waitForSelector('#done-prize', { state: 'visible', timeout: 5000 });
+  wallet = await page.evaluate(() => window.dailyRed.wallet);
+  assert.ok(wallet.cash > 3800);
+  assert.equal(await page.textContent('#done-prize'), `+₽${(wallet.cash - 3800).toLocaleString('en-US')} prize money · ₽${wallet.cash.toLocaleString('en-US')} in your wallet`);
+  await page.screenshot({ path: join(OUT, 'result-prize.png'), fullPage: true });
+  await page.click('#back-home');
 
   step("the server board shows run-aways, last month's Master's 👑 and the Hall of Fame");
   const board = await page.evaluate(async () => {
@@ -268,7 +383,7 @@ try {
   });
   await page.goto(`${server.url}/?seed=${tomorrowSeed}`);
   await page.waitForSelector('.app[data-state="home"]');
-  assert.match(await page.textContent('#day-label'), /^No\. 13, /, "tomorrow's team isn't open for practice");
+  assert.match(await page.textContent('#day-label'), /^No\. 16, /, "tomorrow's team isn't open for practice");
 
   step('the website signs in with Discord, and the battle counts for the server');
   await signInTest(browser);
@@ -292,6 +407,7 @@ async function signInTest(browser) {
   };
   const guilds = [{ id: '42', name: 'Pallet Town' }]; // the player's servers
   const store = openStore(':memory:');
+  let serverNow = new Date('2026-11-12T15:00:00Z');
   store.savePlayer({ id: '1', name: 'Misty', avatarUrl: '', stats: {} });
   store.joinRoom('g:42', '1');
   const http = createServer((req, res) => handle(req, res));
@@ -299,7 +415,7 @@ async function signInTest(browser) {
   const site = `http://127.0.0.1:${http.address().port}`;
   const handle = createApp({
     webRoot: join(ROOT, 'web'), store, clientId: '1234', clientSecret: 'secret', fetch: fakeDiscord,
-    now: () => new Date('2026-11-12T15:00:00Z'), publicUrl: site,
+    now: () => serverNow, publicUrl: site,
   });
   const context = await browser.newContext({ viewport: { width: 400, height: 860 } });
   const page = await context.newPage();
@@ -363,6 +479,30 @@ async function signInTest(browser) {
     await page.waitForFunction(() => document.querySelector('#board-heading')?.textContent === 'Today in Cerulean City', null, { timeout: 30000 });
     await page.waitForFunction(() => document.querySelector('#board-list .board-row.is-you'));
     assert.match(await page.textContent('#board-list .is-you'), /^Ash \(you\)Ran from RED/);
+
+    // Monday Nov 16, signed in: the server keeps the wallet and checks the items.
+    serverNow = new Date('2026-11-16T15:00:00Z');
+    await page.clock.setSystemTime(DAY3);
+    await page.goto(`${site}/?g=42`);
+    await page.waitForSelector('.app[data-state="home"]', { timeout: 30000 });
+    await page.evaluate(() => window.dailyRed.setSpeed('fast'));
+    assert.equal(await page.textContent('#wallet-cash'), '₽0');
+    await page.click('#open-shop');
+    assert.equal(await page.locator('.shop-buy:not(:disabled)').count(), 0, 'nothing affordable yet');
+    await page.click('#shop-dialog button[type="submit"]');
+    await page.click('#play');
+    await page.waitForSelector('.commands', { state: 'visible', timeout: 30000 });
+    await useItemWhenHurt(page, 'Full Restore');
+    await page.waitForFunction(() => window.dailyRed.wallet.freeUsed.fullrestore === 1);
+    await playToTheEnd(page);
+    await page.waitForSelector('#done-prize', { state: 'visible', timeout: 10000 });
+    const kept = store.getWallet('80351110224678912');
+    assert.deepEqual([kept.freeUsed, kept.battle], [{ fullrestore: 1 }, { date: '2026-11-16', used: 1 }]);
+    assert.ok(kept.cash >= 270);
+    assert.equal(await page.textContent('#done-prize'), `+₽${kept.cash.toLocaleString('en-US')} prize money · ₽${kept.cash.toLocaleString('en-US')} in your wallet`);
+    assert.equal(store.roomResults('g:42', '2026-11-16').get('80351110224678912').items, 1, "the bot's card shows 🎒 1 item");
+    await page.click('#back-home');
+    assert.equal(await page.textContent('#wallet-cash'), `₽${kept.cash.toLocaleString('en-US')}`);
     assert.deepEqual(errors, [], 'no page errors');
 
     await page.goto(`${site}/auth/logout`);

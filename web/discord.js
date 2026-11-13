@@ -94,12 +94,13 @@ export function connectWeb(web, room) {
   });
 }
 
-// What both kinds of session share: stats kept on the server, results
-// reported to it, and the server's board.
+// What both kinds of session share: stats and the wallet kept on the server,
+// results reported to it, and the server's board.
 async function session({ call, room, ...rest }) {
   const date = today();
-  const { user, stats: serverStats } = await call('GET', `api/me?settle=1&date=${date}${room ? `&room=${room}` : ''}`);
+  const { user, stats: serverStats, wallet: serverWallet } = await call('GET', `api/me?settle=1&date=${date}${room ? `&room=${room}` : ''}`);
   let cached = serverStats;
+  let wallet = serverWallet ?? null;
   let reports = Promise.resolve();
   return {
     user,
@@ -117,19 +118,43 @@ async function session({ call, room, ...rest }) {
     // Fetches the stats again (another device may have played meanwhile).
     async refreshStats() {
       await reports;
-      cached = (await call('GET', 'api/me')).stats;
+      const data = await call('GET', `api/me?date=${today()}`);
+      cached = data.stats;
+      wallet = data.wallet ?? wallet;
+    },
+
+    // Money and items (economy.js), kept and checked by the server. get() is
+    // the last copy it sent (walletFor() brings it up to a date).
+    wallet: {
+      get: () => wallet,
+      async buy(item, quantity, day) {
+        ({ wallet } = await call('POST', 'api/shop', { date: day, item, quantity }));
+        return wallet;
+      },
+      // Only while today's battle is on: after its 'start' has reached the server.
+      async use(item, day) {
+        await reports;
+        ({ wallet } = await call('POST', 'api/bag/use', { date: day, item }));
+        return wallet;
+      },
     },
 
     // Sends 'start' / 'result' to the server, in order. Each one is retried
     // for a while: if a result never arrived, the server would count the
     // battle as abandoned (a loss) next time.
     // For a result, `details` is { monsLeft, redLeft, turns, gaveUp } for the board and the bot.
+    // Resolves to the server's answer ({ stats, wallet, prize }), or undefined if it never got there.
     report(event, day, won, details = {}) {
       const body = { event, date: day, room, ...(event === 'result' && { won, ...details }) };
-      reports = reports.then(() => retry(() => call('POST', 'api/battle', body)))
-        .then(({ stats }) => { cached = stats; })
+      const sent = reports.then(() => retry(() => call('POST', 'api/battle', body)))
+        .then((data) => {
+          cached = data.stats;
+          wallet = data.wallet ?? wallet;
+          return data;
+        })
         .catch((err) => console.error(`Couldn't save the ${event} of today's battle`, err));
-      return reports;
+      reports = sent.then(() => {});
+      return sent;
     },
 
     board: (day) => room ? call('GET', `api/board?room=${room}&date=${day}`) : Promise.resolve({ players: [] }),

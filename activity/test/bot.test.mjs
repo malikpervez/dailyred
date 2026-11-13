@@ -90,7 +90,7 @@ test('the live card goes to #general and is edited as players start and finish',
   player('1', 'Ash', { wins: 5, winStreak: 5, dayStreak: 5, lastPlayed: '2026-11-12', lastResult: 'won' });
   store.saveResult({ playerId: '1', date: '2026-11-12', won: true, monsLeft: 4, redLeft: 0, turns: 18 });
   player('2', 'Misty', { losses: 1, dayStreak: 3, lastPlayed: '2026-11-12', lastResult: 'lost' });
-  store.saveResult({ playerId: '2', date: '2026-11-12', won: false, monsLeft: 0, redLeft: 2, turns: 22 });
+  store.saveResult({ playerId: '2', date: '2026-11-12', won: false, monsLeft: 0, redLeft: 2, turns: 22, items: 3 });
   player('3', 'Brock', { pending: '2026-11-12' });
   await bot.updateCard(GUILD, '2026-11-12');
   assert.equal(discord.posts().length, 1, 'no second card');
@@ -99,7 +99,7 @@ test('the live card goes to #general and is edited as players start and finish',
   assert.equal(description(edit), [
     '<@1> **Beat RED** with 4 left · 18 turns · 🔥 5-day win streak',
     '🟥🟥🟥🟥⬛⬛',
-    '<@2> Lost to RED, he had 2 left · 22 turns · 📅 3 days in a row',
+    '<@2> Lost to RED, he had 2 left · 22 turns · 🎒 3 items · 📅 3 days in a row',
     '⬛⬛⬛⬛⬛⬛',
     '<@3> ⚔️ Battling RED…',
     '',

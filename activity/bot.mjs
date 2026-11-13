@@ -32,6 +32,7 @@
 // which Discord requires before a bot's first message).
 import { createPublicKey, verify } from 'node:crypto';
 import { EMPTY, addDays, currentStreaks, dayNumber, resultFor } from '../web/daily.js';
+import { economyOpen } from '../web/economy.js';
 
 const API = 'https://discord.com/api/v10';
 const RED = 0xd63a3a;
@@ -93,7 +94,8 @@ export function compareMonths(a, b) {
 const who = (id, crowned) => `<@${id}>${crowned?.has(id) ? ' 👑' : ''}`;
 
 function resultLine(player, result, streaks, crowned) {
-  const turns = result.turns ? ` · ${plural(result.turns, 'turn')}` : '';
+  // Items from the bag (from Nov 16) count with the turns.
+  const turns = (result.turns ? ` · ${plural(result.turns, 'turn')}` : '') + (result.items ? ` · 🎒 ${plural(result.items, 'item')}` : '');
   let line;
   if (result.won) {
     line = `${who(player.id, crowned)} **Beat RED**${result.monsLeft != null ? ` with ${result.monsLeft} left` : ''}${turns}`;
@@ -236,6 +238,9 @@ export function createBot({
     "• One battle a day against RED's team. Everyone in the server gets the same six level 100 Pokémon.",
     '• Tap **▶️ Battle RED**, sign in with Discord, pick your lead and battle. Your result shows up on the day\'s card here.',
     '• The most wins in a month makes you **Pokémon Master of the Month** 👑. Streaks start over on the 1st.',
+    economyOpen(zonedNow().date)
+      ? '• 🎒 Every battle pays prize money to spend in the PokéMart, and a free bag (3 Full Restores, 2 Revives, a Max Revive) refills every Monday. Up to 4 items a battle; each one takes your turn.'
+      : '• 🎒 From Monday, Nov 16: prize money for every battle, a PokéMart, and a free bag of items every Monday.',
     `• **🔔 Reminders** mentions you at ${timeLabel(reminderTime)} ${zoneLabel(recapTimeZone)} on days you haven't played. **Leaderboard** shows the standings.`,
     '• Type `/dailyred` any time for these buttons.',
   ];

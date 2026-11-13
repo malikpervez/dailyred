@@ -10,6 +10,9 @@ import {
 import {
   inDiscord, connectDiscord, webSession, connectWeb, renderBoard, renderHallOfFame, standingText,
 } from './discord.js';
+import {
+  ITEMS, WEEKLY_BAG, CARRY_LIMIT, PRIZE, walletFor, bagOf, buy, useItem, earn, economyOpen,
+} from './economy.js';
 import { loadTeams, startBattle, choose, forfeit, detach } from './battle/engine.js';
 import { createBattleView, spriteUrl } from './battle/view.js';
 import { drawShareImage, canvasToBlob } from './share.js';
@@ -56,6 +59,17 @@ const ui = {
   reminderTime: $('reminder-time'),
   hall: $('hall'),
   hallList: $('hall-list'),
+  wallet: $('wallet'),
+  walletHeading: $('wallet-heading'),
+  walletCash: $('wallet-cash'),
+  walletItems: $('wallet-items'),
+  walletNote: $('wallet-note'),
+  openShop: $('open-shop'),
+  shopDialog: $('shop-dialog'),
+  shopCash: $('shop-cash'),
+  shopList: $('shop-list'),
+  shopNote: $('shop-note'),
+  donePrize: $('done-prize'),
 };
 
 // ?seed=123 shows the team for that seed instead of today's, for testing and
@@ -273,6 +287,7 @@ function renderHome() {
   ui.play.textContent = practiceSeed ? 'Battle RED (practice)' : 'Battle RED';
   if (result) ui.playedResult.textContent = result === 'won' ? 'You beat RED today!' : 'RED won today.';
   tick();
+  renderWallet();
 
   const record = `${stats.wins}W ${stats.losses}L`;
   if (result === 'won') discord?.setPresence('Beat RED today', `${record} · ${winStreak} win streak`);
@@ -304,6 +319,145 @@ function showError(err) {
   console.error(err);
   ui.errorText.textContent = err?.message || String(err);
   setState('error');
+}
+
+// --- Money and items ----------------------------------------------------------------
+// From No. 16 (Nov 16): prize money for official battles, a free bag every
+// Monday and the PokéMart (economy.js). Signed in with Discord, the server
+// keeps the wallet and checks every purchase and item; otherwise this browser
+// keeps it.
+
+const money = (n) => `₽${n.toLocaleString('en-US')}`;
+
+const localWallet = {
+  read() { try { return JSON.parse(localStorage.getItem('dailyred-wallet')); } catch { return null; } },
+  write(wallet) { try { localStorage.setItem('dailyred-wallet', JSON.stringify(wallet)); } catch { /* not kept */ } },
+};
+
+const wallets = {
+  // The wallet as of `day` (the page's day by default).
+  get: (day = date ?? today()) => walletFor(discord ? discord.wallet.get() : localWallet.read(), day),
+  async buy(item, quantity = 1) {
+    if (discord) return discord.wallet.buy(item, quantity, today());
+    const wallet = wallets.get(today());
+    buy(wallet, item, quantity);
+    localWallet.write(wallet);
+    return wallet;
+  },
+  async use(item, day) {
+    if (discord) return discord.wallet.use(item, day);
+    const wallet = wallets.get(day);
+    useItem(wallet, day, item);
+    localWallet.write(wallet);
+    return wallet;
+  },
+  // This browser's prize money (the server pays its own when it gets the result).
+  earn(day, result) {
+    const wallet = wallets.get(day);
+    const prize = earn(wallet, day, result);
+    if (prize) localWallet.write(wallet);
+    return prize;
+  },
+};
+
+function renderWallet() {
+  // On a website that can sign in, the wallet comes with signing in.
+  ui.wallet.hidden = Boolean(practiceSeed) || signInFirst;
+  if (ui.wallet.hidden) return;
+  const open = economyOpen(date);
+  ui.openShop.hidden = !open;
+  if (!open) {
+    ui.walletHeading.textContent = 'Coming Monday, Nov 16: your bag';
+    ui.walletCash.textContent = '';
+    ui.walletItems.replaceChildren();
+    ui.walletNote.textContent = `Every official battle will pay prize money: ${money(PRIZE.win)} for a win plus ${money(PRIZE.perLeft)} for each of your Pokémon left, or ${money(PRIZE.loss)} for a loss plus ${money(PRIZE.perKO)} for each of RED's you knock out. Spend it in the PokéMart. Every Monday you also get a free bag: 3 Full Restores, 2 Revives and a Max Revive. Up to ${CARRY_LIMIT} items a battle, and each one takes your turn.`;
+    return;
+  }
+  const wallet = wallets.get();
+  const bag = bagOf(wallet);
+  ui.walletHeading.textContent = 'Your bag';
+  ui.walletCash.textContent = money(wallet.cash);
+  ui.walletCash.title = `Earned ${money(wallet.earned)} this month`;
+  ui.walletItems.replaceChildren(...Object.entries(bag).map(([id, b]) => {
+    const row = el('li', 'wallet-item');
+    row.title = ITEMS[id].desc;
+    row.append(el('span', 'wallet-item-name', ITEMS[id].name), el('span', 'wallet-item-count', `×${b.total}`));
+    if (b.free) row.append(el('span', 'wallet-item-free', b.bought ? `${b.free} free` : 'free'));
+    return row;
+  }));
+  if (!Object.keys(bag).length) ui.walletItems.append(el('li', 'wallet-empty', 'Empty. The free bag refills on Monday.'));
+  ui.walletNote.textContent = `Up to ${CARRY_LIMIT} items a battle, and each one takes your turn. The free bag refills every Monday; money and bought items reset on the 1st. Earned this month: ${money(wallet.earned)}.`;
+}
+
+function renderShop(note = '') {
+  const wallet = wallets.get(today());
+  const bag = bagOf(wallet);
+  ui.shopCash.textContent = money(wallet.cash);
+  ui.shopList.replaceChildren(...Object.entries(ITEMS).map(([id, info]) => {
+    const row = el('li', 'shop-row');
+    const text = el('div', 'shop-text');
+    text.append(el('span', 'shop-name', info.name), el('span', 'shop-desc', info.desc));
+    if (bag[id]) text.append(el('span', 'shop-have', `In your bag: ${bag[id].total}`));
+    const button = el('button', 'button button-small shop-buy', money(info.price));
+    button.type = 'button';
+    button.disabled = wallet.cash < info.price;
+    button.setAttribute('aria-label', `Buy a ${info.name} for ${money(info.price)}`);
+    button.addEventListener('click', () => purchase(id));
+    row.append(text, button);
+    return row;
+  }));
+  ui.shopNote.textContent = note || 'Bought items stay in your bag until the 1st. The free ones get used first.';
+}
+
+async function purchase(id) {
+  for (const button of ui.shopList.querySelectorAll('button')) button.disabled = true;
+  let note;
+  try {
+    await wallets.buy(id, 1);
+    note = `Bought: ${ITEMS[id].name}.`;
+  } catch (err) {
+    note = err?.message || String(err);
+  }
+  renderShop(note);
+  renderWallet();
+}
+
+ui.openShop.addEventListener('click', () => {
+  if (!economyOpen(today())) return;
+  renderShop();
+  ui.shopDialog.showModal();
+});
+
+// The bag in a battle (battle/view.js). Practice runs get the free bag every
+// time, and nothing is used up.
+function battleBag() {
+  if (!battle || battle.done) return null;
+  if (!battle.official) {
+    return {
+      items: Object.entries(WEEKLY_BAG).map(([id, n]) => ({ id, count: n - (battle.practiceUsed[id] ?? 0) })),
+      note: "Practice: this week's free bag, every time. Nothing is used up.",
+    };
+  }
+  if (!economyOpen(battle.date)) return null;
+  return {
+    items: Object.entries(bagOf(wallets.get(battle.date))).map(([id, b]) => ({ id, count: b.total })),
+    empty: "Your bag is empty. The free bag refills on Monday, and the PokéMart is on today's page.",
+  };
+}
+
+// Takes an item out of the bag for the battle; resolves to an error message or null.
+async function takeFromBag(id) {
+  if (!battle || battle.done) return 'The battle is over.';
+  if (!battle.official) {
+    battle.practiceUsed[id] = (battle.practiceUsed[id] ?? 0) + 1;
+    return null;
+  }
+  try {
+    await wallets.use(id, battle.date);
+    return null;
+  } catch (err) {
+    return err?.message || String(err);
+  }
 }
 
 // --- Today in this server (Discord only) ---------------------------------------
@@ -369,6 +523,8 @@ const view = createBattleView($('battle-root'), {
   onRun: () => askToRun(),
   getSpeed: () => speed,
   getAnimations: () => animations,
+  getBag: () => battleBag(),
+  useItem: (id) => takeFromBag(id),
 });
 
 function renderSpeed() {
@@ -414,7 +570,7 @@ async function beginBattle({ practice }) {
       return;
     }
   }
-  battle = { official, date, ran: false, done: false };
+  battle = { official, date, ran: false, done: false, practiceUsed: {} };
   const name = discord?.user?.name ?? 'You';
   ui.practiceChip.hidden = official;
   ui.battleDone.hidden = true;
@@ -455,9 +611,10 @@ function endBattle(won, tie = false) {
     recordResult(stats, battle.date, won);
     // How it went, for the server's board and the Discord bot's card.
     const alive = (side) => (view.state?.[side].party ?? []).filter((p) => p !== 'fnt').length;
-    battle.reported = discord?.report('result', battle.date, won, {
-      monsLeft: alive('p1'), redLeft: alive('p2'), turns: battle.turns ?? 0, gaveUp: !won && battle.ran,
-    });
+    const details = { monsLeft: alive('p1'), redLeft: alive('p2'), turns: battle.turns ?? 0, gaveUp: !won && battle.ran };
+    battle.reported = discord?.report('result', battle.date, won, details);
+    // Prize money: the server pays it when the result arrives; here, now.
+    if (!discord) battle.prize = wallets.earn(battle.date, { won, ...details });
   }
   const text = won ? 'You defeated RED!'
     : tie ? 'Both last Pokémon fell at once. A draw counts as a loss.'
@@ -538,6 +695,16 @@ async function showStanding(current) {
   }
 }
 
+// The prize money for an official battle, once it's paid.
+async function showPrize(current) {
+  ui.donePrize.hidden = true;
+  if (!current.official || !economyOpen(current.date)) return;
+  const prize = current.prize ?? (await current.reported)?.prize;
+  if (battle !== current || !prize) return;
+  ui.donePrize.textContent = `+${money(prize)} prize money · ${money(wallets.get(current.date).cash)} in your wallet`;
+  ui.donePrize.hidden = false;
+}
+
 async function showDone(won) {
   const o = outcome(won);
   ui.doneTitle.textContent = won ? 'You beat RED!' : 'RED won this time.';
@@ -548,6 +715,7 @@ async function showDone(won) {
   ui.battleDone.hidden = false;
   ui.battleDone.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   showStanding(battle);
+  showPrize(battle);
   shareBlob = null;
   try {
     const { blob, url } = await makeShareImage(o);
@@ -652,6 +820,7 @@ window.addEventListener('beforeunload', (event) => {
 // For debugging from the console and for the automated tests.
 window.dailyRed = {
   get stats() { return { ...stats }; },
+  get wallet() { return wallets.get(); },
   get teams() { return teams; },
   get lead() { return lead; },
   setSpeed(next) { speed = next; renderSpeed(); },

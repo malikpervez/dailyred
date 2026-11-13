@@ -106,7 +106,9 @@ test('every item a team can hold, and RED\'s, has a plain description', async ()
 
 // Runs the bundled battle engine (web/vendor/battle-worker.js, `npm run build`)
 // as the page does, and plays it with a simple player.
-async function runWorker({ seed, answerShift, maxMessages = 20000 }) {
+// `onMove(req)` may answer a move request first (e.g. with an item); null
+// leaves it to the simple player.
+async function runWorker({ seed, answerShift = () => 'stay', onMove = () => null, maxMessages = 20000 }) {
   const { readFileSync, existsSync } = await import('node:fs');
   const vm = await import('node:vm');
   const file = new URL('../../web/vendor/battle-worker.js', import.meta.url);
@@ -138,7 +140,13 @@ async function runWorker({ seed, answerShift, maxMessages = 20000 }) {
     } else if (req.kind === 'switch') {
       send({ type: 'choose', choice: `switch ${req.party.find((p) => !p.active && p.status !== 'fnt').slot}` });
     } else if (req.kind === 'move') {
-      log.push({ move: req.species });
+      log.push({ move: req.species, req });
+      const choice = onMove(req);
+      if (choice) {
+        log.push({ chose: choice });
+        send({ type: 'choose', choice });
+        continue;
+      }
       const usable = req.moves.filter((m) => !m.disabled);
       const best = usable.find((m) => m.effect === 'super') ?? usable.find((m) => m.power) ?? usable[0];
       send({ type: 'choose', choice: `move ${best.slot}` });
@@ -247,4 +255,72 @@ test("the held-item table covers every Pokémon, with real items, few Choice Ban
     }
   }
   assert.ok(count('choiceband') + count('leftovers') + count('petayaberry') < 60, 'mostly type items');
+});
+
+test('the bag: an item takes your turn, goes first, and works like in the games', async () => {
+  const seen = { xattack: 0, fullrestore: 0, revive: 0, refused: 0, limit: 0 };
+  for (let seed = 1; seed <= 30 && !(seen.revive && seen.fullrestore && seen.xattack && seen.limit); seed++) {
+    let used = 0;
+    let tried = { noEffect: false, overLimit: false };
+    const result = await runWorker({
+      seed,
+      onMove(req) {
+        const active = req.party.find((p) => p.active);
+        const fainted = req.party.find((p) => p.status === 'fnt');
+        if (req.notice) {
+          // The refusals come back as the same request with a notice.
+          if (/won't have any effect/.test(req.notice)) seen.refused++;
+          if (/Only 4 items/.test(req.notice)) seen.limit++;
+          return null;
+        }
+        if (!tried.noEffect && active.hp === active.maxhp) {
+          tried.noEffect = true;
+          return `item hyperpotion ${active.slot}`; // full HP: no effect, turn not used
+        }
+        if (used >= 4) {
+          if (tried.overLimit) return null;
+          tried.overLimit = true;
+          assert.equal(req.canBag, false, 'the bag closes after 4 items');
+          return `item fullrestore ${active.slot}`;
+        }
+        if (used === 0 && req.canBag) { used++; return `item xattack ${active.slot}`; }
+        if (fainted && req.canBag) { used++; return `item revive ${fainted.slot}`; }
+        if (active.hp < active.maxhp / 2 && req.canBag) { used++; return `item fullrestore ${active.slot}`; }
+        return null;
+      },
+    });
+    if (result === null) return; // battle engine not built here
+    const lines = result.log.filter((e) => typeof e === 'string');
+    for (let i = 0; i < result.log.length; i++) {
+      const choice = result.log[i].chose;
+      if (!choice) continue;
+      const [, item, slot] = choice.split(' ');
+      const req = result.log[i - 1].req;
+      const mon = req.party[Number(slot) - 1];
+      const after = result.log.slice(i + 1);
+      const end = after.findIndex((e) => e.move || e.chose || e.shift);
+      const turn = (end < 0 ? after : after.slice(0, end)).filter((e) => typeof e === 'string');
+      if (req.notice || !req.canBag) continue;
+      if (turn[0] === undefined) continue; // refused (the next entry is the request again)
+      assert.equal(turn[0], `Tester used ${{ xattack: 'X Attack', fullrestore: 'Full Restore', revive: 'Revive', hyperpotion: 'Hyper Potion' }[item]}!`, `the item goes first: ${turn.join(' / ')}`);
+      assert.ok(!turn.some((t) => t.startsWith(`${req.species} used `)), `${req.species} doesn't attack that turn: ${turn.join(' / ')}`);
+      assert.ok(!turn.some((t) => /fast asleep|is frozen solid|flinched|tightening its focus/.test(t)), turn.join(' / '));
+      if (item === 'xattack') { assert.equal(turn[1], `${req.species}'s Attack rose!`); seen.xattack++; }
+      if (item === 'fullrestore') { assert.equal(turn[1], `${mon.species} had its HP restored.`); seen.fullrestore++; }
+      if (item === 'revive') {
+        assert.equal(turn[1], `${mon.species} was revived!`);
+        // Back with half its HP, and it can be sent out again.
+        const later = result.log.slice(i + 1).find((e) => e.req)?.req.party[Number(slot) - 1];
+        if (later) {
+          assert.notEqual(later.status, 'fnt');
+          assert.ok(later.hp > 0 && later.hp <= Math.ceil(later.maxhp / 2), `${later.hp}/${later.maxhp}`);
+        }
+        seen.revive++;
+      }
+    }
+    assert.ok(lines.length > 10);
+  }
+  assert.ok(seen.xattack && seen.fullrestore && seen.revive, JSON.stringify(seen));
+  assert.ok(seen.refused, 'a Hyper Potion on full HP is refused');
+  assert.ok(seen.limit, 'a 5th item is refused');
 });

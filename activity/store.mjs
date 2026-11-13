@@ -2,11 +2,12 @@
 // so the server needs no npm packages):
 //
 //   players       one row per Discord user: name, avatar and their stats, in
-//                 the same shape web/daily.js keeps in localStorage
+//                 the same shape web/daily.js keeps in localStorage, and their
+//                 wallet (web/economy.js: money, bought items, the free bag)
 //   room_players  who has played in which Discord server (or DM / group DM),
 //                 for the "Today in this server" list
 //   results       each player's daily result: won, Pokémon left, RED's left, turns,
-//                 and whether they ran from the battle
+//                 whether they ran from the battle, and how many items they used
 //   masters       each server's Pokémon Master(s) of the Month (Hall of Fame)
 //   reminders     who asked the bot for a daily reminder, per server
 //   cards         the bot's live card for each server and day (bot.mjs)
@@ -77,8 +78,11 @@ export function openStore(file) {
   // Added after the first release: databases made before it get the column.
   const hasColumn = (table, column) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
   if (!hasColumn('results', 'gave_up')) db.exec('ALTER TABLE results ADD COLUMN gave_up INTEGER NOT NULL DEFAULT 0');
+  if (!hasColumn('results', 'items')) db.exec('ALTER TABLE results ADD COLUMN items INTEGER NOT NULL DEFAULT 0');
+  if (!hasColumn('players', 'wallet')) db.exec('ALTER TABLE players ADD COLUMN wallet TEXT');
 
-  const getPlayer = db.prepare('SELECT id, name, avatar_url, stats FROM players WHERE id = ?');
+  const getPlayer = db.prepare('SELECT id, name, avatar_url, stats, wallet FROM players WHERE id = ?');
+  const putWallet = db.prepare('UPDATE players SET wallet = ? WHERE id = ?');
   const putPlayer = db.prepare(`
     INSERT INTO players (id, name, avatar_url, stats, updated_at) VALUES (?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET name = excluded.name, avatar_url = excluded.avatar_url,
@@ -90,11 +94,11 @@ export function openStore(file) {
     WHERE r.room = ? ORDER BY p.updated_at DESC LIMIT 200
   `);
   const putResult = db.prepare(`
-    INSERT OR IGNORE INTO results (player_id, date, won, mons_left, red_left, turns, gave_up, finished_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO results (player_id, date, won, mons_left, red_left, turns, gave_up, items, finished_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const roomResults = db.prepare(`
-    SELECT r.player_id, r.won, r.mons_left, r.red_left, r.turns, r.gave_up FROM results r
+    SELECT r.player_id, r.won, r.mons_left, r.red_left, r.turns, r.gave_up, r.items FROM results r
     JOIN room_players rp ON rp.player_id = r.player_id WHERE rp.room = ? AND r.date = ?
   `);
   const roomDates = db.prepare(`
@@ -151,6 +155,7 @@ export function openStore(file) {
   };
   const toResult = (row) => ({
     won: Boolean(row.won), monsLeft: row.mons_left, redLeft: row.red_left, turns: row.turns, gaveUp: Boolean(row.gave_up),
+    items: row.items ?? 0,
   });
 
   return {
@@ -161,13 +166,20 @@ export function openStore(file) {
     },
     // True if the player wasn't in the room before.
     joinRoom: (room, playerId) => joinRoom.run(room, playerId).changes > 0,
+    // The player's wallet as saved (web/economy.js walletFor() brings it up to date), or null.
+    getWallet: (id) => {
+      const text = getPlayer.get(id)?.wallet;
+      return text ? JSON.parse(text) : null;
+    },
+    // The player's row must exist (savePlayer first).
+    saveWallet: (id, wallet) => { putWallet.run(JSON.stringify(wallet), id); },
     roomPlayers: (room) => roomPlayers.all(room).map(toPlayer),
 
     // The first result saved for a player and day stays (like their stats).
-    saveResult({ playerId, date, won, monsLeft = null, redLeft = null, turns = null, gaveUp = false }) {
-      putResult.run(playerId, date, won ? 1 : 0, monsLeft, redLeft, turns, gaveUp ? 1 : 0, Date.now());
+    saveResult({ playerId, date, won, monsLeft = null, redLeft = null, turns = null, gaveUp = false, items = 0 }) {
+      putResult.run(playerId, date, won ? 1 : 0, monsLeft, redLeft, turns, gaveUp ? 1 : 0, items, Date.now());
     },
-    // Map of player id -> { won, monsLeft, redLeft, turns } for a room's players on a day.
+    // Map of player id -> { won, monsLeft, redLeft, turns, gaveUp, items } for a room's players on a day.
     roomResults: (room, date) => new Map(roomResults.all(room, date).map((row) => [row.player_id, toResult(row)])),
     // Days on which anyone in the room finished a battle, newest first (up to `until`).
     roomDates: (room, until) => roomDates.all(room, until).map((row) => row.date),

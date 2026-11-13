@@ -80,6 +80,17 @@
         <div><dt>Day streak</dt><dd id="stat-day-streak">0</dd></div>
       </dl>
 
+      <!-- Money and items (economy.js): your bag, and the PokéMart to spend prize money in. -->
+      <section class="wallet" id="wallet" aria-labelledby="wallet-heading" hidden>
+        <div class="wallet-head">
+          <h2 class="section-title" id="wallet-heading">Your bag</h2>
+          <p class="wallet-cash" id="wallet-cash"></p>
+        </div>
+        <ul class="wallet-items" id="wallet-items"></ul>
+        <p class="section-note" id="wallet-note"></p>
+        <button class="button" id="open-shop" type="button">PokéMart</button>
+      </section>
+
       <!-- Discord Activity only (discord.js): who in this server has played today. -->
       <section class="board" id="board" aria-labelledby="board-heading" hidden>
         <h2 class="section-title" id="board-heading">Today in this server</h2>
@@ -120,10 +131,10 @@
         <h2 class="section-title" id="how-heading">How to play</h2>
         <ol class="steps">
           <li>Look over today's six and pick your lead.</li>
-          <li>Battle RED: each turn, pick a move or switch Pokémon. Win by knocking out all six of his.</li>
+          <li>Battle RED: each turn, pick a move, switch Pokémon, or use an item from your bag. Win by knocking out all six of his.</li>
           <li>One official battle a day. Practice runs are unlimited and aren't recorded.</li>
         </ol>
-        <p class="section-note">Leaving an official battle before it ends counts as a loss. A new team arrives at midnight, your time. Streaks start over on the 1st of each month.</p>
+        <p class="section-note">Leaving an official battle before it ends counts as a loss. A new team arrives at midnight, your time. Streaks, money and bought items start over on the 1st of each month.</p>
       </section>
     </div>
 
@@ -150,6 +161,7 @@
       </div>
       <div class="battle-done" id="battle-done" hidden>
         <p class="done-title" id="done-title"></p>
+        <p class="done-prize" id="done-prize" hidden></p>
         <p class="done-standing" id="done-standing" hidden></p>
         <img class="share-image" id="share-image" alt="" width="600" height="360" hidden>
         <pre class="share-text" id="share-text"></pre>
@@ -172,6 +184,16 @@
   <dialog class="text-dialog" id="text-dialog" aria-label="Licenses">
     <form method="dialog"><button class="button" type="submit">Close</button></form>
     <pre class="text-dialog-body" id="text-dialog-body"></pre>
+  </dialog>
+
+  <dialog class="shop-dialog" id="shop-dialog" aria-labelledby="shop-title">
+    <div class="shop-head">
+      <h2 class="shop-title" id="shop-title">PokéMart</h2>
+      <span class="shop-cash" id="shop-cash"></span>
+    </div>
+    <ul class="shop-list" id="shop-list"></ul>
+    <p class="shop-note" id="shop-note" role="status"></p>
+    <form method="dialog" class="confirm-buttons"><button class="button" type="submit">Done</button></form>
   </dialog>
 
   <dialog class="confirm-dialog" id="run-dialog" aria-labelledby="run-dialog-text">

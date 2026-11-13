@@ -1,4 +1,5 @@
 import { createFx } from './fx.js';
+import { ITEMS, itemProblem } from '../economy.js';
 
 // The battle screen: a FireRed-style scene (RED's Pokémon top right, yours
 // bottom left, an info box for each), the message box and move menu under it,
@@ -52,7 +53,12 @@ function infoBox(side) {
   return { box, name, gender, level, fill, status, balls, numbers, shown: null, hpShown: null };
 }
 
-export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimations = () => true }) {
+// `getBag()`: what's in the bag for this battle, { items: [{ id, count }], note },
+// or null for no bag. `useItem(id, slot)`: takes it out of the bag (the
+// server's, for an official battle); resolves to an error message or null.
+export function createBattleView(root, {
+  onChoose, onRun, getSpeed, getAnimations = () => true, getBag = () => null, useItem = async () => null,
+}) {
   root.replaceChildren();
   root.classList.add('battle-view');
 
@@ -91,10 +97,24 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
 
   const actions = el('div', 'actions');
   actions.hidden = true;
+  const bagButton = el('button', 'action', 'BAG');
   const pokemonButton = el('button', 'action', 'POKéMON');
   const runButton = el('button', 'action', 'RUN');
-  pokemonButton.type = runButton.type = 'button';
-  actions.append(pokemonButton, runButton);
+  bagButton.type = pokemonButton.type = runButton.type = 'button';
+  actions.append(bagButton, pokemonButton, runButton);
+
+  // The bag: this battle's items. Using one takes the turn.
+  const bag = el('div', 'bag');
+  bag.hidden = true;
+  const bagHead = el('div', 'bag-head');
+  const bagTitle = el('span', 'bag-title', 'BAG');
+  const bagLeft = el('span', 'bag-left');
+  bagHead.append(bagTitle, bagLeft);
+  const bagList = el('ul', 'bag-list');
+  const bagNote = el('p', 'bag-note');
+  const bagCancel = el('button', 'action bag-cancel', 'CANCEL');
+  bagCancel.type = 'button';
+  bag.append(bagHead, bagList, bagNote, bagCancel);
 
   const party = el('div', 'party');
   party.hidden = true;
@@ -119,7 +139,7 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
   const summary = el('div', 'summary');
   summary.hidden = true;
 
-  panel.append(message, commands, actions, party, confirm, summary);
+  panel.append(message, commands, actions, bag, party, confirm, summary);
 
   const frame = el('div', 'battle-frame');
   frame.append(scene, panel);
@@ -157,6 +177,7 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
     panelMode = mode;
     message.hidden = mode !== 'message';
     commands.hidden = actions.hidden = mode !== 'commands';
+    bag.hidden = mode !== 'bag';
     party.hidden = mode !== 'party';
     confirm.hidden = mode !== 'confirm';
     summary.hidden = mode !== 'summary';
@@ -322,7 +343,9 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
       setPanel('confirm');
       return;
     }
-    prompt.textContent = `What will ${req.species.toUpperCase()} do?`;
+    // An item the battle engine turned down comes back as a notice.
+    prompt.textContent = req.notice || `What will ${req.species.toUpperCase()} do?`;
+    prompt.classList.toggle('is-notice', Boolean(req.notice));
     abilityLabel.textContent = req.ability.toUpperCase();
     moveGrid.replaceChildren(...req.moves.map((move) => {
       const button = el('button', 'move');
@@ -350,39 +373,125 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
       return button;
     }));
     pokemonButton.disabled = !req.canSwitch || !req.party.some((p) => !p.active && p.status !== 'fnt');
+    const contents = getBag();
+    bagButton.hidden = !contents;
+    bagButton.disabled = !req.canBag;
+    actions.classList.toggle('has-bag', Boolean(contents));
     setPanel('commands');
+  }
+
+  // --- Bag ---------------------------------------------------------------------------------
+
+  function showBag(note = '') {
+    const req = request;
+    const contents = getBag();
+    if (!req || !contents) return;
+    const left = req.itemsLeft ?? 0;
+    bagLeft.textContent = `${left} more this battle`;
+    const items = contents.items.filter((i) => i.count > 0);
+    bagList.replaceChildren(...items.map(({ id, count }) => {
+      const info = ITEMS[id];
+      const row = el('li');
+      const button = el('button', 'bag-item');
+      button.type = 'button';
+      button.disabled = !req.canBag;
+      button.dataset.item = id;
+      const text = el('span', 'bag-text');
+      text.append(el('span', 'bag-name', info.name.toUpperCase()), el('span', 'bag-desc', info.desc));
+      button.append(text, el('span', 'bag-count', `×${count}`));
+      button.addEventListener('click', () => pickItem(id));
+      row.append(button);
+      return row;
+    }));
+    bagNote.textContent = note || (items.length ? contents.note ?? '' : contents.empty ?? 'The bag is empty.');
+    bagNote.classList.toggle('is-notice', Boolean(note));
+    setPanel('bag');
+  }
+
+  // X items go to the Pokémon in battle; the rest ask which Pokémon.
+  function pickItem(id) {
+    const req = request;
+    if (!req) return;
+    if (ITEMS[id].use === 'boost') {
+      const active = req.party.find((p) => p.active);
+      tryItem(id, active, () => showBag(itemProblem(id, active)));
+      return;
+    }
+    partyHead.textContent = `Use ${ITEMS[id].name.toUpperCase()} on which POKéMON?`;
+    partyHead.classList.remove('is-notice');
+    partyList.replaceChildren(...req.party.map((p) => {
+      const button = partyButton(p);
+      button.addEventListener('click', () => tryItem(id, p, (problem) => {
+        partyHead.textContent = problem;
+        partyHead.classList.add('is-notice');
+      }));
+      const row = el('li');
+      row.append(button);
+      return row;
+    }));
+    partyCancel.hidden = false;
+    partyCancel.onclick = () => showBag();
+    setPanel('party');
+  }
+
+  let usingItem = false;
+  async function tryItem(id, mon, refuse) {
+    const problem = itemProblem(id, mon);
+    if (problem) {
+      refuse(problem);
+      return;
+    }
+    if (usingItem) return;
+    usingItem = true;
+    const req = request;
+    try {
+      const error = await useItem(id, mon.slot);
+      if (request !== req) return;
+      if (error) refuse(error);
+      else submit(`item ${id} ${mon.slot}`);
+    } finally {
+      usingItem = false;
+    }
+  }
+
+  // One party member's row: icon, name, HP and a tag (FNT, IN BATTLE, status).
+  function partyButton(p) {
+    const button = el('button', 'party-mon');
+    button.type = 'button';
+    const icon = el('img', 'party-icon');
+    icon.src = spriteUrl(p.num, { shiny: p.shiny });
+    icon.alt = '';
+    icon.width = icon.height = 64;
+    const text = el('span', 'party-text');
+    const top = el('span', 'party-name', p.species);
+    const hpRow = el('span', 'party-hp');
+    const track = el('span', 'hp-track');
+    const fill = el('span', 'hp-fill');
+    const share = p.maxhp ? p.hp / p.maxhp : 0;
+    fill.style.width = `${share * 100}%`;
+    fill.dataset.level = share > 0.5 ? 'high' : share > 0.2 ? 'mid' : 'low';
+    track.append(fill);
+    hpRow.append(track, el('span', 'party-numbers', `${p.hp}/${p.maxhp}`));
+    text.append(top, hpRow);
+    const tag = el('span', 'party-tag', p.status === 'fnt' ? 'FNT' : p.active ? 'IN BATTLE' : STATUS_LABEL[p.status] ?? '');
+    button.append(icon, text, tag);
+    return button;
   }
 
   function showParty(req, forced) {
     partyHead.textContent = forced ? 'Choose a POKéMON to send out.'
       : req.kind === 'shift' ? `Choose a POKéMON to face ${req.next.toUpperCase()}.` : 'Choose a POKéMON.';
+    partyHead.classList.remove('is-notice');
     partyList.replaceChildren(...req.party.map((p) => {
       const item = el('li');
-      const button = el('button', 'party-mon');
-      button.type = 'button';
+      const button = partyButton(p);
       button.disabled = p.active || p.status === 'fnt';
-      const icon = el('img', 'party-icon');
-      icon.src = spriteUrl(p.num, { shiny: p.shiny });
-      icon.alt = '';
-      icon.width = icon.height = 64;
-      const text = el('span', 'party-text');
-      const top = el('span', 'party-name', p.species);
-      const hpRow = el('span', 'party-hp');
-      const track = el('span', 'hp-track');
-      const fill = el('span', 'hp-fill');
-      const share = p.maxhp ? p.hp / p.maxhp : 0;
-      fill.style.width = `${share * 100}%`;
-      fill.dataset.level = share > 0.5 ? 'high' : share > 0.2 ? 'mid' : 'low';
-      track.append(fill);
-      hpRow.append(track, el('span', 'party-numbers', `${p.hp}/${p.maxhp}`));
-      text.append(top, hpRow);
-      const tag = el('span', 'party-tag', p.status === 'fnt' ? 'FNT' : p.active ? 'IN BATTLE' : STATUS_LABEL[p.status] ?? '');
-      button.append(icon, text, tag);
       button.addEventListener('click', () => showSummary(p, { forced, canShift: forced || req.canSwitch }));
       item.append(button);
       return item;
     }));
     partyCancel.hidden = forced;
+    partyCancel.onclick = () => showRequest();
     setPanel('party');
   }
 
@@ -485,9 +594,10 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
   foe.box.title = "Tap to see RED's Pokémon";
 
   pokemonButton.addEventListener('click', () => request && showParty(request, false));
+  bagButton.addEventListener('click', () => showBag());
+  bagCancel.addEventListener('click', () => showRequest());
   confirmYes.addEventListener('click', () => request && showParty(request, false));
   confirmNo.addEventListener('click', () => request && submit('stay'));
-  partyCancel.addEventListener('click', () => showRequest());
   runButton.addEventListener('click', () => onRun());
 
   function submit(choice) {

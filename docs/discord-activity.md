@@ -398,9 +398,17 @@ docker compose start dailyred
   twice or out of order. As on the website, the game is the referee: a player
   who edits the page could still report a win they didn't earn. It's a
   friendly daily game, not a ranked ladder.
+- **Money and items** (from Nov 16, `web/economy.js`, also shared): the
+  server pays the prize money when the day's result arrives (once a day),
+  sells PokéMart items (`POST /api/shop`) and takes items out of the bag
+  during today's battle (`POST /api/bag/use`: only while it's on, up to 4).
+  The wallet is the player's, whichever server they play for; the free bag
+  refills on Mondays and money resets on the 1st, by the player's own date.
 - **What's stored** (`/data/dailyred.sqlite`): for each player, their Discord
-  user ID, display name, avatar URL and stats, plus which servers or DMs
-  they've played in (for "Today in this server"). Nothing else.
+  user ID, display name, avatar URL, stats and wallet (money, bought items,
+  what's left of this week's free bag), plus which servers or DMs they've
+  played in (for "Today in this server"). Nothing else. The database gets two
+  new columns by itself the first time the new version starts.
 - **Layout:** inside Discord the page drops the big title and sizes the
   screen to fit the Activity window. On phones it shows the touch controls as
   usual. Links open in the browser through Discord, and the licenses open in

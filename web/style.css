@@ -255,6 +255,56 @@ img { image-rendering: pixelated; }
 .section-title { margin: 40px 0 6px; font-size: 22px; letter-spacing: -0.01em; }
 .section-note { margin: 0 0 14px; color: var(--muted); font-size: 15px; }
 
+/* Your bag and money (economy.js) ------------------------------------------------------ */
+
+.wallet-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; }
+.wallet-cash { margin: 0; font: 700 26px/1.1 var(--font-pixel); }
+.wallet-items { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; padding: 0; list-style: none; }
+.wallet-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 15px;
+}
+.wallet-item-name { font-weight: 650; }
+.wallet-item-count { font-family: var(--font-pixel); }
+.wallet-item-free { font-size: 12px; color: var(--muted); }
+.wallet-empty { color: var(--muted); font-size: 15px; }
+
+.shop-dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 16px;
+  border: 2px solid var(--line);
+  border-radius: 14px;
+  color: var(--text);
+  background: var(--surface);
+}
+.shop-dialog::backdrop { background: rgb(10 16 22 / 0.6); }
+.shop-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+.shop-title { margin: 0; font: 700 22px/1.2 var(--font-pixel); }
+.shop-cash { font: 700 20px/1.2 var(--font-pixel); }
+.shop-list { margin: 0 0 10px; padding: 0; list-style: none; }
+.shop-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.shop-row:last-child { border-bottom: none; }
+.shop-text { display: grid; gap: 2px; min-width: 0; }
+.shop-name { font-weight: 650; }
+.shop-desc, .shop-have { font-size: 13px; color: var(--muted); }
+.shop-buy { min-width: 84px; font-family: var(--font-pixel); }
+.shop-buy:disabled { opacity: 0.45; cursor: not-allowed; }
+.shop-note { margin: 0 0 10px; font-size: 14px; color: var(--muted); }
+
 /* Team cards ------------------------------------------------------------------------ */
 
 .team-list {
@@ -678,7 +728,7 @@ img { image-rendering: pixelated; }
 
 .message-text { margin: 0; font-size: clamp(17px, 4.6vw, 22px); line-height: 1.35; white-space: pre-wrap; }
 
-.commands, .actions, .party, .confirm {
+.commands, .actions, .bag, .party, .confirm {
   border: 2px solid var(--cream-line);
   border-radius: 10px;
   color: var(--cream-ink);
@@ -809,6 +859,42 @@ img { image-rendering: pixelated; }
 .party-hp .hp-fill { transition: none; }
 .party-tag { font-size: 12px; color: #5c5f68; }
 .party-cancel { width: 100%; }
+.actions.has-bag { grid-template-columns: repeat(3, 1fr); }
+.actions.has-bag .action { padding: 6px 4px; font-size: clamp(15px, 4.4vw, 18px); }
+
+/* The bag: items for this battle (from the weekly free bag and the PokéMart). */
+.bag { padding: 10px; }
+.bag-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 6px; font-size: 17px; }
+.bag-left { font-size: 13px; color: #5c5f68; }
+.bag-list { display: grid; gap: 6px; margin: 0 0 8px; padding: 0; list-style: none; }
+@media (min-width: 560px) {
+  .bag-list { grid-template-columns: 1fr 1fr; }
+}
+.bag-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-height: 52px;
+  padding: 6px 10px;
+  border: 2px solid var(--cream-line);
+  border-radius: 10px;
+  font: 600 16px/1.2 var(--font-pixel);
+  text-align: left;
+  color: var(--cream-ink);
+  background: #fffdf2;
+  cursor: pointer;
+}
+.bag-item:hover:not(:disabled) { background: var(--cream-hover); }
+.bag-item:disabled { opacity: 0.55; cursor: not-allowed; }
+.bag-text { display: grid; gap: 3px; min-width: 0; }
+.bag-desc { font-size: 12px; font-weight: 500; color: #6a6d75; }
+.bag-count { font-size: 16px; }
+.bag-note { margin: 0 0 8px; font-size: 14px; color: #5c5f68; }
+.bag-note:empty { display: none; }
+.bag-cancel { width: 100%; }
+.panel .is-notice { color: #b23a3a; }
 
 /* The Shift question, with FireRed's YES / NO. */
 .confirm { padding: 12px; display: grid; gap: 12px; }
@@ -940,6 +1026,7 @@ img { image-rendering: pixelated; }
 
 .done-title { margin: 0 0 8px; font-size: 24px; font-weight: 800; }
 .done-standing { margin: -2px 0 12px; font-weight: 650; color: var(--muted); }
+.done-prize { margin: -2px 0 12px; font: 700 18px/1.3 var(--font-pixel); }
 
 .share-text {
   margin: 0 auto 12px;

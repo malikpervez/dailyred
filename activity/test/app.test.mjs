@@ -171,7 +171,7 @@ test("the board lists the server's players, today's results first", async () => 
   ]);
   assert.match(players[1].avatarUrl, /^https:\/\/cdn\.discordapp\.com\/embed\/avatars\/[0-5]\.png$/);
   // How Ash's battle went, for the board's squares and the leaderboard tabs.
-  assert.deepEqual(players[0].result, { won: true, monsLeft: 4, redLeft: 0, turns: 18, gaveUp: false });
+  assert.deepEqual(players[0].result, { won: true, monsLeft: 4, redLeft: 0, turns: 18, gaveUp: false, items: 0 });
   assert.deepEqual([players[0].bestWinStreak, players[0].played, players[0].winRate], [1, 1, 100]);
   assert.deepEqual([players[0].monthWins, players[0].monthLosses, players[1].monthWins], [1, 0, 0]);
   assert.equal(players[1].result, null);
@@ -230,7 +230,7 @@ test('running away is saved as a loss that was given up', async () => {
   await battle('token-ash', { event: 'result', date: '2026-11-10', won: true, gaveUp: true, monsLeft: 1, redLeft: 0, turns: 30 });
   const { players } = await (await get('/api/board?room=g:42&date=2026-11-10', 'token-gary')).json();
   const result = (name) => players.find((p) => p.name === name).result;
-  assert.deepEqual(result('gary'), { won: false, monsLeft: 6, redLeft: 6, turns: 2, gaveUp: true });
+  assert.deepEqual(result('gary'), { won: false, monsLeft: 6, redLeft: 6, turns: 2, gaveUp: true, items: 0 });
   assert.equal(result('Ash').gaveUp, false, 'a win is never a run-away');
 });
 
@@ -353,6 +353,66 @@ test("opening the game for a server you're new to puts today's result on its car
     assert.deepEqual(calls.splice(0), [['update', '2', '2026-11-06', false], ['board', '2']]);
     await as('/api/me?date=2026-11-06&room=g:2'); // already there: only make sure the card exists
     assert.deepEqual(calls.splice(0), [['ensure', '2', '2026-11-06']]);
+  } finally {
+    site.close();
+  }
+});
+
+test('money and items: prize money once a day, the PokéMart, the bag only in battle, all checked here', async () => {
+  let time = new Date('2026-11-15T12:00:00Z');
+  const store = openStore(':memory:');
+  const site = createServer(createApp({ webRoot, store, clientId: '1234567890', clientSecret: 'secret', fetch: fakeDiscord, now: () => time }));
+  await new Promise((ok) => site.listen(0, '127.0.0.1', ok));
+  const url = `http://127.0.0.1:${site.address().port}`;
+  const call = async (path, body) => {
+    const res = await fetch(url + path, {
+      method: body ? 'POST' : 'GET',
+      headers: { Authorization: 'Bearer token-ash', 'Content-Type': 'application/json' },
+      body: body && JSON.stringify(body),
+    });
+    return { status: res.status, ...(await res.json()) };
+  };
+  try {
+    // Sunday Nov 15: not open yet, and a battle pays nothing.
+    assert.equal((await call('/api/shop', { date: '2026-11-15', item: 'fullheal' })).status, 400);
+    await call('/api/battle', { event: 'start', date: '2026-11-15', room: 'g:42' });
+    assert.equal((await call('/api/bag/use', { date: '2026-11-15', item: 'revive' })).status, 400);
+    const sunday = await call('/api/battle', { event: 'result', date: '2026-11-15', room: 'g:42', won: true, monsLeft: 3 });
+    assert.deepEqual([sunday.prize, sunday.wallet.cash], [0, 0]);
+
+    time = new Date('2026-11-16T12:00:00Z');
+    const me = await call('/api/me?date=2026-11-16');
+    assert.deepEqual([me.wallet.cash, me.wallet.week, me.wallet.freeUsed], [0, '2026-11-16', {}]);
+    assert.match((await call('/api/shop', { date: '2026-11-16', item: 'fullheal' })).error, /Not enough money/);
+    assert.equal((await call('/api/bag/use', { date: '2026-11-16', item: 'revive' })).status, 409, 'no battle on');
+
+    await call('/api/battle', { event: 'start', date: '2026-11-16', room: 'g:42' });
+    for (const item of ['revive', 'revive', 'fullrestore']) assert.equal((await call('/api/bag/use', { date: '2026-11-16', item })).status, 200);
+    assert.match((await call('/api/bag/use', { date: '2026-11-16', item: 'revive' })).error, /No Revive left/);
+    assert.match((await call('/api/bag/use', { date: '2026-11-16', item: 'constructor' })).error, /no such item/);
+    const fourth = await call('/api/bag/use', { date: '2026-11-16', item: 'maxrevive' });
+    assert.deepEqual(fourth.wallet.freeUsed, { revive: 2, fullrestore: 1, maxrevive: 1 });
+    assert.match((await call('/api/bag/use', { date: '2026-11-16', item: 'fullrestore' })).error, /Only 4 items/);
+
+    const lost = await call('/api/battle', { event: 'result', date: '2026-11-16', room: 'g:42', won: false, monsLeft: 0, redLeft: 2 });
+    assert.deepEqual([lost.prize, lost.wallet.cash], [270 + 4 * 100, 670]);
+    const again = await call('/api/battle', { event: 'result', date: '2026-11-16', room: 'g:42', won: true, monsLeft: 6 });
+    assert.deepEqual([again.prize, again.wallet.cash], [0, 670], 'only the first result pays');
+    assert.equal((await call('/api/bag/use', { date: '2026-11-16', item: 'fullrestore' })).status, 409, 'the battle is over');
+    const board = await call('/api/board?room=g:42&date=2026-11-16');
+    assert.equal(board.players[0].result.items, 4, "the day's items are on the board (and the bot's card)");
+
+    const bought = await call('/api/shop', { date: '2026-11-16', item: 'fullheal' });
+    assert.deepEqual([bought.wallet.cash, bought.wallet.spent, bought.wallet.bought], [70, 600, { fullheal: 1 }]);
+    assert.equal((await call('/api/shop', { date: '2026-11-16', item: 'xspeed', quantity: 1e9 })).status, 400);
+
+    // Next Monday the free bag is full again; on the 1st the money and the Full Heal are gone.
+    time = new Date('2026-11-23T12:00:00Z');
+    const week2 = (await call('/api/me?date=2026-11-23')).wallet;
+    assert.deepEqual([week2.freeUsed, week2.cash, week2.bought], [{}, 70, { fullheal: 1 }]);
+    time = new Date('2026-12-01T12:00:00Z');
+    const december = (await call('/api/me?date=2026-12-01')).wallet;
+    assert.deepEqual([december.month, december.cash, december.bought], ['2026-12', 0, {}]);
   } finally {
     site.close();
   }

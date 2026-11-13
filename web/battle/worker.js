@@ -9,11 +9,12 @@
 // Messages in (from battle/engine.js):
 //   { type: 'team', seed }                 -> { type: 'team', team, red }
 //   { type: 'start', seed, order, name }   -> events / request / end messages
-//   { type: 'choose', choice }             e.g. "move 2", "switch 3"
+//   { type: 'choose', choice }             e.g. "move 2", "switch 3", "item fullrestore 2"
 //   { type: 'forfeit' }
 // Messages out:
 //   { type: 'events', events: [{ text?, state, anim? }] }
-//   { type: 'request', request }           what the player can do now
+//   { type: 'request', request }           what the player can do now (with
+//                                          `notice` if an item didn't work)
 //   { type: 'end', won, tie }    a tie (both last Pokémon down at once) isn't a win
 //   { type: 'error', message }
 
@@ -27,6 +28,7 @@ import { generateTeam, statsFor, isPhysicalType } from './team.js';
 import { itemHelp } from './items.js';
 import { RED_TEAM } from './red.js';
 import { chooseForRed } from './ai.js';
+import { ITEMS, CARRY_LIMIT, itemProblem } from '../economy.js';
 
 const dex = Dex.forGen(3);
 const gens = new Generations(Dex); // the client shares the simulator's data
@@ -167,7 +169,8 @@ function animFor(args, kwArgs) {
       };
     }
     case '-damage': return kwArgs.from ? { kind: 'residual', side: side(args[1]), from: toId(kwArgs.from) } : { kind: 'hit', side: side(args[1]) };
-    case '-heal': return { kind: 'heal', side: side(args[1]) };
+    // Only on the field (a Revive or Full Heal from the bag can be for the bench).
+    case '-heal': return /^p\d[a-z]:/.test(args[1]) ? { kind: 'heal', side: side(args[1]) } : null;
     case '-boost': return { kind: 'stat', side: side(args[1]), up: true };
     case '-unboost': return { kind: 'stat', side: side(args[1]), up: false };
     case '-status': return { kind: 'status', side: side(args[1]), status: args[2] };
@@ -225,6 +228,9 @@ function details(mon, foe, own) {
     hp: own ? mon.hp : Math.ceil((mon.hp / mon.maxhp) * 100),
     maxhp: own ? mon.maxhp : 100,
     status: mon.fainted ? 'fnt' : mon.status || '',
+    // For the bag: what a Full Heal or an X item would do.
+    confused: Boolean(mon.isActive && mon.volatiles.confusion),
+    boosts: { ...mon.boosts },
     stats: { hp: mon.maxhp, ...mon.storedStats },
     moves: movesOf(mon, foe),
   };
@@ -268,9 +274,100 @@ function summarizeRequest(request) {
     ability: activeMon.getAbility().name,
     moves,
     canSwitch: !active.trapped && !active.maybeTrapped,
+    // No bag while locked into a move (Outrage, Hyper Beam's recharge, ...):
+    // there's no menu at all then in the games.
+    canBag: !lockedIn(active) && current.itemsUsed < CARRY_LIMIT,
+    itemsLeft: CARRY_LIMIT - current.itemsUsed,
     party,
     foe: foeInfo,
   };
+}
+
+// The simulator's request for a Pokémon that must keep using one move lists
+// just that move, without PP (Struggle is different: that's a free choice).
+const lockedIn = (active) => active.moves.length === 1 && active.moves[0].pp == null && !/^struggle$/i.test(active.moves[0].move);
+
+// --- Bag ---------------------------------------------------------------------------
+// Using an item takes the player's turn, and happens first, before either
+// side moves, as in the games. The simulator has no item action, so the
+// effect is applied between turns (with its lines added to the battle log),
+// then the player's turn goes in as an ordinary move that a BeforeMove handler
+// of ours cancels before anything else runs (sleep, flinching, confusion), so
+// nothing about that move happens. The page checks the item first (the same
+// itemProblem) and takes it out of the bag (the server's, for an official
+// battle signed in with Discord).
+
+// The move to put in for the turn: a usable one without a start-of-turn
+// effect of its own (Focus Punch's "tightening its focus", Pursuit's switch hit).
+function placeholderMove(active) {
+  const usable = active.moves.map((m, i) => ({ id: dex.moves.get(m.move.replace(/ \d+$/, '')).id, slot: i + 1, ok: !m.disabled }))
+    .filter((m) => m.ok);
+  return (usable.find((m) => m.id !== 'focuspunch' && m.id !== 'pursuit') ?? usable[0])?.slot ?? 1;
+}
+
+function useBagItem(battle, choice) {
+  const sim = battle.stream.battle;
+  const request = battle.request;
+  const [, item, slotText] = /^item ([a-z]+) (\d)$/.exec(choice) ?? [];
+  const mon = sim.p1.pokemon[Number(slotText) - 1];
+  const target = mon && { hp: mon.hp, maxhp: mon.maxhp, status: mon.fainted ? 'fnt' : mon.status, active: mon.isActive, confused: Boolean(mon.isActive && mon.volatiles.confusion), boosts: mon.boosts };
+  const problem = !request?.active || request.forceSwitch || lockedIn(request.active[0]) ? "Items can't be used now."
+    : battle.itemsUsed >= CARRY_LIMIT ? `Only ${CARRY_LIMIT} items can be used in a battle.`
+    : itemProblem(item, target);
+  if (problem) {
+    post({ type: 'request', request: { ...summarizeRequest(request), notice: problem } });
+    return;
+  }
+  if (!battle.bagHooked) {
+    battle.bagHooked = true;
+    sim.onEvent('BeforeMove', sim.format, 100, (pokemon) => {
+      if (pokemon.side !== sim.p1 || battle.itemTurn !== sim.turn) return undefined;
+      battle.itemTurn = null;
+      return false;
+    });
+  }
+  applyItem(sim, mon, item);
+  battle.itemsUsed += 1;
+  battle.itemTurn = sim.turn;
+  battle.streams.p1.write(`move ${placeholderMove(request.active[0])}`);
+}
+
+function applyItem(sim, mon, item) {
+  const info = ITEMS[item];
+  const cure = () => {
+    if (mon.status) mon.cureStatus();
+    if (mon.volatiles.confusion) mon.removeVolatile('confusion');
+  };
+  sim.add('message', `${sim.p1.name} used ${info.name}!`);
+  switch (info.use) {
+    case 'revive':
+      // As the simulator's own Revival Blessing does it.
+      mon.fainted = false;
+      mon.faintQueued = false;
+      mon.subFainted = false;
+      mon.status = '';
+      mon.hp = 1;
+      mon.sethp(item === 'maxrevive' ? mon.maxhp : Math.floor(mon.maxhp / 2));
+      mon.side.pokemonLeft += 1;
+      sim.add('-heal', mon, mon.getHealth, '[silent]');
+      break;
+    case 'heal':
+      if (mon.hp < mon.maxhp) {
+        mon.sethp(Math.min(mon.maxhp, mon.hp + (item === 'hyperpotion' ? 200 : mon.maxhp)));
+        sim.add('-heal', mon, mon.getHealth, '[silent]');
+      }
+      if (item === 'fullrestore') cure();
+      break;
+    case 'cure':
+      cure();
+      break;
+    case 'boost':
+      mon.boostBy({ [info.stat]: 1 });
+      sim.add('-boost', mon, info.stat, 1);
+      break;
+    default:
+      break;
+  }
 }
 
 // How a move of this type hits RED's Pokémon, by type alone: 'super',
@@ -336,6 +433,8 @@ async function readPlayer(battle) {
     if (chunk.startsWith('|request|')) {
       const request = Protocol.parseRequest(chunk.slice(9));
       client.update(request);
+      battle.request = request; // for the bag
+
       if (request.forceSwitch && battle.shiftSlot) {
         // The free switch the player already picked.
         const slot = battle.shiftSlot;
@@ -353,8 +452,15 @@ async function readPlayer(battle) {
     for (const line of chunk.split('\n')) {
       if (!line.startsWith('|')) continue;
       const { args, kwArgs } = Protocol.parseBattleLine(line);
-      const text = cleanText(formatter.formatText(args, kwArgs));
+      // A Revive (useBagItem): the client only brings Pokémon back for
+      // Revival Blessing, so it's done here.
+      const revived = args[0] === '-heal' ? client.getPokemon(args[1]) : null;
+      const text = revived?.fainted ? [`${revived.name} was revived!`] : cleanText(formatter.formatText(args, kwArgs));
       client.add(args, kwArgs);
+      if (revived?.fainted) {
+        revived.fainted = false;
+        revived.status = undefined;
+      }
       if (args[0] === 'win') winner = args[1];
       if (args[0] === 'tie') winner = '';
       if (args[0] === 'win' || args[0] === 'tie') continue;
@@ -414,7 +520,7 @@ function start({ seed, version, order, name }) {
   const stream = new BattleStreams.BattleStream();
   const streams = BattleStreams.getPlayerStreams(stream);
   const client = new ClientBattle(gens);
-  const battle = { stream, streams, client, formatter: new LogFormatter('p1', client) };
+  const battle = { stream, streams, client, formatter: new LogFormatter('p1', client), itemsUsed: 0 };
   current = battle;
   readPlayer(battle).catch((err) => post({ type: 'error', message: String(err?.message || err) }));
   readRed(battle).catch((err) => post({ type: 'error', message: String(err?.message || err) }));
@@ -437,6 +543,7 @@ onmessage = ({ data }) => {
         break;
       case 'choose':
         if (current?.shift?.state === 'asking') answerShift(current, data.choice);
+        else if (current && String(data.choice).startsWith('item ')) useBagItem(current, data.choice);
         else current?.streams.p1.write(data.choice);
         break;
       case 'forfeit':

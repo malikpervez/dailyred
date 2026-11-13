@@ -81,6 +81,26 @@ web/index.html + app.js            today's page, the lead picker, stats (daily.j
   random items they were played with (`teamVersion` in `web/daily.js`).
   Each card on the team page explains its item in plain words
   (`web/battle/items.js`).
+- **Money and items, from No. 16 (Monday, Nov 16)** (`web/economy.js`):
+  - *Prize money* for the official battle: ₽1,000 for a win plus ₽70 for each
+    of your Pokémon left; ₽270 for a loss plus ₽100 for each of RED's you
+    knocked out; nothing for running away.
+  - *A free bag every Monday:* 3 Full Restores, 2 Revives and a Max Revive.
+    It refills (it doesn't stack), and free items are used before bought ones.
+  - *The PokéMart* at FireRed's prices: Hyper Potion ₽1,200, Full Heal ₽600,
+    Revive ₽1,500, Max Potion ₽2,500, Full Restore ₽3,000, Max Revive ₽4,000,
+    X Attack ₽500, X Defend ₽550, X Speed and X Special ₽350.
+  - *In battle*, BAG sits next to POKéMON and RUN: up to 4 items a battle, and
+    each one takes your turn (it happens first, before either side moves, like
+    the games; RED still attacks). Items that wouldn't do anything (a Potion on
+    full HP) aren't used up. No bag while locked into a move (Outrage, a
+    recharge). Practice runs get the free bag every time, without using it up.
+  - *Monthly:* money and bought items reset on the 1st, with the streaks. RED
+    keeps his full team. A simulated month (30 players) put the win rate at
+    about 1 in 5 with the bag, up from 1 in 7.
+  - Signed in with Discord, the server keeps the wallet and checks every
+    purchase and item (`POST /api/shop`, `POST /api/bag/use`); otherwise it's
+    kept in the browser. The bot's card shows "🎒 2 items" next to a result.
 - **Shift, like FireRed:** when one of RED's Pokémon faints, he says which
   one comes out next and asks "Will you change POKéMON?". YES lets you switch
   for free before it comes out; NO keeps yours in.
@@ -157,10 +177,12 @@ cd tests && npm install && npm test   # the site in headless Chrome (CHROME_PATH
 ```
 
 The site test checks practice is locked, plays an official battle to the
-end, checks the stats, the daily lock, a practice run (giving up), the next
-day's team and that leaving halfway counts as a loss. Screenshots go to `tests/output/`.
+end, checks the stats, the daily lock, a practice run (giving up, the
+practice bag), the next day's team, that leaving halfway counts as a loss,
+and on Nov 16 the PokéMart, items in an official battle and the prize money
+(in the browser, and signed in through the server). Screenshots go to `tests/output/`.
 
-In the browser console, `dailyRed.teams`, `dailyRed.stats` and
+In the browser console, `dailyRed.teams`, `dailyRed.stats`, `dailyRed.wallet` and
 `dailyRed.setSpeed('fast')` help with debugging.
 
 ## Discord Activity
