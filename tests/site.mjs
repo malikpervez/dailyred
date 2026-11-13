@@ -81,6 +81,11 @@ try {
   assert.equal(await page.locator('#team-list .mon-card').count(), 6);
   assert.equal(await page.locator('#red-list .red-mon').count(), 6);
   assert.equal(await page.textContent('#red-lead-name'), 'Pikachu');
+  // What each held item does, written out on every card.
+  const items = await page.$$eval('#team-list .mon-item-desc', (els) => els.map((e) => e.textContent));
+  assert.equal(items.length, 6);
+  assert.ok(items.every((text) => /^[A-Z][^:]+: \S/.test(text)), items.join(' | '));
+  assert.match(await page.textContent('#red-details .mon-card:first-child .mon-item-desc'), /^Light Ball: Doubles Pikachu's Sp\. Atk\.$/);
   const team = await page.evaluate(() => window.dailyRed.teams.team.map((m) => m.species));
   assert.equal(await page.textContent('#your-lead-name'), team[0]);
   assert.match(await page.textContent('#day-label'), /^No\. 12, Thu, Nov 12$/);
@@ -119,6 +124,7 @@ try {
   assert.equal(await page.textContent('.sum-name'), `${team[0]}${await page.textContent('.sum-gender')}Lv100`);
   assert.equal(await page.locator('.sum-move').count(), (await page.evaluate(() => window.dailyRed.teams.team[0].moves.length)));
   assert.ok((await page.textContent('.sum-facts')).includes('ITEM'));
+  assert.equal(await page.textContent('.sum-item-desc'), (await page.evaluate(() => `${window.dailyRed.teams.team[0].item}: ${window.dailyRed.teams.team[0].itemDesc}`)));
   assert.equal(await page.textContent('.sum-shift'), 'SHIFT');
   await page.click('.sum-buttons .action:has-text("BACK")');
   assert.ok(await page.isVisible('.party'));

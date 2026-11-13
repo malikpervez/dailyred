@@ -303,7 +303,15 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
       showParty(req, true);
       return;
     }
-    prompt.textContent = `What will ${req.species.toUpperCase()} do?`;
+    // Choice Band: every move but the first one used is greyed out until the
+    // Pokémon switches out. Say so, or it looks broken.
+    const holder = req.party?.find((p) => p.active);
+    const usable = req.moves.filter((m) => !m.disabled);
+    const locked = holder?.item === 'Choice Band' && usable.length === 1 && req.moves.length > 1 ? usable[0] : null;
+    prompt.textContent = locked
+      ? `CHOICE BAND locks ${req.species.toUpperCase()} into ${locked.name.toUpperCase()}. Switch out to pick another move.`
+      : `What will ${req.species.toUpperCase()} do?`;
+    prompt.classList.toggle('prompt-locked', Boolean(locked));
     abilityLabel.textContent = req.ability.toUpperCase();
     moveGrid.replaceChildren(...req.moves.map((move) => {
       const button = el('button', 'move');
@@ -410,6 +418,9 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
       row.append(el('dt', '', label), dd);
       facts.append(row);
     }
+    // What the item does, in words (not just a tooltip, which phones can't show).
+    const itemHelp = mon.item && mon.itemDesc ? el('p', 'sum-item-desc') : null;
+    itemHelp?.append(el('strong', '', `${mon.item}: `), mon.itemDesc);
 
     const against = request?.foe && !foe ? `RED's ${request.foe.species}` : request?.party?.find((p) => p.active)?.species;
     const note = el('p', 'sum-note', against ? `Effectiveness against ${against}` : '');
@@ -451,7 +462,7 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
     backButton.addEventListener('click', back);
     buttons.append(backButton);
 
-    summary.replaceChildren(head, facts, note, moves, stats, buttons);
+    summary.replaceChildren(...[head, facts, itemHelp, note, moves, stats, buttons].filter(Boolean));
     setPanel('summary');
     summary.scrollIntoView({ block: 'nearest' });
   }

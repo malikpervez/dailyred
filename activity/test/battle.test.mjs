@@ -89,3 +89,17 @@ test('battles with the AI on both sides always finish', async () => {
   assert.equal(results.length, 25);
   for (const winner of results) assert.ok(['Player', 'RED', ''].includes(winner));
 });
+
+test('every item a team can hold, and RED\'s, has a plain description', async () => {
+  const { itemHelp } = await import('../../web/battle/items.js');
+  const dex = Dex.forGen(3);
+  const items = new Set(RED_TEAM.map((s) => s.item));
+  for (let seed = 1; seed <= 400; seed++) for (const set of generateTeam(dex, seed)) items.add(set.item);
+  for (const name of items) {
+    const item = dex.items.get(name);
+    const help = itemHelp(item);
+    assert.ok(help, `${name} has a description`);
+    assert.notEqual(help, item.shortDesc, `${name}: our own words, not Showdown's ("${item.shortDesc}")`);
+  }
+  assert.match(itemHelp(dex.items.get('choiceband')), /locked into the first move it uses\. Switch it out/);
+});

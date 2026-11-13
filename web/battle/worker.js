@@ -24,6 +24,7 @@ import { Protocol } from '@pkmn/protocol';
 import { LogFormatter } from '@pkmn/view';
 import * as calc from '@smogon/calc';
 import { generateTeam, statsFor, isPhysicalType } from './team.js';
+import { itemHelp } from './items.js';
 import { RED_TEAM } from './red.js';
 import { chooseForRed } from './ai.js';
 
@@ -66,7 +67,7 @@ function describe(set) {
     item: set.item,
     ability: set.ability,
     abilityDesc: dex.abilities.get(set.ability).shortDesc,
-    itemDesc: dex.items.get(set.item).shortDesc,
+    itemDesc: itemHelp(dex.items.get(set.item)),
     nature: set.nature,
     gender: set.gender || species.gender || '',
     shiny: Boolean(set.shiny),
@@ -216,7 +217,7 @@ function details(mon, foe, own) {
     gender: mon.gender || '',
     types: mon.getTypes(),
     item: item?.name ?? '',
-    itemDesc: item?.shortDesc ?? '',
+    itemDesc: itemHelp(item),
     ability: ability.name,
     abilityDesc: ability.shortDesc,
     nature: mon.set.nature,

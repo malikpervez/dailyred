@@ -190,6 +190,11 @@ function monCard(mon, index, { red = false } = {}) {
     facts.append(row);
   }
   item.append(facts);
+  if (mon.itemDesc) {
+    const help = el('p', 'mon-item-desc');
+    help.append(el('strong', '', `${mon.item}: `), mon.itemDesc);
+    item.append(help);
+  }
 
   const moves = el('ul', 'mon-moves');
   for (const move of mon.moves) {

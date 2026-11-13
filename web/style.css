@@ -329,6 +329,8 @@ img { image-rendering: pixelated; }
 .mon-facts div { min-width: 0; }
 .mon-facts dt { font-size: 12px; color: var(--muted); }
 .mon-facts dd { margin: 0; overflow: hidden; font-size: 14px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+.mon-item-desc { margin: 8px 0 0; font-size: 13px; line-height: 1.4; color: var(--muted); }
+.mon-item-desc strong { color: var(--text); font-weight: 600; }
 
 .mon-moves {
   display: grid;
@@ -694,6 +696,9 @@ img { image-rendering: pixelated; }
   color: #5c5f68;
 }
 
+/* Choice Band has locked the move: the reason, in the battle's red. */
+.prompt-locked { color: #c03028; font-weight: 700; }
+
 .moves { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
 
 .move {
@@ -832,6 +837,8 @@ img { image-rendering: pixelated; }
 .sum-facts div { min-width: 0; }
 .sum-facts dt { font-size: 12px; color: #6a6d75; }
 .sum-facts dd { margin: 0; overflow: hidden; font-size: 15px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+.sum-item-desc { margin: 8px 0 0; font-size: 13px; line-height: 1.4; color: #4a4d55; }
+.sum-item-desc strong { color: #22252e; }
 
 .sum-note { margin: 10px 0 4px; font-size: 13px; color: #6a6d75; }
 

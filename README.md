@@ -72,6 +72,10 @@ web/index.html + app.js            today's page, the lead picker, stats (daily.j
   month (`currentStreaks` / `recordResult` in `web/daily.js`); the best win
   streak is kept for all time. In Discord the bot announces the Pokémon
   Master of the Month that morning.
+- **Held items** are explained on every Pokémon's card and in the battle
+  summary, in plain words (`web/battle/items.js`). When Choice Band has
+  locked a Pokémon into one move, the battle screen says so and that
+  switching out frees it.
 - **The lead** is remembered per day in the browser. The other five follow in
   the team's order, and you can switch at any time.
 - **In battle**, each move button says how it hits RED's Pokémon (Effective,
