@@ -73,8 +73,7 @@ web/index.html + app.js            today's page, the lead picker, stats (daily.j
   streak is kept for all time. In Discord the bot announces the Pokémon
   Master of the Month that morning.
 - **Held items** are explained on every Pokémon's card on the team page, in
-  plain words (`web/battle/items.js`). When Choice Band has locked a Pokémon
-  into one move, the battle screen says so and that switching out frees it.
+  plain words (`web/battle/items.js`).
 - **Shift, like FireRed:** when one of RED's Pokémon faints, he says which
   one comes out next and asks "Will you change POKéMON?". YES lets you switch
   for free before it comes out; NO keeps yours in.

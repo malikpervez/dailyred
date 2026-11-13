@@ -696,9 +696,6 @@ img { image-rendering: pixelated; }
   color: #5c5f68;
 }
 
-/* Choice Band has locked the move: the reason, in the battle's red. */
-.prompt-locked { color: #c03028; font-weight: 700; }
-
 .moves { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
 
 .move {

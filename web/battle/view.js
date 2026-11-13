@@ -322,15 +322,7 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
       setPanel('confirm');
       return;
     }
-    // Choice Band: every move but the first one used is greyed out until the
-    // Pokémon switches out. Say so, or it looks broken.
-    const holder = req.party?.find((p) => p.active);
-    const usable = req.moves.filter((m) => !m.disabled);
-    const locked = holder?.item === 'Choice Band' && usable.length === 1 && req.moves.length > 1 ? usable[0] : null;
-    prompt.textContent = locked
-      ? `CHOICE BAND locks ${req.species.toUpperCase()} into ${locked.name.toUpperCase()}. Switch out to pick another move.`
-      : `What will ${req.species.toUpperCase()} do?`;
-    prompt.classList.toggle('prompt-locked', Boolean(locked));
+    prompt.textContent = `What will ${req.species.toUpperCase()} do?`;
     abilityLabel.textContent = req.ability.toUpperCase();
     moveGrid.replaceChildren(...req.moves.map((move) => {
       const button = el('button', 'move');
