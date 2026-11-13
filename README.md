@@ -76,7 +76,8 @@ web/index.html + app.js            today's page, the lead picker, stats (daily.j
   its signature item if it has one (Light Ball, Thick Club, Soul Dew...),
   else its own type's boost item (Charcoal for the Charmander line), else an
   item for how it attacks (Choice Band, with only attacks; Petaya Berry),
-  else Leftovers or a berry. Evolution lines match. Earlier days keep the
+  else Leftovers or a berry (and Snorlax keeps its classic Leftovers).
+  Evolution lines match. Earlier days keep the
   random items they were played with (`teamVersion` in `web/daily.js`).
   Each card on the team page explains its item in plain words
   (`web/battle/items.js`).

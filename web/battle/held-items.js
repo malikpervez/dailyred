@@ -3,7 +3,8 @@
 // in this order:
 //   0. its own signature item: Light Ball (Pikachu), Thick Club (Cubone,
 //      Marowak), Soul Dew (Latias, Latios), DeepSeaTooth (Clamperl), Stick
-//      (Farfetch'd), Metal Powder (Ditto);
+//      (Farfetch'd), Metal Powder (Ditto); and Snorlax keeps its classic
+//      Leftovers;
 //   1. typing: the boost item of its own type (its first type first: Charcoal
 //      for Charizard, Dragon Fang for Dragonite), if it learns a real attack
 //      of that type (power 50+) and that type's moves use an attacking stat
@@ -165,7 +166,7 @@ export const HELD_ITEMS = {
   kabuto: 'hardstone',
   kabutops: 'hardstone',
   aerodactyl: 'hardstone',
-  snorlax: 'silkscarf',
+  snorlax: 'leftovers', // its classic item (and RED's Snorlax's), by choice
   articuno: 'nevermeltice',
   zapdos: 'magnet',
   moltres: 'charcoal',
