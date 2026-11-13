@@ -18,6 +18,8 @@
 //                                     which must be the app's OAuth2 redirect
 //   GET /auth/logout
 //
+//   GET /card/<date>.png           today's six facing RED, for the bot's card (card-image.mjs)
+//
 // Every /api call except config, token and web/session needs "Authorization:
 // Bearer <Discord access token>" (the Activity) or the website's session
 // cookie. A token is checked against Discord's API and tells us who the
@@ -34,6 +36,7 @@ import {
   useStatsStorage,
 } from '../web/daily.js';
 import { previousMonth } from './bot.mjs';
+import { dayNumber } from '../web/daily.js';
 
 // daily.js saves through this; the server saves players itself.
 useStatsStorage({ read: () => null, write: () => {} });
@@ -82,7 +85,9 @@ export function createApp({
   now = () => new Date(),
   bot = null, // bot.mjs: the live card, recaps and button presses (optional)
   publicUrl = null, // https://... this site's public address: turns on the website's sign-in
+  cardPicture = null, // date -> PNG of the day's six facing RED (card-image.mjs), for the bot's card
 }) {
+  const pictures = new Map(); // date -> PNG, the last few days
   const site = publicUrl ? String(publicUrl).replace(/\/$/, '') : null;
   const redirectUri = site ? `${site}/auth/callback` : null;
   const webSignIn = Boolean(redirectUri && clientId && clientSecret);
@@ -563,6 +568,19 @@ export function createApp({
         login(req, res, url);
       } else if (url.pathname === '/auth/callback' && req.method === 'GET') {
         await callback(req, res, url);
+      } else if (/^\/card\/\d{4}-\d{2}-\d{2}\.png$/.test(url.pathname) && (req.method === 'GET' || req.method === 'HEAD')) {
+        // Days from the first one up to tomorrow (time zones), never later:
+        // the team would be a spoiler.
+        const date = url.pathname.slice(6, 16);
+        const tomorrow = addDays(now().toISOString().slice(0, 10), 1);
+        if (!cardPicture || !(dayNumber(date) >= 1) || date > tomorrow || Number.isNaN(Date.parse(date))) throw new HttpError(404, 'Not found');
+        if (!pictures.has(date)) {
+          if (pictures.size >= 8) pictures.delete(pictures.keys().next().value);
+          pictures.set(date, cardPicture(date));
+        }
+        const png = pictures.get(date);
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': png.length, 'Cache-Control': 'public, max-age=86400' });
+        res.end(req.method === 'HEAD' ? undefined : png);
       } else if (url.pathname === '/auth/logout' && req.method === 'GET') {
         redirect(res, '/', [cookie(SESSION_COOKIE, '', 0)]);
       } else {

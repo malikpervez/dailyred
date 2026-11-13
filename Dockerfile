@@ -23,7 +23,7 @@ COPY activity/package.json activity/package-lock.json activity/
 RUN cd activity && npm ci --no-audit --no-fund
 # The Pokémon sprites and move animation graphics, from pret/pokefirered's
 # graphics (a few MB of git).
-COPY activity/build-sprites.mjs activity/banner.mjs activity/png.mjs activity/banner-title.png activity/
+COPY activity/build-sprites.mjs activity/
 COPY web/battle/fx-sprites.js web/battle/
 COPY scripts/get-sprites.sh scripts/
 RUN scripts/get-sprites.sh /tmp/pokefirered && rm -rf /tmp/pokefirered
@@ -40,6 +40,8 @@ COPY web/ web/
 COPY --from=build /src/web/vendor/ web/vendor/
 COPY --from=build /src/web/sprites/ web/sprites/
 COPY activity/server.mjs activity/app.mjs activity/store.mjs activity/bot.mjs activity/
+# Today's card picture: drawn by the server from the sprites and this lettering.
+COPY activity/card-image.mjs activity/png.mjs activity/card-title.png activity/
 # The day's six for the bot's card (the battle data, bundled: a few MB).
 COPY --from=build /src/activity/dist/ activity/dist/
 RUN mkdir -p /data && chown node:node /data

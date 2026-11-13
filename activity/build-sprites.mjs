@@ -4,8 +4,7 @@
 //
 //   web/sprites/front/<dex number>.png        front-shiny/, back/, back-shiny/
 //   web/sprites/fx/<name>.png                 from graphics/battle_anims/sprites/
-//   web/sprites/trainers/red.png              RED
-//   web/sprites/banner.png                    the banner over the bot's daily card (banner.mjs)
+//   web/sprites/trainers/red.png              RED, for today's card picture (card-image.mjs)
 //
 // The source PNGs are 16-colour indexed images with colour 0 transparent, so
 // they're used as they are; the shiny versions swap in shiny.pal. Deoxys's
@@ -19,7 +18,6 @@ import { fileURLToPath } from 'node:url';
 import { deflateSync, inflateSync, crc32 } from 'node:zlib';
 import { Dex } from '@pkmn/sim';
 import { FX_SPRITES } from '../web/battle/fx-sprites.js';
-import { drawBanner } from './banner.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const source = process.argv[2];
@@ -171,6 +169,3 @@ writeFileSync(join(out, 'trainers/red.png'), rewrite(readFileSync(join(trainers,
   palette: readPalette(join(trainers, 'palettes/red.pal')),
 }));
 console.log(`Wrote RED's picture to ${join(out, 'trainers')}`);
-
-writeFileSync(join(out, 'banner.png'), drawBanner({ sprites: out }));
-console.log(`Wrote the card banner to ${join(out, 'banner.png')}`);

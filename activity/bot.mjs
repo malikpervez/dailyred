@@ -128,6 +128,7 @@ export function createBot({
   now = () => new Date(),
   followUpDelay = 1500, // ms to wait before looking up a just-posted leaderboard
   teamOfDay = null, // date -> the day's six species (server.mjs), for the card
+  cardPictures = false, // whether the server draws /card/<date>.png (card-image.mjs)
   api = API,
   log = console,
 }) {
@@ -301,9 +302,9 @@ export function createBot({
     log.log('Daily Red bot added the /dailyred and /dailyred-preview commands.');
   }
   const thumbnail = site ? { url: `${site}/sprites/front/25.png` } : undefined;
-  // Drawn at build time (banner.mjs). Bump v= if the picture changes, so
-  // Discord fetches it again instead of using its copy.
-  const bannerUrl = site ? `${site}/sprites/banner.png?v=1` : null;
+  // The day's lineup picture, which the server draws (card-image.mjs). Bump v=
+  // if the drawing changes, so Discord fetches it again instead of its copy.
+  const pictureUrl = (date) => (site && cardPictures ? `${site}/card/${date}.png?v=1` : null);
 
   // Wall-clock date and "HH:MM" in the recap's time zone.
   function zonedNow() {
@@ -375,27 +376,29 @@ export function createBot({
       color: RED,
       title: `Daily Red No. ${dayNumber(date)} · ${dateLabel(date)}`,
       description: raceLine ? `${description}\n\n${raceLine}` : description,
-      thumbnail: banner && bannerUrl ? undefined : thumbnail, // the banner has Pikachu already
+      thumbnail: banner && pictureUrl(date) ? undefined : thumbnail, // the picture has the team already
       footer: { text: `${summary ? `${summary} · ` : ''}New team at midnight, your time` },
     };
     return {
-      // The banner as its own embed, so it sits on top of the card.
-      embeds: banner && bannerUrl ? [{ color: RED, image: { url: bannerUrl } }, card] : [card],
+      // The banner (today's six facing RED) as its own embed, so it sits on top.
+      embeds: banner && pictureUrl(date) ? [{ color: RED, image: { url: pictureUrl(date) } }, card] : [card],
       components: buttons('Battle RED', guildId),
       allowed_mentions: { parse: [] },
     };
   }
 
-  // --- The banner over the card (off until a server admin turns it on) ----------------
+  // --- The banner over the card: today's six facing RED (off until a server admin turns it on) ---
 
   function bannerOn(guildId) {
-    return Boolean(bannerUrl) && store.getSetting(`banner:${guildId}`) === 'on';
+    return Boolean(site && cardPictures) && store.getSetting(`banner:${guildId}`) === 'on';
   }
 
   // /dailyred-preview (server admins only): today's card with the banner,
   // seen only by whoever typed it, and a button to turn it on or off.
   function previewMessage(guildId) {
-    if (!bannerUrl) return { flags: 64, content: "The banner needs PUBLIC_URL set on the server (it's where Discord gets the picture)." };
+    if (!site || !cardPictures) {
+      return { flags: 64, content: "The banner needs PUBLIC_URL set on the server (Discord gets the picture from there) and the server's battle data (it's in the Docker image)." };
+    }
     const on = bannerOn(guildId);
     const { embeds } = cardMessage(guildId, zonedNow().date, { banner: true });
     return {

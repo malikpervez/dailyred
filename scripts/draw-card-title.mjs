@@ -1,11 +1,10 @@
-// Draws activity/banner-title.png: the "DAILY RED / One battle a day"
-// lettering on the banner over today's card (activity/banner.mjs), in the
-// site's pixel font with a dark outline, at the banner's native size (340x120,
-// the rest transparent). The build can't draw text without a browser, so this
-// is made once and kept in the repository; run it again only to change the
-// lettering.
+// Draws activity/card-title.png: the "DAILY RED / TODAY'S SIX vs RED"
+// lettering on today's card picture (activity/card-image.mjs), in the site's
+// pixel font with a dark outline, at the picture's native size (400x200, the
+// rest transparent). The server can't draw text, so this is made once and
+// kept in the repository; run it again only to change the lettering.
 //
-//   cd tests && npm install && node ../scripts/draw-banner-title.mjs
+//   cd tests && npm install && node ../scripts/draw-card-title.mjs
 //
 // Needs web/vendor/pixelify-sans.woff2 (scripts/fetch-vendor.sh) and Chromium.
 import { createRequire } from 'node:module';
@@ -25,7 +24,7 @@ const png = await page.evaluate(async (font) => {
   const face = new FontFace('Pixelify', `url(${font})`, { weight: '400 700' });
   await face.load();
   document.fonts.add(face);
-  const [W, H] = [340, 120];
+  const [W, H] = [400, 200];
   const layer = () => { const c = document.createElement('canvas'); c.width = W; c.height = H; return [c, c.getContext('2d')]; };
   const [out, ctx] = layer();
   // Canvas text is anti-aliased: keep only solid pixels, then add a 1px outline.
@@ -46,11 +45,11 @@ const png = await page.evaluate(async (font) => {
     ctx.drawImage(o, 0, 0);
     ctx.drawImage(c, 0, 0);
   };
-  text('DAILY', 14, 19, 32, '#f6f7fb');
-  text('RED', 104, 19, 32, '#d63a3a');
-  text('One battle a day', 15, 55, 13, '#f6f7fb');
+  text('DAILY', 12, 10, 28, '#f6f7fb');
+  text('RED', 98, 10, 28, '#d63a3a');
+  text("TODAY'S SIX vs RED", 13, 42, 11, '#f6f7fb');
   return out.toDataURL('image/png');
 }, font);
 await browser.close();
-writeFileSync(join(ROOT, 'activity/banner-title.png'), Buffer.from(png.split(',')[1], 'base64'));
-console.log('Wrote activity/banner-title.png');
+writeFileSync(join(ROOT, 'activity/card-title.png'), Buffer.from(png.split(',')[1], 'base64'));
+console.log('Wrote activity/card-title.png');

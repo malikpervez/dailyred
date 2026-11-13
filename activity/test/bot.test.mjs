@@ -589,10 +589,13 @@ test('the posted Leaderboard updates itself when a battle finishes', async () =>
   assert.equal(JSON.parse(store.getSetting(`board:${GUILD}`)), null);
 });
 
-test("the banner over today's card: off until an admin previews it and turns it on", async () => {
+test("the banner over today's card (today's six facing RED): off until an admin previews it and turns it on", async () => {
   const discord = fakeDiscord();
   const store = openStore(':memory:');
-  const bot = createBot({ token: 'bot-token', clientId: '999', store, fetch: discord.fetch, log: quiet, now: () => new Date('2026-11-12T15:00:00Z'), publicUrl: 'https://nas.example.ts.net' });
+  const bot = createBot({
+    token: 'bot-token', clientId: '999', store, fetch: discord.fetch, log: quiet, now: () => new Date('2026-11-12T15:00:00Z'),
+    publicUrl: 'https://nas.example.ts.net', cardPictures: true,
+  });
   store.savePlayer({ id: '1', name: 'Ash', avatarUrl: '', stats: { ...EMPTY, pending: '2026-11-12' } });
   store.joinRoom(`g:${GUILD}`, '1');
   await bot.updateCard(GUILD, '2026-11-12');
@@ -603,9 +606,9 @@ test("the banner over today's card: off until an admin previews it and turns it 
   const preview = bot.interaction({ type: 2, guild_id: GUILD, member: { user: { id: '1' }, permissions: '32' }, data: { name: 'dailyred-preview' } });
   assert.equal(preview.type, 4);
   assert.equal(preview.data.flags, 64, 'only the admin sees the preview');
-  assert.deepEqual(preview.data.embeds[0], { color: 0xd63a3a, image: { url: 'https://nas.example.ts.net/sprites/banner.png?v=1' } });
+  assert.deepEqual(preview.data.embeds[0], { color: 0xd63a3a, image: { url: 'https://nas.example.ts.net/card/2026-11-12.png?v=1' } });
   assert.equal(preview.data.embeds[1].title, 'Daily Red No. 12 · Thu, Nov 12');
-  assert.equal(preview.data.embeds[1].thumbnail, undefined, 'no Pikachu in the corner under the banner');
+  assert.equal(preview.data.embeds[1].thumbnail, undefined, 'no Pikachu in the corner under the picture');
   assert.equal(preview.data.components[0].components[0].custom_id, 'dailyred:banner-on');
   assert.equal(discord.edits().length, 0, "previewing doesn't touch the real card");
 
@@ -619,21 +622,44 @@ test("the banner over today's card: off until an admin previews it and turns it 
   assert.equal(on.data.components[0].components[0].custom_id, 'dailyred:banner-off');
   await new Promise((ok) => setTimeout(ok, 20));
   const edited = discord.edits().at(-1).body;
-  assert.equal(edited.embeds[0].image.url, 'https://nas.example.ts.net/sprites/banner.png?v=1', "today's card gets it straight away");
-  assert.equal(bot.cardMessage(GUILD, '2026-11-13').embeds.length, 2, "and tomorrow's");
+  assert.equal(edited.embeds[0].image.url, 'https://nas.example.ts.net/card/2026-11-12.png?v=1', "today's card gets it straight away");
+  assert.equal(bot.cardMessage(GUILD, '2026-11-13').embeds[0].image.url, 'https://nas.example.ts.net/card/2026-11-13.png?v=1', "and tomorrow's has tomorrow's six");
 
   press(String(1n << 3n), 'dailyred:banner-off'); // administrators can too
   assert.equal(bot.cardMessage(GUILD, '2026-11-13').embeds.length, 1);
 });
 
-test('the banner is drawn at build time from the sprites', async () => {
+test("today's card picture: the day's six drawn on the field, served for days up to tomorrow", async () => {
   const { existsSync } = await import('node:fs');
-  const sprites = new URL('../../web/sprites/', import.meta.url).pathname;
-  if (!existsSync(`${sprites}trainers/red.png`)) return; // scripts/get-sprites.sh hasn't run here
-  const { drawBanner } = await import('../banner.mjs');
+  const web = new URL('../../web/', import.meta.url).pathname;
+  if (!existsSync(`${web}sprites/trainers/red.png`)) return; // scripts/get-sprites.sh hasn't run here
+  const { createCardPainter } = await import('../card-image.mjs');
   const { decodePng } = await import('../png.mjs');
-  const png = drawBanner({ sprites });
-  const { width, height, data } = decodePng(png);
-  assert.deepEqual([width, height], [680, 240]);
-  assert.deepEqual([...data.subarray(0, 4)], [0x5f, 0xa8, 0xe8, 255], 'sky in the top corner');
+  const paint = createCardPainter({ webRoot: web });
+  const picture = decodePng(paint([{ num: 25 }, { num: 6, shiny: true }, { num: 9 }, { num: 3 }, { num: 143 }, { num: 196 }]));
+  assert.deepEqual([picture.width, picture.height], [800, 400]);
+  assert.deepEqual([...picture.data.subarray(0, 4)], [0x5f, 0xa8, 0xe8, 255], 'sky in the top corner');
+
+  const store = openStore(':memory:');
+  const drawn = [];
+  const app = createApp({
+    webRoot: web, store, clientId: '1', clientSecret: 's', now: () => new Date('2026-11-12T15:00:00Z'),
+    cardPicture: (date) => { drawn.push(date); return paint([{ num: 25 }]); },
+  });
+  const server = createServer(app);
+  await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+  const get = (path) => fetch(`http://127.0.0.1:${server.address().port}${path}`);
+  try {
+    const res = await get('/card/2026-11-12.png?v=1');
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'image/png');
+    assert.equal((await get('/card/2026-11-12.png')).status, 200);
+    assert.deepEqual(drawn, ['2026-11-12'], 'drawn once, then kept');
+    assert.equal((await get('/card/2026-11-13.png')).status, 200, 'tomorrow, for time zones ahead');
+    assert.equal((await get('/card/2026-11-14.png')).status, 404, 'no spoilers further ahead');
+    assert.equal((await get('/card/2026-10-31.png')).status, 404, 'before Daily Red began');
+    assert.equal((await get('/card/2026-13-45.png')).status, 404);
+  } finally {
+    server.close();
+  }
 });

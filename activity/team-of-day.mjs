@@ -10,3 +10,7 @@ const dex = Dex.forGen(3);
 
 // The species of the team for `seed` (dailySeed(date) in web/daily.js), in the day's order.
 export const teamSpecies = (seed) => generateTeam(dex, seed).map((set) => set.species);
+
+// The same team as { species, num, shiny }, for today's card picture.
+export const teamMembers = (seed) => generateTeam(dex, seed)
+  .map((set) => ({ species: set.species, num: dex.species.get(set.species).num, shiny: Boolean(set.shiny) }));

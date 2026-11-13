@@ -28,6 +28,7 @@ import { createApp } from './app.mjs';
 import { createBot, inviteUrl } from './bot.mjs';
 import { openStore } from './store.mjs';
 import { dailySeed } from '../web/daily.js';
+import { createCardPainter } from './card-image.mjs';
 
 // Values pasted into OMV's environment box can pick up spaces or quotes.
 const env = Object.fromEntries(Object.entries(process.env).map(([k, v]) => [k, String(v).trim().replace(/^["'](.*)["']$/, '$1').trim()]));
@@ -52,10 +53,18 @@ const store = openStore(join(dataDir, 'dailyred.sqlite'));
 
 // The day's six for the bot's card: activity/dist/team-of-day.mjs, built by
 // `npm run build` (the Docker image has it).
+// The same data draws the banner over the card: the day's six facing RED.
 let teamOfDay = null;
+let cardPicture = null;
 try {
-  const { teamSpecies } = await import('./dist/team-of-day.mjs');
+  const { teamSpecies, teamMembers } = await import('./dist/team-of-day.mjs');
   teamOfDay = (date) => teamSpecies(dailySeed(date));
+  try {
+    const paint = createCardPainter({ webRoot });
+    cardPicture = (date) => paint(teamMembers(dailySeed(date)));
+  } catch (err) {
+    console.warn(`Today's card picture is off: ${err.message} (scripts/get-sprites.sh makes the sprites).`);
+  }
 } catch {
   console.warn("activity/dist/team-of-day.mjs is missing (npm run build in activity/): the bot's card won't list today's team.");
 }
@@ -73,6 +82,7 @@ if ((env.DISCORD_BOT_TOKEN || env.DISCORD_PUBLIC_KEY) && env.DISCORD_CLIENT_ID) 
     reminderTime: env.REMINDER_TIME || '17:00',
     publicUrl: env.PUBLIC_URL || null,
     teamOfDay,
+    cardPictures: Boolean(cardPicture),
   });
   bot.start();
   if (env.DISCORD_BOT_TOKEN) {
@@ -95,6 +105,7 @@ const handle = createApp({
   clientSecret: env.DISCORD_CLIENT_SECRET,
   bot,
   publicUrl: env.PUBLIC_URL || null,
+  cardPicture,
 });
 console.log(env.PUBLIC_URL && env.DISCORD_CLIENT_SECRET
   ? `Website sign-in on: the app's only OAuth2 redirect must be ${env.PUBLIC_URL.replace(/\/$/, '')}/auth/callback`
