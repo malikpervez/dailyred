@@ -4,7 +4,7 @@
 // Inside a Discord Activity, discord.js adds sign-in, stats kept on the
 // server and the "Today in this server" list.
 import {
-  today, addDays, dailySeed, dayNumber, msUntilTomorrow, loadStats, resultFor, currentStreaks,
+  today, addDays, dailySeed, dayNumber, teamVersion, msUntilTomorrow, loadStats, resultFor, currentStreaks,
   markBattleStarted, recordResult, settleAbandonedGame, useStatsStorage,
 } from './daily.js';
 import {
@@ -128,6 +128,8 @@ const el = (tag, className, text) => {
 };
 
 const leadKey = () => `dailyred-lead:${practiceSeed ?? date}`;
+// The team rules for the page's team (practice teams: the newest).
+const rules = () => teamVersion(practiceSeed ? null : date);
 
 function battleOrder() {
   return [lead, ...teams.team.map((_, i) => i).filter((i) => i !== lead)];
@@ -286,7 +288,7 @@ async function loadDay() {
   setState('loading');
   ui.loadingText.textContent = "Loading today's team…";
   try {
-    teams = await loadTeams(seed);
+    teams = await loadTeams(seed, rules());
   } catch (err) {
     showError(err);
     return;
@@ -428,7 +430,7 @@ async function beginBattle({ practice }) {
     discord?.setPresence('Battling RED', `${stats.wins}W ${stats.losses}L`);
   }
 
-  startBattle({ seed, order: battleOrder(), name }, {
+  startBattle({ seed, version: rules(), order: battleOrder(), name }, {
     onEvents: (events) => {
       const turn = events.findLast((e) => e.turn)?.turn;
       if (turn) {

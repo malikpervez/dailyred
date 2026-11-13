@@ -94,7 +94,7 @@ test('every item a team can hold, and RED\'s, has a plain description', async ()
   const { itemHelp } = await import('../../web/battle/items.js');
   const dex = Dex.forGen(3);
   const items = new Set(RED_TEAM.map((s) => s.item));
-  for (let seed = 1; seed <= 400; seed++) for (const set of generateTeam(dex, seed)) items.add(set.item);
+  for (let seed = 1; seed <= 400; seed++) for (const version of [1, 2]) for (const set of generateTeam(dex, seed, version)) items.add(set.item);
   for (const name of items) {
     const item = dex.items.get(name);
     const help = itemHelp(item);
@@ -188,4 +188,31 @@ test('Shift: saying no keeps your Pokémon in', async () => {
     return;
   }
   assert.fail('no battle offered a Shift');
+});
+
+test('from No. 14 every Pokémon always holds its own item; a Choice Band holder only gets attacks', async () => {
+  const { heldItemFor } = await import('../../web/battle/team.js');
+  const { dailySeed, teamVersion } = await import('../../web/daily.js');
+  const dex = Dex.forGen(3);
+  // No. 13 was played with the old random items: it stays exactly the same.
+  assert.equal(teamVersion('2026-11-13'), 1);
+  const no13 = generateTeam(dex, dailySeed('2026-11-13'), teamVersion('2026-11-13'));
+  assert.deepEqual([no13[1].species, no13[1].item, no13[1].moves.at(-1)], ['Sceptile', 'Choice Band', 'Toxic']);
+  assert.equal(teamVersion('2026-11-14'), 2);
+  assert.equal(teamVersion(null), 2, 'practice teams use the newest rules');
+
+  const seen = new Map();
+  for (let seed = 1; seed <= 1500; seed++) {
+    for (const set of generateTeam(dex, seed * 7919, 2)) {
+      assert.equal(set.item, dex.items.get(heldItemFor(dex, set.species)).name);
+      if (seen.has(set.species)) assert.equal(set.item, seen.get(set.species), `${set.species} always holds the same item`);
+      seen.set(set.species, set.item);
+      if (set.item === 'Choice Band') {
+        assert.ok(set.moves.every((m) => dex.moves.get(m).category !== 'Status'), `${set.species}: ${set.moves.join(', ')}`);
+      }
+    }
+  }
+  const item = (name) => dex.items.get(heldItemFor(dex, name)).name;
+  assert.deepEqual(['Snorlax', 'Pikachu', 'Raichu', 'Marowak', 'Latios', 'Blissey', 'Gengar', 'Machamp', 'Charizard', 'Alakazam'].map(item),
+    ['Leftovers', 'Light Ball', 'Magnet', 'Thick Club', 'Soul Dew', 'Leftovers', 'Leftovers', 'Choice Band', 'Charcoal', 'Twisted Spoon']);
 });

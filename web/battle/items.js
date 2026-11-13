@@ -20,6 +20,11 @@ const HELP = {
   salacberry: 'Once per battle: raises Speed when it drops to 1/4 HP or less.',
   petayaberry: 'Once per battle: raises Sp. Atk when it drops to 1/4 HP or less.',
   lightball: "Doubles Pikachu's Sp. Atk.",
+  thickclub: "Doubles Cubone's and Marowak's Attack.",
+  souldew: "Raises Latias's and Latios's Sp. Atk and Sp. Def by half.",
+  deepseatooth: "Doubles Clamperl's Sp. Atk.",
+  stick: "Farfetch'd lands critical hits much more often.",
+  metalpowder: "Doubles Ditto's Defense.",
 };
 
 // `item`: a Showdown item (dex.items.get(...)). Returns '' for no item.

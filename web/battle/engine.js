@@ -5,12 +5,12 @@ const WORKER_URL = new URL('../vendor/battle-worker.js', import.meta.url);
 
 let worker = null;
 let handlers = {};
-const teams = new Map(); // seed -> Promise of { team, red }
+const teams = new Map(); // "seed:version" -> Promise of { team, red }
 
 function onMessage({ data }) {
   switch (data.type) {
     case 'team':
-      teams.get(data.seed)?.resolve(data);
+      teams.get(`${data.seed}:${data.version}`)?.resolve(data);
       break;
     case 'events':
       handlers.onEvents?.(data.events);
@@ -46,22 +46,24 @@ function getWorker() {
 }
 
 // Today's team and RED's, described for the page: species, types, item,
-// ability, nature, stats and moves (see describe() in worker.js).
-export function loadTeams(seed) {
-  if (!teams.has(seed)) {
+// ability, nature, stats and moves (see describe() in worker.js). `version`:
+// the day's team rules (teamVersion in daily.js).
+export function loadTeams(seed, version) {
+  const key = `${seed}:${version}`;
+  if (!teams.has(key)) {
     let resolve, reject;
     const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
-    teams.set(seed, { promise, resolve, reject });
-    getWorker().postMessage({ type: 'team', seed });
+    teams.set(key, { promise, resolve, reject });
+    getWorker().postMessage({ type: 'team', seed, version });
   }
-  return teams.get(seed).promise;
+  return teams.get(key).promise;
 }
 
 // Starts a battle with the seed's team in `order` (indexes into the team, the
 // lead first). `on` gets onEvents, onRequest, onEnd(won, tie) and onError(err).
-export function startBattle({ seed, order, name }, on) {
+export function startBattle({ seed, version, order, name }, on) {
   handlers = on;
-  getWorker().postMessage({ type: 'start', seed, order, name });
+  getWorker().postMessage({ type: 'start', seed, version, order, name });
 }
 
 export const choose = (choice) => worker?.postMessage({ type: 'choose', choice });

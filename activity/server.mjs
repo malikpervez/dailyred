@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { createApp } from './app.mjs';
 import { createBot, inviteUrl } from './bot.mjs';
 import { openStore } from './store.mjs';
-import { dailySeed } from '../web/daily.js';
+import { dailySeed, teamVersion } from '../web/daily.js';
 import { createCardPainter } from './card-image.mjs';
 
 // Values pasted into OMV's environment box can pick up spaces or quotes.
@@ -58,10 +58,10 @@ let teamOfDay = null;
 let cardPicture = null;
 try {
   const { teamSpecies, teamMembers } = await import('./dist/team-of-day.mjs');
-  teamOfDay = (date) => teamSpecies(dailySeed(date));
+  teamOfDay = (date) => teamSpecies(dailySeed(date), teamVersion(date));
   try {
     const paint = createCardPainter({ webRoot });
-    cardPicture = (date) => paint(teamMembers(dailySeed(date)));
+    cardPicture = (date) => paint(teamMembers(dailySeed(date), teamVersion(date)));
   } catch (err) {
     console.warn(`Today's card picture is off: ${err.message} (scripts/get-sprites.sh makes the sprites).`);
   }

@@ -408,8 +408,8 @@ function playerName(name) {
   return clean && clean.toLowerCase() !== 'red' ? clean : 'You';
 }
 
-function start({ seed, order, name }) {
-  const team = generateTeam(dex, seed);
+function start({ seed, version, order, name }) {
+  const team = generateTeam(dex, seed, version);
   const ordered = order && order.length === team.length ? order.map((i) => team[i]) : team;
   const stream = new BattleStreams.BattleStream();
   const streams = BattleStreams.getPlayerStreams(stream);
@@ -430,7 +430,7 @@ onmessage = ({ data }) => {
   try {
     switch (data.type) {
       case 'team':
-        post({ type: 'team', seed: data.seed, team: generateTeam(dex, data.seed).map(describe), red: RED_TEAM.map(describe) });
+        post({ type: 'team', seed: data.seed, version: data.version, team: generateTeam(dex, data.seed, data.version).map(describe), red: RED_TEAM.map(describe) });
         break;
       case 'start':
         start(data);

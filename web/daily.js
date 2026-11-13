@@ -20,6 +20,16 @@ export function addDays(date, days) {
 // The first day of Daily Red, for the "No." in the header and in Discord.
 export const FIRST_DAY = '2026-11-01';
 
+// Which version of the team rules (web/battle/team.js) a day's team uses.
+// Changes start on a later day, so a day already being played keeps the same
+// team for everyone. Practice teams (no date) use the newest.
+//   1: up to No. 13 (Nov 13, 2026): random held items
+//   2: from No. 14: each Pokémon's own fixed item
+export function teamVersion(date) {
+  if (!date) return 2;
+  return date < '2026-11-14' ? 1 : 2;
+}
+
 export function dayNumber(date) {
   return Math.round((new Date(`${date}T12:00:00Z`) - new Date(`${FIRST_DAY}T12:00:00Z`)) / 86400000) + 1;
 }

@@ -72,8 +72,13 @@ web/index.html + app.js            today's page, the lead picker, stats (daily.j
   month (`currentStreaks` / `recordResult` in `web/daily.js`); the best win
   streak is kept for all time. In Discord the bot announces the Pokémon
   Master of the Month that morning.
-- **Held items** are explained on every Pokémon's card on the team page, in
-  plain words (`web/battle/items.js`).
+- **Held items** are fixed per Pokémon from No. 14 (`heldItemFor` in
+  `web/battle/team.js`): its own special item (Light Ball, Thick Club, Soul
+  Dew...), Choice Band for strong physical attackers (who then only get
+  attacks), a type-boost item for other attackers, Leftovers for everyone
+  else. Earlier days keep the random items they were played with
+  (`teamVersion` in `web/daily.js`). Each card on the team page explains
+  its item in plain words (`web/battle/items.js`).
 - **Shift, like FireRed:** when one of RED's Pokémon faints, he says which
   one comes out next and asks "Will you change POKéMON?". YES lets you switch
   for free before it comes out; NO keeps yours in.
