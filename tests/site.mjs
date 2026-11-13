@@ -48,6 +48,8 @@ const step = (name) => console.log(`- ${name}`);
 const DAY1 = new Date('2026-11-12T10:00:00');
 const DAY2 = new Date('2026-11-13T10:00:00');
 
+let shiftSeen = false;
+
 // Clicks through a battle until it ends: the first usable move each turn, the
 // first healthy Pokémon when one faints. Returns the result text.
 async function playToTheEnd(page) {
@@ -56,7 +58,15 @@ async function playToTheEnd(page) {
     // The screen can move on between the check and the click (the next
     // message starts), so clicks give up quickly and the loop looks again.
     const quick = { timeout: 1500 };
-    if (await page.isVisible('.summary')) await page.click('.sum-shift:not(:disabled)', quick).catch(() => {});
+    if (await page.isVisible('.confirm')) {
+      // RED lost a Pokémon: "Will you change POKéMON?" (saved once, then NO).
+      if (!shiftSeen) {
+        shiftSeen = true;
+        assert.match(await page.textContent('.confirm-text'), /^RED is about to send out [A-Z]+\. Will [A-Z]+ change POKéMON\?$/);
+        await page.screenshot({ path: join(OUT, 'shift.png') });
+      }
+      await page.click('.confirm-no', quick).catch(() => {});
+    } else if (await page.isVisible('.summary')) await page.click('.sum-shift:not(:disabled)', quick).catch(() => {});
     else if (await page.isVisible('.party')) await page.click('.party-mon:not(:disabled)', quick).catch(() => {});
     else if (await page.isVisible('.commands')) await page.click('.move:not(:disabled)', quick).catch(() => {});
     else await page.waitForTimeout(25);
@@ -124,7 +134,7 @@ try {
   assert.equal(await page.textContent('.sum-name'), `${team[0]}${await page.textContent('.sum-gender')}Lv100`);
   assert.equal(await page.locator('.sum-move').count(), (await page.evaluate(() => window.dailyRed.teams.team[0].moves.length)));
   assert.ok((await page.textContent('.sum-facts')).includes('ITEM'));
-  assert.equal(await page.textContent('.sum-item-desc'), (await page.evaluate(() => `${window.dailyRed.teams.team[0].item}: ${window.dailyRed.teams.team[0].itemDesc}`)));
+  assert.ok(await page.isHidden('.sum-item-desc'), "the item's description is on the team page, not in battle");
   assert.equal(await page.textContent('.sum-shift'), 'SHIFT');
   await page.click('.sum-buttons .action:has-text("BACK")');
   assert.ok(await page.isVisible('.party'));

@@ -678,7 +678,7 @@ img { image-rendering: pixelated; }
 
 .message-text { margin: 0; font-size: clamp(17px, 4.6vw, 22px); line-height: 1.35; white-space: pre-wrap; }
 
-.commands, .actions, .party {
+.commands, .actions, .party, .confirm {
   border: 2px solid var(--cream-line);
   border-radius: 10px;
   color: var(--cream-ink);
@@ -813,6 +813,11 @@ img { image-rendering: pixelated; }
 .party-tag { font-size: 12px; color: #5c5f68; }
 .party-cancel { width: 100%; }
 
+/* The Shift question, with FireRed's YES / NO. */
+.confirm { padding: 12px; display: grid; gap: 12px; }
+.confirm-text { margin: 0; font: 600 18px/1.45 var(--font-pixel); }
+.shift-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
 /* Summary --------------------------------------------------------------------------------- */
 
 .summary {
@@ -837,8 +842,6 @@ img { image-rendering: pixelated; }
 .sum-facts div { min-width: 0; }
 .sum-facts dt { font-size: 12px; color: #6a6d75; }
 .sum-facts dd { margin: 0; overflow: hidden; font-size: 15px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
-.sum-item-desc { margin: 8px 0 0; font-size: 13px; line-height: 1.4; color: #4a4d55; }
-.sum-item-desc strong { color: #22252e; }
 
 .sum-note { margin: 10px 0 4px; font-size: 13px; color: #6a6d75; }
 

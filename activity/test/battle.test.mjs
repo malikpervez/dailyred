@@ -103,3 +103,89 @@ test('every item a team can hold, and RED\'s, has a plain description', async ()
   }
   assert.match(itemHelp(dex.items.get('choiceband')), /locked into the first move it uses\. Switch it out/);
 });
+
+// Runs the bundled battle engine (web/vendor/battle-worker.js, `npm run build`)
+// as the page does, and plays it with a simple player.
+async function runWorker({ seed, answerShift, maxMessages = 20000 }) {
+  const { readFileSync, existsSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const file = new URL('../../web/vendor/battle-worker.js', import.meta.url);
+  if (!existsSync(file)) return null;
+  const inbox = [];
+  let wake = null;
+  const context = vm.createContext({
+    postMessage: (message) => { inbox.push(structuredClone(message)); wake?.(); },
+    console, setTimeout, clearTimeout, setImmediate, queueMicrotask, TextEncoder, TextDecoder, structuredClone,
+  });
+  vm.runInContext(readFileSync(file, 'utf8'), context);
+  const send = (data) => context.onmessage({ data });
+  const next = async () => {
+    while (!inbox.length) await new Promise((ok) => { wake = ok; });
+    return inbox.shift();
+  };
+  const log = [];
+  send({ type: 'start', seed, order: [0, 1, 2, 3, 4, 5], name: 'Tester' });
+  for (let i = 0; i < maxMessages; i++) {
+    const message = await next();
+    if (message.type === 'error') throw new Error(message.message);
+    if (message.type === 'end') return { log, won: message.won };
+    if (message.type === 'events') log.push(...message.events.filter((e) => e.text).map((e) => e.text));
+    if (message.type !== 'request') continue;
+    const req = message.request;
+    if (req.kind === 'shift') {
+      log.push({ shift: req });
+      send({ type: 'choose', choice: answerShift(req) });
+    } else if (req.kind === 'switch') {
+      send({ type: 'choose', choice: `switch ${req.party.find((p) => !p.active && p.status !== 'fnt').slot}` });
+    } else if (req.kind === 'move') {
+      log.push({ move: req.species });
+      const usable = req.moves.filter((m) => !m.disabled);
+      const best = usable.find((m) => m.effect === 'super') ?? usable.find((m) => m.power) ?? usable[0];
+      send({ type: 'choose', choice: `move ${best.slot}` });
+    }
+  }
+  throw new Error('the battle never ended');
+}
+
+test('Shift: after RED loses a Pokémon you may switch for free before his next one comes out', async () => {
+  let checked = 0;
+  for (let seed = 1; seed <= 40 && checked < 3; seed++) {
+    let picked = null;
+    const result = await runWorker({
+      seed,
+      answerShift: (req) => {
+        if (picked) return 'stay'; // switch at the first chance only
+        const mon = req.party.find((p) => !p.active && p.status !== 'fnt');
+        picked = { name: mon.species, from: req.party.find((p) => p.active).species, next: req.next };
+        return `switch ${mon.slot}`;
+      },
+    });
+    if (result === null) return; // battle engine not built here
+    const at = result.log.findIndex((entry) => entry.shift);
+    if (at < 0 || !picked) continue;
+    const after = result.log.slice(at + 1);
+    const nextMove = after.findIndex((entry) => entry.move);
+    const between = after.slice(0, nextMove).filter((t) => typeof t === 'string');
+    assert.equal(after[nextMove].move, picked.name, `${picked.name} is out and choosing a move`);
+    assert.ok(between.some((t) => t.includes(picked.name)), `the log shows ${picked.name} coming in: ${between.join(' / ')}`);
+    assert.ok(between.some((t) => t.includes(picked.next)), `and RED's ${picked.next}`);
+    assert.ok(!between.some((t) => / used /.test(t)), `no attacks before you choose again: ${between.join(' / ')}`);
+    checked++;
+  }
+  assert.ok(checked >= 1, 'at least one battle offered a Shift');
+});
+
+test('Shift: saying no keeps your Pokémon in', async () => {
+  for (let seed = 1; seed <= 40; seed++) {
+    const result = await runWorker({ seed, answerShift: () => 'stay' });
+    if (result === null) return;
+    const at = result.log.findIndex((entry) => entry.shift);
+    if (at < 0) continue;
+    const { shift } = result.log[at];
+    const nextMove = result.log.slice(at + 1).find((entry) => entry.move);
+    if (!nextMove) continue; // the battle ended first
+    assert.equal(nextMove.move, shift.party.find((p) => p.active).species);
+    return;
+  }
+  assert.fail('no battle offered a Shift');
+});

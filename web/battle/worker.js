@@ -283,6 +283,52 @@ function effectiveness(type, foe) {
   return e > 0 ? 'super' : e < 0 ? 'weak' : 'normal';
 }
 
+// --- Shift ------------------------------------------------------------------------
+// FireRed's "Shift" battle style: when one of RED's Pokémon faints, he says
+// which one comes out next and the player may switch first, for free. The
+// simulator has no such step, so when RED has to replace a fainted Pokémon
+// (and yours is still standing), his pick is held back and the player is
+// asked. A yes becomes the same free switch U-turn gives (the active
+// Pokémon's switchFlag, then a fresh switch request for both sides); then
+// RED's held pick goes in.
+
+function canShift(sim) {
+  const yours = sim.p1.active[0];
+  return Boolean(yours && !yours.fainted && sim.p1.pokemon.some((p) => !p.isActive && !p.fainted));
+}
+
+// The question for the page: RED's next Pokémon, and your party as it is now.
+function shiftOffer(sim, slot) {
+  const next = sim.p2.pokemon[slot - 1];
+  const foe = details(next, sim.p1.active[0], false);
+  return {
+    kind: 'shift',
+    next: next.species.name,
+    canSwitch: true,
+    party: sim.p1.pokemon.map((mon, i) => ({ slot: i + 1, active: Boolean(mon.isActive), ...details(mon, next, true) })),
+    foe,
+  };
+}
+
+// The player's answer: 'switch <slot>' to shift, anything else to stay in.
+function answerShift(battle, choice) {
+  const sim = battle.stream.battle;
+  const slot = Number(/^switch (\d+)$/.exec(choice)?.[1]);
+  const mon = sim.p1.pokemon[slot - 1];
+  if (!mon || mon.isActive || mon.fainted) {
+    const held = battle.shift.choice;
+    battle.shift = null;
+    battle.streams.p2.write(held);
+    return;
+  }
+  battle.shift.state = 'switching';
+  battle.shiftSlot = slot;
+  sim.p1.active[0].switchFlag = true;
+  sim.makeRequest('switch');
+  for (const side of sim.sides) side.emitRequest();
+  sim.sentRequests = true;
+}
+
 async function readPlayer(battle) {
   const { client, formatter, streams } = battle;
   for await (const chunk of streams.p1) {
@@ -290,6 +336,15 @@ async function readPlayer(battle) {
     if (chunk.startsWith('|request|')) {
       const request = Protocol.parseRequest(chunk.slice(9));
       client.update(request);
+      if (request.forceSwitch && battle.shiftSlot) {
+        // The free switch the player already picked.
+        const slot = battle.shiftSlot;
+        battle.shiftSlot = null;
+        streams.p1.write(`switch ${slot}`);
+        continue;
+      }
+      // "Wait for RED" while he's asking the Shift question: keep the question up.
+      if (request.wait && battle.shift) continue;
       post({ type: 'request', request: summarizeRequest(request) });
       continue;
     }
@@ -322,11 +377,24 @@ async function readRed(battle) {
     if (!chunk.startsWith('|request|')) continue;
     const request = JSON.parse(chunk.slice(9));
     if (request.wait || request.teamPreview) continue;
+    if (request.forceSwitch && battle.shift?.state === 'switching') {
+      // Asked again after the player's free switch: the Pokémon he announced.
+      const held = battle.shift.choice;
+      battle.shift = null;
+      battle.streams.p2.write(held);
+      continue;
+    }
     let choice = 'default';
     try {
       choice = chooseForRed(calc, dex, battle.stream.battle, request);
     } catch (err) {
       console.error('RED AI failed', err);
+    }
+    const slot = Number(/^switch (\d+)$/.exec(choice)?.[1]);
+    if (request.forceSwitch && slot && canShift(battle.stream.battle)) {
+      battle.shift = { choice, state: 'asking' };
+      post({ type: 'request', request: shiftOffer(battle.stream.battle, slot) });
+      continue;
     }
     battle.streams.p2.write(choice);
   }
@@ -368,7 +436,8 @@ onmessage = ({ data }) => {
         start(data);
         break;
       case 'choose':
-        current?.streams.p1.write(data.choice);
+        if (current?.shift?.state === 'asking') answerShift(current, data.choice);
+        else current?.streams.p1.write(data.choice);
         break;
       case 'forfeit':
         current?.streams.omniscient.write('>forcelose p1');

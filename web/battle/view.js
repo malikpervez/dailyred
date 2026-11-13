@@ -104,11 +104,22 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
   partyCancel.type = 'button';
   party.append(partyHead, partyList, partyCancel);
 
+  // A YES/NO question (Shift: "Will you change POKéMON?").
+  const confirm = el('div', 'confirm');
+  confirm.hidden = true;
+  const confirmText = el('p', 'confirm-text');
+  const confirmYes = el('button', 'action confirm-yes', 'YES');
+  const confirmNo = el('button', 'action confirm-no', 'NO');
+  confirmYes.type = confirmNo.type = 'button';
+  const confirmButtons = el('div', 'shift-buttons');
+  confirmButtons.append(confirmYes, confirmNo);
+  confirm.append(confirmText, confirmButtons);
+
   // One Pokémon's summary: moves, item, ability, stats (yours or RED's).
   const summary = el('div', 'summary');
   summary.hidden = true;
 
-  panel.append(message, commands, actions, party, summary);
+  panel.append(message, commands, actions, party, confirm, summary);
 
   const frame = el('div', 'battle-frame');
   frame.append(scene, panel);
@@ -147,6 +158,7 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
     message.hidden = mode !== 'message';
     commands.hidden = actions.hidden = mode !== 'commands';
     party.hidden = mode !== 'party';
+    confirm.hidden = mode !== 'confirm';
     summary.hidden = mode !== 'summary';
     frame.dataset.panel = mode;
   }
@@ -303,6 +315,13 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
       showParty(req, true);
       return;
     }
+    if (req.kind === 'shift') {
+      // RED's Pokémon fainted: he says who's next, and you may switch for free.
+      const yours = req.party.find((p) => p.active)?.species ?? 'you';
+      confirmText.textContent = `RED is about to send out ${req.next.toUpperCase()}. Will ${yours.toUpperCase()} change POKéMON?`;
+      setPanel('confirm');
+      return;
+    }
     // Choice Band: every move but the first one used is greyed out until the
     // Pokémon switches out. Say so, or it looks broken.
     const holder = req.party?.find((p) => p.active);
@@ -343,7 +362,8 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
   }
 
   function showParty(req, forced) {
-    partyHead.textContent = forced ? 'Choose a POKéMON to send out.' : 'Choose a POKéMON.';
+    partyHead.textContent = forced ? 'Choose a POKéMON to send out.'
+      : req.kind === 'shift' ? `Choose a POKéMON to face ${req.next.toUpperCase()}.` : 'Choose a POKéMON.';
     partyList.replaceChildren(...req.party.map((p) => {
       const item = el('li');
       const button = el('button', 'party-mon');
@@ -418,9 +438,6 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
       row.append(el('dt', '', label), dd);
       facts.append(row);
     }
-    // What the item does, in words (not just a tooltip, which phones can't show).
-    const itemHelp = mon.item && mon.itemDesc ? el('p', 'sum-item-desc') : null;
-    itemHelp?.append(el('strong', '', `${mon.item}: `), mon.itemDesc);
 
     const against = request?.foe && !foe ? `RED's ${request.foe.species}` : request?.party?.find((p) => p.active)?.species;
     const note = el('p', 'sum-note', against ? `Effectiveness against ${against}` : '');
@@ -462,7 +479,7 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
     backButton.addEventListener('click', back);
     buttons.append(backButton);
 
-    summary.replaceChildren(...[head, facts, itemHelp, note, moves, stats, buttons].filter(Boolean));
+    summary.replaceChildren(head, facts, note, moves, stats, buttons);
     setPanel('summary');
     summary.scrollIntoView({ block: 'nearest' });
   }
@@ -476,6 +493,8 @@ export function createBattleView(root, { onChoose, onRun, getSpeed, getAnimation
   foe.box.title = "Tap to see RED's Pokémon";
 
   pokemonButton.addEventListener('click', () => request && showParty(request, false));
+  confirmYes.addEventListener('click', () => request && showParty(request, false));
+  confirmNo.addEventListener('click', () => request && submit('stay'));
   partyCancel.addEventListener('click', () => showRequest());
   runButton.addEventListener('click', () => onRun());
 
