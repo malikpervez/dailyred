@@ -213,6 +213,17 @@ test('from No. 14 every Pokémon always holds its own item; a Choice Band holder
     }
   }
   const item = (name) => dex.items.get(heldItemFor(dex, name)).name;
-  assert.deepEqual(['Snorlax', 'Pikachu', 'Raichu', 'Marowak', 'Latios', 'Blissey', 'Gengar', 'Machamp', 'Charizard', 'Alakazam'].map(item),
-    ['Leftovers', 'Light Ball', 'Magnet', 'Thick Club', 'Soul Dew', 'Leftovers', 'Leftovers', 'Choice Band', 'Charcoal', 'Twisted Spoon']);
+  assert.deepEqual(['Snorlax', 'Pikachu', 'Marowak', 'Latios', 'Dugtrio', 'Aerodactyl', 'Heracross', 'Typhlosion', 'Wobbuffet', 'Deoxys-Attack'].map(item),
+    ['Leftovers', 'Light Ball', 'Thick Club', 'Soul Dew', 'Choice Band', 'Choice Band', 'Salac Berry', 'Petaya Berry', 'Lum Berry', 'Choice Band']);
+});
+
+test("the held-item table covers every Pokémon, with real items and few Choice Bands", async () => {
+  const { HELD_ITEMS } = await import('../../web/battle/held-items.js');
+  const dex = Dex.forGen(3);
+  const pool = dex.species.all().filter((s) => s.exists && s.num >= 1 && s.num <= 386 && !s.forme);
+  assert.equal(pool.length, 386);
+  for (const s of pool) assert.ok(dex.items.get(HELD_ITEMS[s.id]).exists, `${s.name}: ${HELD_ITEMS[s.id]}`);
+  const bands = pool.filter((s) => HELD_ITEMS[s.id] === 'choiceband');
+  assert.ok(bands.length <= 20, `${bands.length} Choice Bands`);
+  assert.deepEqual(bands.filter((s) => s.evos?.length).map((s) => s.name), [], 'no Choice Band for unevolved Pokémon');
 });

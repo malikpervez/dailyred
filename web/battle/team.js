@@ -17,13 +17,16 @@
 //     (sleep, paralysis, a stat boost, healing). The FireRed version picked 4
 //     moves at random, which mostly left the player no way to beat RED.
 //   - One held item. Version 2 of these rules (teams from No. 14, see
-//     teamVersion in web/daily.js): the item that suits the species, always
-//     the same for it (heldItemFor), and a Choice Band holder only gets
-//     attacks. Version 1 (up to No. 13): picked at random from BATTLE_ITEMS
+//     teamVersion in web/daily.js): the species' own item from the
+//     researched table in held-items.js, always the same for it, and a Choice
+//     Band holder only gets attacks. Version 1 (up to No. 13): picked at random from BATTLE_ITEMS
 //     plus the type-boosting items for the types of its own attacking moves.
 //
 // The Showdown data (`dex`, Dex.forGen(3) from @pkmn/sim) is passed in, so
-// this file has no imports and runs in the browser worker and in Node tests.
+// this file (and held-items.js, its one import) runs in the browser worker
+// and in Node tests.
+
+import { HELD_ITEMS } from './held-items.js';
 
 export const LEVEL = 100;
 const MAX_STAT_EVS = 252;
@@ -68,45 +71,13 @@ const TYPE_BOOST_ITEMS = {
   Dark: 'blackglasses',
 };
 
-// Pokémon that have an item made for them, plus a few classic picks.
-const SIGNATURE_ITEMS = {
-  pikachu: 'lightball', cubone: 'thickclub', marowak: 'thickclub', latias: 'souldew', latios: 'souldew',
-  clamperl: 'deepseatooth', farfetchd: 'stick', ditto: 'metalpowder', snorlax: 'leftovers',
-};
-
 // The item a species always holds (team rules version 2): the same every
-// day, chosen for the Pokémon, never at random. Its signature item if it has
-// one. For an attacker, judged by the stat its strongest attacking type
-// among its own types uses (Gen 3: physical or special by type), compared
-// with its average bulk: a strong physical attacker gets Choice Band (and
-// only attacks, see pickMoves), any other attacker that type's boost item.
-// So Gengar, whose Ghost and Poison moves run off its weak Attack, isn't an
-// attacker. Everyone else: Leftovers.
+// day, from the researched table in held-items.js. A Choice Band holder only
+// gets attacks (see pickMoves).
 export function heldItemFor(dex, speciesId) {
   const species = dex.species.get(speciesId);
-  const base = dex.species.get(species.baseSpecies).id;
-  if (SIGNATURE_ITEMS[species.id] ?? SIGNATURE_ITEMS[base]) return SIGNATURE_ITEMS[species.id] ?? SIGNATURE_ITEMS[base];
-  const b = species.baseStats;
-  const bulk = (b.hp + b.def + b.spd) / 3;
-  const moves = learnableMoves(dex, speciesId).map((id) => dex.moves.get(id))
-    .filter((m) => m.category !== 'Status' && !hasFixedPower(m) && !AWKWARD_ATTACKS.has(m.id) && species.types.includes(m.type));
-  let best = null;
-  let bestScore = 0;
-  let bestStat = 0;
-  for (const m of moves) {
-    const stat = isPhysicalType(m.type) ? b.atk : b.spa;
-    if (m.basePower * stat > bestScore) {
-      bestScore = m.basePower * stat;
-      best = m.type;
-      bestStat = stat;
-    }
-  }
-  if (!best || bestStat < bulk + ATTACKER_MARGIN) return 'leftovers';
-  if (isPhysicalType(best) && bestStat >= bulk + CHOICE_BAND_MARGIN) return 'choiceband';
-  return TYPE_BOOST_ITEMS[best];
+  return HELD_ITEMS[species.id] ?? HELD_ITEMS[dex.species.get(species.baseSpecies).id] ?? 'leftovers';
 }
-const ATTACKER_MARGIN = 10;
-const CHOICE_BAND_MARGIN = 20;
 
 // In Gen 3 a move's type decides whether it's physical or special.
 const PHYSICAL_TYPES = new Set(['Normal', 'Fighting', 'Flying', 'Poison', 'Ground', 'Rock', 'Bug', 'Ghost', 'Steel']);
