@@ -213,17 +213,38 @@ test('from No. 14 every Pokémon always holds its own item; a Choice Band holder
     }
   }
   const item = (name) => dex.items.get(heldItemFor(dex, name)).name;
-  assert.deepEqual(['Snorlax', 'Pikachu', 'Marowak', 'Latios', 'Dugtrio', 'Aerodactyl', 'Heracross', 'Typhlosion', 'Wobbuffet', 'Deoxys-Attack'].map(item),
-    ['Leftovers', 'Light Ball', 'Thick Club', 'Soul Dew', 'Choice Band', 'Choice Band', 'Salac Berry', 'Petaya Berry', 'Lum Berry', 'Choice Band']);
+  assert.deepEqual(['Charmander', 'Charmeleon', 'Charizard', 'Dragonite', 'Pikachu', 'Raichu', 'Marowak', 'Latios', 'Gyarados', 'Gengar', 'Blissey', 'Deoxys-Attack'].map(item),
+    ['Charcoal', 'Charcoal', 'Charcoal', 'Dragon Fang', 'Light Ball', 'Magnet', 'Thick Club', 'Soul Dew', 'Choice Band', 'Petaya Berry', 'Leftovers', 'Twisted Spoon']);
+
+  // The boosted type is always among the day's attacks.
+  for (let seed = 1; seed <= 1500; seed++) {
+    for (const set of generateTeam(dex, seed * 7919, 2)) {
+      const boost = /^Holder's (\w+)-type attacks have 1\.1× power\.$/.exec(dex.items.get(set.item).shortDesc ?? '')?.[1];
+      if (boost) assert.ok(set.moves.some((m) => dex.moves.get(m).type === boost && dex.moves.get(m).category !== 'Status'), `${set.species} (${set.item}): ${set.moves.join(', ')}`);
+    }
+  }
 });
 
-test("the held-item table covers every Pokémon, with real items and few Choice Bands", async () => {
+test("the held-item table covers every Pokémon, with real items, few Choice Bands and Leftovers, families matching", async () => {
   const { HELD_ITEMS } = await import('../../web/battle/held-items.js');
   const dex = Dex.forGen(3);
   const pool = dex.species.all().filter((s) => s.exists && s.num >= 1 && s.num <= 386 && !s.forme);
   assert.equal(pool.length, 386);
   for (const s of pool) assert.ok(dex.items.get(HELD_ITEMS[s.id]).exists, `${s.name}: ${HELD_ITEMS[s.id]}`);
-  const bands = pool.filter((s) => HELD_ITEMS[s.id] === 'choiceband');
-  assert.ok(bands.length <= 20, `${bands.length} Choice Bands`);
-  assert.deepEqual(bands.filter((s) => s.evos?.length).map((s) => s.name), [], 'no Choice Band for unevolved Pokémon');
+  const count = (id) => pool.filter((s) => HELD_ITEMS[s.id] === id).length;
+  assert.ok(count('choiceband') <= 20, `${count('choiceband')} Choice Bands`);
+  assert.ok(count('leftovers') <= 40, `${count('leftovers')} Leftovers`);
+  // Evolution lines with the same typing hold the same item, unless an early
+  // form can't use its type's item (Cleffa, Marill, Feebas...: Leftovers or a
+  // berry). The data's Gen 4 evolutions, like Rhyperior, aren't in Daily Red.
+  const evos = (s) => (s.evos ?? []).map((e) => dex.species.get(e)).filter((e) => e.num <= 386);
+  const SIGNATURE = new Set(['lightball', 'thickclub', 'souldew', 'deepseatooth', 'stick', 'metalpowder']);
+  const typeItem = (id) => /^Holder's \w+-type attacks/.test(dex.items.get(id).shortDesc ?? '');
+  for (const s of pool) {
+    for (const e of evos(s)) {
+      if (e.types.join() !== s.types.join() || SIGNATURE.has(HELD_ITEMS[e.id]) || SIGNATURE.has(HELD_ITEMS[s.id])) continue;
+      if (typeItem(HELD_ITEMS[s.id])) assert.equal(HELD_ITEMS[s.id], HELD_ITEMS[e.id], `${s.name} and ${e.name}`);
+    }
+  }
+  assert.ok(count('choiceband') + count('leftovers') + count('petayaberry') < 60, 'mostly type items');
 });

@@ -72,14 +72,14 @@ web/index.html + app.js            today's page, the lead picker, stats (daily.j
   month (`currentStreaks` / `recordResult` in `web/daily.js`); the best win
   streak is kept for all time. In Discord the bot announces the Pokémon
   Master of the Month that morning.
-- **Held items** are fixed per Pokémon from No. 14, from a researched table
-  (`web/battle/held-items.js`): what Gen 3 players actually give each
-  Pokémon in Smogon's usage statistics, checked against Smogon's ADV sets.
-  Choice Band for 18 classic users (who then only get attacks), pinch and
-  Lum/Sitrus Berries, type-boost items, signature items (Light Ball, Thick
-  Club, Soul Dew...); Leftovers only for walls and Snorlax (98 of 386). Earlier days keep the random items they were played with
-  (`teamVersion` in `web/daily.js`). Each card on the team page explains
-  its item in plain words (`web/battle/items.js`).
+- **Held items** are fixed per Pokémon from No. 14 (`web/battle/held-items.js`):
+  its signature item if it has one (Light Ball, Thick Club, Soul Dew...),
+  else its own type's boost item (Charcoal for the Charmander line), else an
+  item for how it attacks (Choice Band, with only attacks; Petaya Berry),
+  else Leftovers or a berry. Evolution lines match. Earlier days keep the
+  random items they were played with (`teamVersion` in `web/daily.js`).
+  Each card on the team page explains its item in plain words
+  (`web/battle/items.js`).
 - **Shift, like FireRed:** when one of RED's Pokémon faints, he says which
   one comes out next and asks "Will you change POKéMON?". YES lets you switch
   for free before it comes out; NO keeps yours in.
