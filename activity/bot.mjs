@@ -20,6 +20,8 @@
 //     REMINDER_TIME (17:00 by default) on days they haven't played yet.
 //   - How to play: once per server. Today's card goes up at RECAP_TIME too,
 //     below the recap, so each day starts with something to tap.
+//   - News: a one-time announcement on the morning a feature starts (NEWS),
+//     between the recap and today's card.
 //   - /dailyred: your day, how to play and the buttons, privately.
 //   - Buttons on all of them: "Battle RED" opens the website for that server
 //     (or, without PUBLIC_URL, launches the Activity),
@@ -32,7 +34,9 @@
 // which Discord requires before a bot's first message).
 import { createPublicKey, verify } from 'node:crypto';
 import { EMPTY, addDays, currentStreaks, dayNumber, resultFor } from '../web/daily.js';
-import { economyOpen, ECONOMY_START_LABEL } from '../web/economy.js';
+import {
+  economyOpen, ECONOMY_START, ECONOMY_START_LABEL, PRIZE, ITEMS, WEEKLY_BAG, CARRY_LIMIT,
+} from '../web/economy.js';
 
 const API = 'https://discord.com/api/v10';
 const RED = 0xd63a3a;
@@ -788,6 +792,49 @@ export function createBot({
     };
   }
 
+  // --- News ------------------------------------------------------------------------------------
+  // Announced once per server at RECAP_TIME on the day a feature starts (or
+  // a later morning that week, if the bot was down then). Servers that add
+  // the bot later learn about it from the how-to instead.
+  const NEWS = [{ key: 'news:economy', from: ECONOMY_START, message: (guildId, date) => economyNews(guildId, date) }];
+
+  const money = (n) => `₽${n.toLocaleString('en-US')}`;
+  const andList = (items) => (items.length > 1 ? `${items.slice(0, -1).join(', ')} and ${items.at(-1)}` : items[0] ?? '');
+
+  // Prize money, the free bag and the PokéMart (web/economy.js), from its numbers.
+  function economyNews(guildId, date) {
+    const launchDay = date === ECONOMY_START;
+    const startsOnMonday = new Date(`${ECONOMY_START}T12:00:00Z`).getUTCDay() === 1;
+    const bag = andList(Object.entries(WEEKLY_BAG).map(([id, n]) => `${n} ${ITEMS[id].name}${n > 1 ? 's' : ''}`));
+    const lines = [
+      `${launchDay ? 'Starting today' : `Since ${ECONOMY_START_LABEL}`}, your daily battle pays out, and you can take items into it.`,
+      '',
+      '**💰 Prize money**',
+      `• Win: ${money(PRIZE.win)} + ${money(PRIZE.perLeft)} for each of your Pokémon left`,
+      `• Lose: ${money(PRIZE.loss)} + ${money(PRIZE.perKO)} for each of RED's Pokémon you knock out`,
+      '• Run away: nothing',
+      '',
+      '**🎒 A free bag every Monday**',
+      `${bag}.${launchDay && !startsOnMonday ? ' You get one today too, and it fills back up on Monday.' : ''}`,
+      '',
+      "**🏪 The PokéMart**, on today's page",
+      Object.values(ITEMS).map((item) => `${item.name} ${money(item.price)}`).join(' · '),
+      '',
+      `**In battle**, tap **BAG**: up to ${CARRY_LIMIT} items a battle, and each one uses your turn (RED still attacks). Money and bought items reset on the 1st, with the streaks.`,
+    ];
+    return {
+      embeds: [{
+        color: GOLD,
+        title: '🎒 New: prize money, the bag and the PokéMart',
+        description: lines.join('\n'),
+        thumbnail,
+        footer: { text: 'Practice runs get the free bag every time, and nothing is used up.' },
+      }],
+      components: buttons('Battle RED', guildId),
+      allowed_mentions: { parse: [] },
+    };
+  }
+
   // --- Reminders ---------------------------------------------------------------------------------
 
   const reminderNote = `${timeLabel(reminderTime)} ${zoneLabel(recapTimeZone)}`;
@@ -829,7 +876,8 @@ export function createBot({
 
   // Runs every minute. From RECAP_TIME: yesterday's recap in every server
   // where someone finished a battle; on the 1st, last month's Pokémon Master;
-  // on Mondays, the weekly leaderboard. From REMINDER_TIME: today's reminder.
+  // on Mondays, the weekly leaderboard; any news; today's card. From
+  // REMINDER_TIME: today's reminder.
   async function tick() {
     if (!posting) return;
     const { date: today, time, weekday } = zonedNow();
@@ -854,6 +902,13 @@ export function createBot({
         for (const room of store.roomsSince(addDays(today, -7))) {
           const guildId = room.slice(2);
           await once(`week:${today}`, guildId, 'weekly leaderboard', () => post(guildId, weeklyMessage(guildId, today)));
+        }
+      }
+      // Then news of anything that started today (NEWS).
+      for (const news of NEWS) {
+        if (today < news.from || today >= addDays(news.from, 7)) continue;
+        for (const guildId of guilds) {
+          await once(news.key, guildId, 'news', () => post(guildId, news.message(guildId, today)));
         }
       }
       // Then today's card, so every day starts with something to tap, below

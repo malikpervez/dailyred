@@ -246,6 +246,10 @@ The bot posts these in each server's **#general**:
   (the best win streak is kept). The Master wears a 👑 next to their name all
   the next month (card, recap, leaderboards) and joins the server's **Hall of
   Fame**.
+- **News**: once, on the morning a new feature starts, between the recap and
+  the live card. On Sunday, Nov 15: prize money, the free weekly bag and the
+  PokéMart, with the prices and how BAG works in battle. A server that missed
+  that morning (the bot was down) gets it on a later morning that week.
 - **The weekly leaderboard**: every Monday right after the recap, the same
   leaderboard as the button: the month's standings so far, win streaks, all
   time and the reigning Master.

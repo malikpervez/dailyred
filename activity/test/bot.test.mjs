@@ -369,7 +369,10 @@ test('Mondays at 6:00 the weekly leaderboard follows the recap, once', async () 
     store.saveResult({ playerId: id, date, won, monsLeft: won ? 2 : 0, redLeft: won ? 0 : 3, turns: 20 });
   }
   await bot.tick();
-  const [, recap, weekly, card] = discord.posts();
+  // (This server missed the Sunday launch news, so it gets it this morning.)
+  const [, recap, weekly, news, card] = discord.posts();
+  assert.equal(news.body.embeds[0].title, '🎒 New: prize money, the bag and the PokéMart');
+  assert.match(description(news), /^Since Sunday, Nov 15, your daily battle pays out/);
   assert.equal(card.body.embeds[0].title, 'Daily Red No. 16 · Mon, Nov 16');
   assert.equal(recap.body.embeds[0].title, "Yesterday's results · Daily Red No. 15");
   assert.equal(weekly.body.embeds[0].title, '📊 Weekly leaderboard · November 2026');
@@ -380,7 +383,52 @@ test('Mondays at 6:00 the weekly leaderboard follows the recap, once', async () 
     { name: '📈 All time', value: '<@1> **3W** 75% · <@2> **1W** 33%' },
   ]);
   await bot.tick();
-  assert.equal(discord.posts().length, 4, 'only once');
+  assert.equal(discord.posts().length, 5, 'only once');
+});
+
+test('launch morning: the news of prize money, the bag and the PokéMart goes out once, between the recap and the card', async () => {
+  const { store, bot, discord, player, setClock } = setup({ clock: new Date('2026-11-14T11:00:00Z') }); // Sat 6:00 AM EST
+  player('1', 'Ash', { wins: 1, lastPlayed: '2026-11-13', lastResult: 'won' });
+  store.saveResult({ playerId: '1', date: '2026-11-13', won: true, monsLeft: 2, redLeft: 0, turns: 20 });
+  await bot.tick();
+  assert.ok(!titles(discord).some((t) => t?.startsWith('🎒')), 'not before launch day');
+
+  player('1', 'Ash', { wins: 2, lastPlayed: '2026-11-14', lastResult: 'won' });
+  store.saveResult({ playerId: '1', date: '2026-11-14', won: true, monsLeft: 3, redLeft: 0, turns: 18 });
+  setClock(new Date('2026-11-15T11:00:00Z')); // Sun 6:00 AM EST
+  await bot.tick();
+  assert.deepEqual(titles(discord).slice(-3), [
+    "Yesterday's results · Daily Red No. 14",
+    '🎒 New: prize money, the bag and the PokéMart',
+    'Daily Red No. 15 · Sun, Nov 15',
+  ]);
+  const news = discord.posts().at(-2);
+  assert.equal(news.path, '/channels/c-general/messages');
+  assert.deepEqual(news.body.allowed_mentions, { parse: [] }, 'nobody gets pinged');
+  assert.equal(description(news), [
+    'Starting today, your daily battle pays out, and you can take items into it.',
+    '',
+    '**💰 Prize money**',
+    '• Win: ₽1,000 + ₽70 for each of your Pokémon left',
+    "• Lose: ₽270 + ₽100 for each of RED's Pokémon you knock out",
+    '• Run away: nothing',
+    '',
+    '**🎒 A free bag every Monday**',
+    '3 Full Restores, 2 Revives and 1 Max Revive. You get one today too, and it fills back up on Monday.',
+    '',
+    "**🏪 The PokéMart**, on today's page",
+    'Full Restore ₽3,000 · Max Potion ₽2,500 · Hyper Potion ₽1,200 · Full Heal ₽600 · Revive ₽1,500 · Max Revive ₽4,000 · X Attack ₽500 · X Defend ₽550 · X Speed ₽350 · X Special ₽350',
+    '',
+    '**In battle**, tap **BAG**: up to 4 items a battle, and each one uses your turn (RED still attacks). Money and bought items reset on the 1st, with the streaks.',
+  ].join('\n'));
+
+  const count = discord.posts().length;
+  setClock(new Date('2026-11-16T11:00:00Z')); // Monday: recap, weekly board and card, but no second announcement
+  await bot.tick();
+  assert.equal(titles(discord).slice(count).filter((t) => t?.startsWith('🎒')).length, 0);
+  const late = setup({ clock: new Date('2026-11-23T11:00:00Z') }); // a week on, a server that never got it: no longer news
+  await late.bot.tick();
+  assert.ok(!titles(late.discord).some((t) => t?.startsWith('🎒')));
 });
 
 test('🔔 Reminders: players opt in with the button and get one mention a day if they have not played', async () => {
