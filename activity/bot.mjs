@@ -37,6 +37,7 @@ import { EMPTY, addDays, currentStreaks, dayNumber, resultFor } from '../web/dai
 import {
   economyOpen, ECONOMY_START, ECONOMY_START_LABEL, PRIZE, ITEMS, WEEKLY_BAG, CARRY_LIMIT,
 } from '../web/economy.js';
+import { ROAD, ROAD_START, TRAINERS, trainerOn, roadOpen } from '../web/road.js';
 
 const API = 'https://discord.com/api/v10';
 const RED = 0xd63a3a;
@@ -97,17 +98,18 @@ export function compareMonths(a, b) {
 // `crowned`: the set of player ids who are the reigning Pokémon Master.
 const who = (id, crowned) => `<@${id}>${crowned?.has(id) ? ' 👑' : ''}`;
 
-function resultLine(player, result, streaks, crowned) {
+// `foe`: the day's trainer's name (RED, or the week's on the Road to RED).
+function resultLine(player, result, streaks, crowned, foe = 'RED') {
   // Items from the bag (from Nov 15) count with the turns.
   const turns = (result.turns ? ` · ${plural(result.turns, 'turn')}` : '') + (result.items ? ` · 🎒 ${plural(result.items, 'item')}` : '');
   let line;
   if (result.won) {
-    line = `${who(player.id, crowned)} **Beat RED**${result.monsLeft != null ? ` with ${result.monsLeft} left` : ''}${turns}`;
+    line = `${who(player.id, crowned)} **Beat ${foe}**${result.monsLeft != null ? ` with ${result.monsLeft} left` : ''}${turns}`;
     if (streaks.winStreak > 1) line += ` · 🔥 ${streaks.winStreak}-day win streak`;
   } else if (result.gaveUp) {
-    line = `${who(player.id, crowned)} 🏃 Ran from RED${result.turns ? ` on turn ${result.turns}` : ''}`;
+    line = `${who(player.id, crowned)} 🏃 Ran from ${foe}${result.turns ? ` on turn ${result.turns}` : ''}`;
   } else {
-    line = `${who(player.id, crowned)} Lost to RED${result.redLeft != null ? `, he had ${result.redLeft} left` : ''}${turns}`;
+    line = `${who(player.id, crowned)} Lost to ${foe}${result.redLeft != null ? `, he had ${result.redLeft} left` : ''}${turns}`;
     if (streaks.dayStreak > 1) line += ` · 📅 ${streaks.dayStreak} days in a row`;
   }
   const grid = squares(result.monsLeft);
@@ -238,16 +240,24 @@ export function createBot({
   };
 
   // How to play, for the one-time welcome message and /dailyred.
-  const howToLines = () => [
-    "• One battle a day against RED's team. Everyone in the server gets the same six level 100 Pokémon.",
-    '• Tap **▶️ Battle RED**, sign in with Discord, pick your lead and battle. Your result shows up on the day\'s card here.',
-    '• The most wins in a month makes you **Pokémon Master of the Month** 👑. Streaks start over on the 1st.',
-    economyOpen(zonedNow().date)
-      ? '• 🎒 Every battle pays prize money to spend in the PokéMart, and a free bag (3 Full Restores, 2 Revives, a Max Revive) refills every Monday. Up to 4 items a battle; each one takes your turn.'
-      : `• 🎒 From ${ECONOMY_START_LABEL}: prize money for every battle, a PokéMart, and a free bag of items every Monday.`,
-    `• **🔔 Reminders** mentions you at ${timeLabel(reminderTime)} ${zoneLabel(recapTimeZone)} on days you haven't played. **Leaderboard** shows the standings.`,
-    '• Type `/dailyred` any time for these buttons.',
-  ];
+  const roadNames = ROAD.map((id) => TRAINERS[id].name).join(', ');
+  const howToLines = () => {
+    const today = zonedNow().date;
+    const t = trainerOn(today);
+    return [
+      roadOpen(today)
+        ? `• One battle a day. This week it's **${t.name}**, ${t.title}: a new trainer every Monday on the Road to RED (${roadNames}, then round again). Everyone in the server gets the same six level 100 Pokémon.`
+        : "• One battle a day against RED's team. Everyone in the server gets the same six level 100 Pokémon.",
+      `• Tap **▶️ Battle ${t.name}**, sign in with Discord, pick your lead and battle. Your result shows up on the day's card here.`,
+      '• The most wins in a month makes you **Pokémon Master of the Month** 👑, whoever they were against. Streaks start over on the 1st.',
+      economyOpen(today)
+        ? '• 🎒 Every battle pays prize money to spend in the PokéMart, and a free bag (3 Full Restores, 2 Revives, a Max Revive) refills every Monday. Up to 4 items a battle; each one takes your turn.'
+        : `• 🎒 From ${ECONOMY_START_LABEL}: prize money for every battle, a PokéMart, and a free bag of items every Monday.`,
+      !roadOpen(today) && `• 🏔️ From Monday, Nov 23: the Road to RED, a new trainer every week (${roadNames}), each one harder, building up to RED.`,
+      `• **🔔 Reminders** mentions you at ${timeLabel(reminderTime)} ${zoneLabel(recapTimeZone)} on days you haven't played. **Leaderboard** shows the standings.`,
+      '• Type `/dailyred` any time for these buttons.',
+    ].filter(Boolean);
+  };
 
   function howToMessage(guildId) {
     return {
@@ -255,10 +265,10 @@ export function createBot({
         color: RED,
         title: 'How to play Daily Red',
         description: howToLines().join('\n'),
-        thumbnail,
+        thumbnail: thumbnailOn(zonedNow().date),
         footer: { text: `A new team every day · today's card goes up at ${timeLabel(recapTime)} ${zoneLabel(recapTimeZone)}` },
       }],
-      components: buttons('Battle RED', guildId),
+      components: buttons(battleLabel(zonedNow().date), guildId),
       allowed_mentions: { parse: [] },
     };
   }
@@ -270,19 +280,20 @@ export function createBot({
     const { results, players } = dayResults(`g:${guildId}`, date);
     const mine = userId && results.get(userId);
     const battling = players.some((p) => p.id === userId && p.stats.pending === date);
-    const status = mine ? (mine.won ? `You beat RED today${mine.monsLeft != null ? ` with ${mine.monsLeft} left` : ''}! 🔥`
-      : mine.gaveUp ? 'You ran from RED today. New team at midnight!' : 'RED won today. New team at midnight!')
-      : battling ? "You're battling RED right now." : "You haven't battled RED today yet.";
+    const { name } = trainerOn(date);
+    const status = mine ? (mine.won ? `You beat ${name} today${mine.monsLeft != null ? ` with ${mine.monsLeft} left` : ''}! 🔥`
+      : mine.gaveUp ? `You ran from ${name} today. New team at midnight!` : `${name} won today. New team at midnight!`)
+      : battling ? `You're battling ${name} right now.` : `You haven't battled ${name} today yet.`;
     const wins = [...results.values()].filter((r) => r.won).length;
     return {
       flags: 64,
       embeds: [{
         color: RED,
         title: `Daily Red No. ${dayNumber(date)} · ${dateLabel(date)}`,
-        description: [`**${status}**`, results.size ? `${wins} of ${results.size} in this server beat RED today.` : '', teamLine(date), '', ...howToLines()]
+        description: [`**${status}**`, results.size ? `${wins} of ${results.size} in this server beat ${name} today.` : '', teamLine(date), '', ...howToLines()]
           .filter((line, i) => line || i === 3).join('\n'),
       }],
-      components: buttons('Battle RED', guildId),
+      components: buttons(battleLabel(date), guildId),
       allowed_mentions: { parse: [] },
     };
   }
@@ -310,7 +321,14 @@ export function createBot({
     store.setSetting('command:dailyred', version);
     log.log('Daily Red bot added the /dailyred and /dailyred-preview commands.');
   }
-  const thumbnail = site ? { url: `${site}/sprites/front/25.png` } : undefined;
+  // The picture beside the bot's posts: the day's trainer on the Road to RED,
+  // RED's Pikachu on RED's days.
+  const thumbnailOn = (date) => {
+    if (!site) return undefined;
+    const { id } = trainerOn(date);
+    return { url: id === 'red' ? `${site}/sprites/front/25.png` : `${site}/sprites/trainers/${id}.png` };
+  };
+  const battleLabel = (date) => `Battle ${trainerOn(date).name}`;
   // The day's lineup picture, which the server draws (card-image.mjs). Bump v=
   // if the drawing changes, so Discord fetches it again instead of its copy.
   const pictureUrl = (date) => (site && cardPictures ? `${site}/card/${date}.png?v=1` : null);
@@ -367,31 +385,33 @@ export function createBot({
     const finished = players.filter((p) => results.has(p.id))
       .sort((a, b) => compareResults(results.get(a.id), results.get(b.id)));
     const battling = players.filter((p) => !results.has(p.id) && p.stats.pending === date);
+    const foe = trainerOn(date);
     const lines = [
-      ...finished.map((p) => resultLine(p, results.get(p.id), currentStreaks(p.stats, date), crowned)),
-      ...battling.map((p) => `${who(p.id, crowned)} ⚔️ Battling RED…`),
+      ...finished.map((p) => resultLine(p, results.get(p.id), currentStreaks(p.stats, date), crowned, foe.name)),
+      ...battling.map((p) => `${who(p.id, crowned)} ⚔️ Battling ${foe.name}…`),
     ];
     const wins = finished.filter((p) => results.get(p.id).won).length;
     const summary = [
-      finished.length && `${wins} of ${finished.length} beat RED`,
+      finished.length && `${wins} of ${finished.length} beat ${foe.name}`,
       battling.length && `${battling.length} battling`,
     ].filter(Boolean).join(' · ');
     // The month's top three, so every update is a leaderboard update too.
     const month = date.slice(0, 7);
     const race = monthStandings(room, month).filter((x) => x.wins > 0).slice(0, 3);
     const raceLine = race.length ? `🏆 ${monthName(month)} race: ${race.map((x) => `${who(x.id, crowned)} ${x.wins}`).join(' · ')}` : '';
-    const description = [teamLine(date), cap(lines).join('\n') || 'Nobody has battled RED yet today.'].filter(Boolean).join('\n\n');
+    const road = roadOpen(date) ? `🏔️ Week ${foe.week} of ${ROAD.length} on the Road to RED: **${foe.name}**, ${foe.title}` : '';
+    const description = [road, teamLine(date), cap(lines).join('\n') || `Nobody has battled ${foe.name} yet today.`].filter(Boolean).join('\n\n');
     const card = {
       color: RED,
       title: `Daily Red No. ${dayNumber(date)} · ${dateLabel(date)}`,
       description: raceLine ? `${description}\n\n${raceLine}` : description,
-      thumbnail: banner && pictureUrl(date) ? undefined : thumbnail, // the picture has the team already
+      thumbnail: banner && pictureUrl(date) ? undefined : thumbnailOn(date), // the picture has the team already
       footer: { text: `${summary ? `${summary} · ` : ''}New team at midnight, your time` },
     };
     return {
-      // The banner (today's six facing RED) as its own embed, so it sits on top.
+      // The banner (today's six facing the day's trainer) as its own embed, so it sits on top.
       embeds: banner && pictureUrl(date) ? [{ color: RED, image: { url: pictureUrl(date) } }, card] : [card],
-      components: buttons('Battle RED', guildId),
+      components: buttons(battleLabel(date), guildId),
       allowed_mentions: { parse: [] },
     };
   }
@@ -537,9 +557,9 @@ export function createBot({
     const wins = finished.filter((p) => results.get(p.id).won).length;
     const streak = serverStreak(room, date);
     const lines = [
-      `**${wins} of ${finished.length} beat RED**${streak > 1 ? ` · this server has played ${streak} days in a row` : ''}`,
+      `**${wins} of ${finished.length} beat ${trainerOn(date).name}**${streak > 1 ? ` · this server has played ${streak} days in a row` : ''}`,
       '',
-      ...cap(finished.map((p, i) => `${rank(i)} ${resultLine(p, results.get(p.id), currentStreaks(p.stats, date), crowned)}`)),
+      ...cap(finished.map((p, i) => `${rank(i)} ${resultLine(p, results.get(p.id), currentStreaks(p.stats, date), crowned, trainerOn(date).name)}`)),
       ...left.map((p) => `${who(p.id, crowned)} Left the battle (counts as a loss)`),
     ];
     const race = monthStandings(room, date.slice(0, 7)).filter((x) => x.wins > 0).slice(0, 3);
@@ -554,7 +574,7 @@ export function createBot({
         color: RED,
         title: `Yesterday's results · Daily Red No. ${dayNumber(date)}`,
         description: lines.join('\n'),
-        thumbnail,
+        thumbnail: thumbnailOn(date),
         footer: { text: `${dateLabel(date)} · Today's team is No. ${dayNumber(today)}` },
       }],
       components: buttons(`Play No. ${dayNumber(today)}`, guildId),
@@ -582,7 +602,7 @@ export function createBot({
     } else if (masters.length > 1) {
       lines.push(`It's a tie! ${masters.map((x) => `<@${x.id}>`).join(' and ')} share Pokémon Master of ${monthName(month)} with ${record(best)} each.`);
     } else {
-      lines.push(`Nobody beat RED in ${monthName(month)}. He keeps the title for now.`);
+      lines.push(`Nobody won a battle in ${monthName(month)}, so nobody takes the title this time.`);
     }
     const others = standings.filter((x) => !masters.includes(x)).slice(0, 4);
     if (others.length) {
@@ -599,10 +619,10 @@ export function createBot({
         color: GOLD,
         title: `🏆 Pokémon Master of ${monthLabel(month)}`,
         description: lines.join('\n'),
-        thumbnail,
-        footer: { text: `${plural(standings.length, 'trainer')} battled RED ${plural(battles, 'time')} in ${monthName(month)}` },
+        thumbnail: thumbnailOn(zonedNow().date),
+        footer: { text: `${plural(standings.length, 'trainer')} played ${plural(battles, 'battle')} in ${monthName(month)}` },
       }],
-      components: buttons('Battle RED', guildId),
+      components: buttons(battleLabel(zonedNow().date), guildId),
       allowed_mentions: { parse: [] },
     };
   }
@@ -665,7 +685,7 @@ export function createBot({
   // Where `id` is in the month's race, e.g. "<@3> is 3rd, 2 wins behind <@1>."
   function standingLine(race, id) {
     const i = race.findIndex((p) => p.id === id);
-    if (i < 0) return `<@${id}> hasn't battled RED this month yet.`;
+    if (i < 0) return `<@${id}> hasn't battled this month yet.`;
     const me = race[i];
     if (race.length === 1) return `<@${id}> is the only one in the race so far.`;
     if (i === 0) {
@@ -693,7 +713,7 @@ export function createBot({
     const today = (id) => {
       const r = results.get(id);
       if (!r) return battling.has(id) ? '⚔️ battling' : '⏳ not yet';
-      return r.won ? '✅ beat RED today' : r.gaveUp ? '🏃 ran today' : '❌ lost today';
+      return r.won ? `✅ beat ${trainerOn(date).name} today` : r.gaveUp ? '🏃 ran today' : '❌ lost today';
     };
 
     const [y, m] = month.split('-').map(Number);
@@ -708,7 +728,7 @@ export function createBot({
       name: '🏆 Master race',
       value: race.length
         ? fieldValue(race.map((p, i) => `${rank(i)} ${who(p.id, crowned)} · **${p.monthWins}W** ${p.monthLosses}L${showToday ? ` · ${today(p.id)}` : ''}`))
-        : `Nobody has battled RED yet in ${monthName(month)}.`,
+        : `Nobody has battled yet in ${monthName(month)}.`,
     }];
     const streaks = rows.filter((p) => p.winStreak > 0).sort((a, b) => b.winStreak - a.winStreak || b.bestWinStreak - a.bestWinStreak).slice(0, 5);
     if (streaks.length) {
@@ -725,9 +745,9 @@ export function createBot({
     return {
       color: RED,
       title,
-      description: rows.length ? intro.join('\n') : 'Nobody here has battled RED yet.',
+      description: rows.length ? intro.join('\n') : 'Nobody here has battled yet.',
       fields: rows.length ? fields : [],
-      thumbnail,
+      thumbnail: thumbnailOn(date),
       footer: { text: `Daily Red No. ${dayNumber(date)} · press Leaderboard any time for the latest` },
     };
   }
@@ -737,7 +757,7 @@ export function createBot({
     const { date } = zonedNow();
     return {
       embeds: [boardEmbed(guildId, date, { title: `Daily Red leaderboard · ${monthLabel(date.slice(0, 7))}`, viewer })],
-      components: buttons('Battle RED', guildId),
+      components: buttons(battleLabel(date), guildId),
       allowed_mentions: { parse: [] },
     };
   }
@@ -787,7 +807,7 @@ export function createBot({
   function weeklyMessage(guildId, date) {
     return {
       embeds: [boardEmbed(guildId, date, { title: `📊 Weekly leaderboard · ${monthLabel(date.slice(0, 7))}`, showToday: false })],
-      components: buttons('Battle RED', guildId),
+      components: buttons(battleLabel(date), guildId),
       allowed_mentions: { parse: [] },
     };
   }
@@ -796,7 +816,10 @@ export function createBot({
   // Announced once per server at RECAP_TIME on the day a feature starts (or
   // a later morning that week, if the bot was down then). Servers that add
   // the bot later learn about it from the how-to instead.
-  const NEWS = [{ key: 'news:economy', from: ECONOMY_START, message: (guildId, date) => economyNews(guildId, date) }];
+  const NEWS = [
+    { key: 'news:economy', from: ECONOMY_START, message: (guildId, date) => economyNews(guildId, date) },
+    { key: 'news:road', from: ROAD_START, message: (guildId, date) => roadNews(guildId, date) },
+  ];
 
   const money = (n) => `₽${n.toLocaleString('en-US')}`;
   const andList = (items) => (items.length > 1 ? `${items.slice(0, -1).join(', ')} and ${items.at(-1)}` : items[0] ?? '');
@@ -827,10 +850,43 @@ export function createBot({
         color: GOLD,
         title: '🎒 New: prize money, the bag and the PokéMart',
         description: lines.join('\n'),
-        thumbnail,
+        thumbnail: thumbnailOn(date),
         footer: { text: 'Practice runs get the free bag every time, and nothing is used up.' },
       }],
-      components: buttons('Battle RED', guildId),
+      components: buttons(battleLabel(date), guildId),
+      allowed_mentions: { parse: [] },
+    };
+  }
+
+  // The Road to RED (web/road.js): who's coming, week by week.
+  function roadNews(guildId, date) {
+    const first = date === ROAD_START;
+    const short = (d) => new Date(`${d}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+    const now = trainerOn(date);
+    const weeks = [];
+    let t = trainerOn(now.from);
+    for (let i = 0; i < ROAD.length; i++) {
+      weeks.push(`${i === 0 ? '▶️' : '•'} **${t.name}**, ${t.title} · from ${short(t.from)}${t.id === 'red' ? ' 🏔️' : ''}`);
+      t = trainerOn(t.next.from);
+    }
+    const lines = [
+      `${first ? 'Starting today' : `Since ${short(ROAD_START)}`}, every Monday brings a new trainer for the week, all at level 100, each one a little harder, building up to RED himself. Then it starts over.`,
+      '',
+      ...weeks,
+      '',
+      `This week: **${now.name}**. ${now.style}`,
+      '',
+      'Everyone still gets the same six each day, and every win counts the same for Pokémon Master of the Month. Your streaks carry on.',
+    ];
+    return {
+      embeds: [{
+        color: GOLD,
+        title: '🏔️ New: the Road to RED',
+        description: lines.join('\n'),
+        thumbnail: thumbnailOn(date),
+        footer: { text: `${now.name} is on today's card. A new trainer every Monday.` },
+      }],
+      components: buttons(battleLabel(date), guildId),
       allowed_mentions: { parse: [] },
     };
   }
@@ -851,8 +907,8 @@ export function createBot({
 
   function reminderMessage(guildId, date, ids) {
     return {
-      content: `⏰ Today's Daily Red (No. ${dayNumber(date)}) is waiting for ${ids.map((id) => `<@${id}>`).join(' ')}. Beat RED before midnight!`,
-      components: buttons('Battle RED', guildId),
+      content: `⏰ Today's Daily Red (No. ${dayNumber(date)}) is waiting for ${ids.map((id) => `<@${id}>`).join(' ')}. Beat ${trainerOn(date).name} before midnight!`,
+      components: buttons(battleLabel(date), guildId),
       allowed_mentions: { users: ids }, // only the people who asked
     };
   }
@@ -953,7 +1009,7 @@ export function createBot({
   }
 
   const reminderReply = (on) => (on
-    ? `🔔 Reminders on: you'll be mentioned in #${channelName} at ${reminderNote} on days you haven't battled RED yet. Press Reminders again to stop.`
+    ? `🔔 Reminders on: you'll be mentioned in #${channelName} at ${reminderNote} on days you haven't played yet. Press Reminders again to stop.`
     : '🔕 Reminders off. Press Reminders again any time to turn them back on.');
 
   // The response to a (verified) interaction.
@@ -968,7 +1024,7 @@ export function createBot({
     if (body.type === 3 && id === PLAY_BUTTON) {
       // Older messages' Activity button: the website now, if there is one.
       if (site && body.guild_id) {
-        return { type: 4, data: { flags: 64, content: 'Daily Red plays in your browser now:', components: [{ type: 1, components: [playButton('Battle RED', body.guild_id)] }] } };
+        return { type: 4, data: { flags: 64, content: 'Daily Red plays in your browser now:', components: [{ type: 1, components: [playButton(battleLabel(zonedNow().date), body.guild_id)] }] } };
       }
       return { type: 12 }; // LAUNCH_ACTIVITY
     }

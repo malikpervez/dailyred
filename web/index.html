@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Daily Red</title>
-  <meta name="description" content="One Pokémon battle a day: today's six level 100 Pokémon against RED, with Gen 3 rules.">
+  <meta name="description" content="One Pokémon battle a day: today's six level 100 Pokémon against RED and the champions on the road to him, with Gen 3 rules.">
   <meta name="color-scheme" content="light dark">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preload" href="vendor/pixelify-sans.woff2" as="font" type="font/woff2" crossorigin>
@@ -34,13 +34,23 @@
     <!-- Today's page: the lead, the battle button, your stats and both teams. -->
     <div class="home" id="home">
       <section class="hero">
-        <h1 class="hero-title">Beat <em>RED</em> with today's six.</h1>
-        <p class="lede">One Pokémon battle a day. Everyone gets the same six level 100 Pokémon, and one official battle against RED. Battles run on Pokémon Showdown's simulator with Gen 3 rules.</p>
+        <h1 class="hero-title">Beat <em id="hero-foe">RED</em> with today's six.</h1>
+        <p class="lede">One Pokémon battle a day. Everyone gets the same six level 100 Pokémon and one official battle. Battles run on Pokémon Showdown's simulator with Gen 3 rules.</p>
+
+        <!-- The Road to RED (road.js): this week's trainer and who's next. -->
+        <div class="road" id="road">
+          <img class="road-pic" id="road-pic" width="64" height="64" alt="">
+          <div class="road-text">
+            <p class="road-title" id="road-title"></p>
+            <p class="road-note" id="road-note"></p>
+            <ol class="road-steps" id="road-steps" aria-label="The Road to RED"></ol>
+          </div>
+        </div>
 
         <div class="leads">
           <div class="lead">
             <img class="lead-sprite" id="red-lead-sprite" width="64" height="64" alt="">
-            <p><span class="lead-label">RED leads with</span><strong id="red-lead-name"></strong></p>
+            <p><span class="lead-label" id="red-lead-label">RED leads with</span><strong id="red-lead-name"></strong></p>
           </div>
           <div class="lead">
             <img class="lead-sprite" id="your-lead-sprite" width="64" height="64" alt="">
@@ -122,7 +132,7 @@
         <h2 class="section-title" id="red-heading">RED's team</h2>
         <ol class="red-list" id="red-list"></ol>
         <details class="red-details">
-          <summary>Show RED's moves and items</summary>
+          <summary id="red-summary">Show RED's moves and items</summary>
           <ol class="team-list team-list-red" id="red-details"></ol>
         </details>
       </section>
@@ -131,10 +141,10 @@
         <h2 class="section-title" id="how-heading">How to play</h2>
         <ol class="steps">
           <li>Look over today's six and pick your lead.</li>
-          <li>Battle RED: each turn, pick a move, switch Pokémon, or use an item from your bag. Win by knocking out all six of his.</li>
+          <li>Battle the day's trainer: each turn, pick a move, switch Pokémon, or use an item from your bag. Win by knocking out all six of theirs.</li>
           <li>One official battle a day. Practice runs are unlimited and aren't recorded.</li>
         </ol>
-        <p class="section-note">Leaving an official battle before it ends counts as a loss. A new team arrives at midnight, your time. Streaks, money and bought items start over on the 1st of each month.</p>
+        <p class="section-note">From Monday, Nov 23, a new trainer every week on the Road to RED: Blue, Steven, Giovanni, Lance, Wallace, then RED, then round again. Leaving an official battle before it ends counts as a loss. A new team arrives at midnight, your time. Streaks, money and bought items start over on the 1st of each month.</p>
       </section>
     </div>
 

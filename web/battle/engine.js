@@ -5,12 +5,12 @@ const WORKER_URL = new URL('../vendor/battle-worker.js', import.meta.url);
 
 let worker = null;
 let handlers = {};
-const teams = new Map(); // "seed:version" -> Promise of { team, red }
+const teams = new Map(); // "seed:version:trainer" -> Promise of { team, foe }
 
 function onMessage({ data }) {
   switch (data.type) {
     case 'team':
-      teams.get(`${data.seed}:${data.version}`)?.resolve(data);
+      teams.get(`${data.seed}:${data.version}:${data.trainer}`)?.resolve(data);
       break;
     case 'events':
       handlers.onEvents?.(data.events);
@@ -45,25 +45,26 @@ function getWorker() {
   return worker;
 }
 
-// Today's team and RED's, described for the page: species, types, item,
-// ability, nature, stats and moves (see describe() in worker.js). `version`:
-// the day's team rules (teamVersion in daily.js).
-export function loadTeams(seed, version) {
-  const key = `${seed}:${version}`;
+// Today's team and the trainer's (`foe`), described for the page: species,
+// types, item, ability, nature, stats and moves (see describe() in
+// worker.js). `version`: the day's team rules (teamVersion in daily.js);
+// `trainer`: the day's trainer (trainerOn in road.js).
+export function loadTeams(seed, version, trainer) {
+  const key = `${seed}:${version}:${trainer}`;
   if (!teams.has(key)) {
     let resolve, reject;
     const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
     teams.set(key, { promise, resolve, reject });
-    getWorker().postMessage({ type: 'team', seed, version });
+    getWorker().postMessage({ type: 'team', seed, version, trainer });
   }
   return teams.get(key).promise;
 }
 
 // Starts a battle with the seed's team in `order` (indexes into the team, the
-// lead first). `on` gets onEvents, onRequest, onEnd(won, tie) and onError(err).
-export function startBattle({ seed, version, order, name }, on) {
+// lead first) against `trainer`. `on` gets onEvents, onRequest, onEnd(won, tie) and onError(err).
+export function startBattle({ seed, version, order, name, trainer }, on) {
   handlers = on;
-  getWorker().postMessage({ type: 'start', seed, version, order, name });
+  getWorker().postMessage({ type: 'start', seed, version, order, name, trainer });
 }
 
 export const choose = (choice) => worker?.postMessage({ type: 'choose', choice });

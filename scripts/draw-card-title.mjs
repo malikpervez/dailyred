@@ -1,14 +1,15 @@
-// Draws activity/card-title.png: the "DAILY RED / TODAY'S SIX vs RED"
-// lettering on today's card picture (activity/card-image.mjs), in the site's
-// pixel font with a dark outline, at the picture's native size (400x200, the
-// rest transparent). The server can't draw text, so this is made once and
-// kept in the repository; run it again only to change the lettering.
+// Draws activity/card-titles/<trainer>.png: the "DAILY RED / TODAY'S SIX vs
+// BLUE" lettering on today's card picture (activity/card-image.mjs), one for
+// each trainer on the Road to RED (web/road.js), in the site's pixel font with
+// a dark outline, at the picture's native size (400x200, the rest
+// transparent). The server can't draw text, so these are made once and kept
+// in the repository; run it again to change the lettering or add a trainer.
 //
 //   cd tests && npm install && node ../scripts/draw-card-title.mjs
 //
 // Needs web/vendor/pixelify-sans.woff2 (scripts/fetch-vendor.sh) and Chromium.
 import { createRequire } from 'node:module';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -17,10 +18,11 @@ const { chromium } = createRequire(join(ROOT, 'tests/package.json'))('playwright
 const CHROME = [process.env.CHROME_PATH, '/opt/pw-browsers/chromium', '/usr/bin/chromium', '/usr/bin/google-chrome']
   .filter(Boolean).find((p) => existsSync(p));
 const font = `data:font/woff2;base64,${readFileSync(join(ROOT, 'web/vendor/pixelify-sans.woff2')).toString('base64')}`;
+const { TRAINERS } = await import(join(ROOT, 'web/road.js'));
 
 const browser = await chromium.launch({ executablePath: CHROME });
 const page = await browser.newPage();
-const png = await page.evaluate(async (font) => {
+const draw = (foe) => page.evaluate(async ({ font, foe }) => {
   const face = new FontFace('Pixelify', `url(${font})`, { weight: '400 700' });
   await face.load();
   document.fonts.add(face);
@@ -47,9 +49,13 @@ const png = await page.evaluate(async (font) => {
   };
   text('DAILY', 12, 10, 28, '#f6f7fb');
   text('RED', 98, 10, 28, '#d63a3a');
-  text("TODAY'S SIX vs RED", 13, 42, 11, '#f6f7fb');
+  text(`TODAY'S SIX vs ${foe}`, 13, 42, 11, '#f6f7fb');
   return out.toDataURL('image/png');
-}, font);
+}, { font, foe });
+mkdirSync(join(ROOT, 'activity/card-titles'), { recursive: true });
+for (const [id, { name }] of Object.entries(TRAINERS)) {
+  const png = await draw(name.toUpperCase());
+  writeFileSync(join(ROOT, `activity/card-titles/${id}.png`), Buffer.from(png.split(',')[1], 'base64'));
+}
 await browser.close();
-writeFileSync(join(ROOT, 'activity/card-title.png'), Buffer.from(png.split(',')[1], 'base64'));
-console.log('Wrote activity/card-title.png');
+console.log(`Wrote ${Object.keys(TRAINERS).length} letterings to activity/card-titles/`);

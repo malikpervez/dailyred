@@ -69,11 +69,12 @@ function fitText(ctx, text, weight, size, max) {
 }
 
 // result: { title: 'Daily Red No. 12', date: 'Thu, Nov 12', outcome: 'won' | 'lost' | 'ran',
-//   headline, detail, team: [{ num, shiny, fainted }], red: [{ num, fainted }], footer }
+//   headline, detail, team: [{ num, shiny, fainted }], foe: [{ num, shiny, fainted }],
+//   foeName: the day's trainer ('RED', 'Blue'...), footer }
 // Resolves to a <canvas>.
 export async function drawShareImage(result) {
   await document.fonts?.load(`700 64px ${FONT}`).catch(() => {});
-  const images = await Promise.all([...result.team, ...result.red].map((m) => loadImage(spriteUrl(m.num, { shiny: m.shiny }))));
+  const images = await Promise.all([...result.team, ...result.foe].map((m) => loadImage(spriteUrl(m.num, { shiny: m.shiny }))));
 
   const canvas = document.createElement('canvas');
   canvas.width = WIDTH;
@@ -110,14 +111,14 @@ export async function drawShareImage(result) {
   // The two teams.
   const rows = [
     { label: 'YOU', mons: result.team, images: images.slice(0, result.team.length), y: 268 },
-    { label: 'RED', mons: result.red, images: images.slice(result.team.length), y: 462 },
+    { label: result.foeName.toUpperCase(), mons: result.foe, images: images.slice(result.team.length), y: 462, foe: true },
   ];
   const slot = 160;
   const left = 196;
   for (const row of rows) {
     ctx.textAlign = 'left';
-    ctx.fillStyle = row.label === 'RED' ? COLORS.band : COLORS.text;
-    ctx.font = `700 40px ${FONT}`;
+    ctx.fillStyle = row.foe ? COLORS.band : COLORS.text;
+    fitText(ctx, row.label, 700, 40, left - 64); // GIOVANNI is wider than RED
     ctx.fillText(row.label, 48, row.y + 80);
     ctx.fillStyle = COLORS.muted;
     ctx.font = `500 22px ${FONT}`;
@@ -151,7 +152,7 @@ export async function drawShareImage(result) {
   ctx.textAlign = 'left';
   ctx.fillText(result.footer ?? '', 48, 690);
   ctx.textAlign = 'right';
-  ctx.fillText('Can you beat RED?', WIDTH - 48, 690);
+  ctx.fillText(`Can you beat ${result.foeName}?`, WIDTH - 48, 690);
   return canvas;
 }
 

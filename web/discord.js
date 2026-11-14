@@ -166,23 +166,24 @@ async function session({ call, room, ...rest }) {
 
 // --- "Today in this server" ---------------------------------------------------
 
-const TODAY_LABEL = { won: 'Beat RED', lost: 'Lost to RED', battling: 'Battling RED' };
+// `foe`: the day's trainer ('RED', or one of the Road to RED's).
+const todayLabel = (foe) => ({ won: `Beat ${foe}`, lost: `Lost to ${foe}`, battling: `Battling ${foe}` });
 const squares = (left) => (left == null ? '' : '🟥'.repeat(left) + '⬛'.repeat(Math.max(0, 6 - left)));
 
 // The board's three tabs: who played today, streaks, and all-time records.
 const TABS = {
   today: {
     sort: null, // the server's order: today's results first
-    detail(p) {
+    detail(p, foe) {
       const r = p.result;
       if (!r) return `${p.wins}W ${p.losses}L · ${p.winStreak} win streak`;
       if (r.gaveUp) return [`Ran on turn ${r.turns || 1}`, `🔥 ${p.winStreak}`].join(' · ');
       const how = r.won
         ? `${r.monsLeft != null ? `${r.monsLeft} left` : 'Won'}`
-        : `${r.redLeft != null ? `RED had ${r.redLeft} left` : 'Lost'}`;
+        : `${r.redLeft != null ? `${foe} had ${r.redLeft} left` : 'Lost'}`;
       return [how, r.turns ? `${r.turns} turns` : null, `🔥 ${p.winStreak}`].filter(Boolean).join(' · ');
     },
-    badge: (p) => (p.result?.gaveUp ? 'Ran from RED' : TODAY_LABEL[p.today] ?? 'Not yet'),
+    badge: (p, foe) => (p.result?.gaveUp ? `Ran from ${foe}` : todayLabel(foe)[p.today] ?? 'Not yet'),
     squares: (p) => squares(p.result?.monsLeft),
   },
   month: {
@@ -210,8 +211,8 @@ const TABS = {
 };
 
 // players: from GET /api/board. Names come from Discord, so they only ever
-// go in as text.
-export function renderBoard(list, players, tab = 'today') {
+// go in as text. `foe`: the day's trainer, for the Today tab.
+export function renderBoard(list, players, tab = 'today', foe = 'RED') {
   const view = TABS[tab] ?? TABS.today;
   const shown = view.sort ? players.filter(view.filter ?? ((p) => p.played > 0)).sort(view.sort) : players;
   list.dataset.tab = tab;
@@ -243,11 +244,11 @@ export function renderBoard(list, players, tab = 'today') {
 
     const today = document.createElement('span');
     today.className = 'board-today';
-    today.textContent = view.badge(p);
+    today.textContent = view.badge(p, foe);
 
     const streak = document.createElement('span');
     streak.className = 'board-streak';
-    streak.textContent = view.detail(p);
+    streak.textContent = view.detail(p, foe);
 
     const grid = document.createElement('span');
     grid.className = 'board-squares';
@@ -270,7 +271,7 @@ export function standingText(players, month) {
   const wins = (n) => `${n} ${n === 1 ? 'win' : 'wins'}`;
   const place = (n) => `${n}${{ 1: 'st', 2: 'nd', 3: 'rd' }[n % 100 > 10 && n % 100 < 14 ? 0 : n % 10] ?? 'th'}`;
   if (race.length === 1) return `You're the only one in the ${month} race so far, with ${wins(me.monthWins)}.`;
-  if (leader.monthWins === 0) return `Nobody has beaten RED yet in ${month}. The first win takes the lead!`;
+  if (leader.monthWins === 0) return `Nobody has won yet in ${month}. The first win takes the lead!`;
   if (i === 0) {
     const gap = me.monthWins - race[1].monthWins;
     return gap > 0

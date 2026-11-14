@@ -227,6 +227,9 @@ The bot posts these in each server's **#general**:
   (long-press or right-click > **Pin Message**) so newcomers find it.
 - **The live card**: one message per day, posted at 6:00 AM Eastern (or by
   the first battle after midnight) and edited as people start and finish.
+  From Nov 23 it names the week's trainer on the Road to RED ("Week 1 of 6 on
+  the Road to RED: Blue, Champion"), with their picture and a **Battle Blue**
+  button; results read "Beat Blue", "Lost to Blue".
   It starts with **today's team**, the day's six everyone gets (in the day's
   order, so never anyone's chosen lead). Each player shows their
   result, how many Pokémon they had left, turns and streak, with 🟥⬛ squares
@@ -248,7 +251,8 @@ The bot posts these in each server's **#general**:
   Fame**.
 - **News**: once, on the morning a new feature starts, between the recap and
   the live card. On Sunday, Nov 15: prize money, the free weekly bag and the
-  PokéMart, with the prices and how BAG works in battle. A server that missed
+  PokéMart, with the prices and how BAG works in battle. On Monday, Nov 23:
+  the Road to RED, with the six trainers and their weeks. A server that missed
   that morning (the bot was down) gets it on a later morning that week.
 - **The weekly leaderboard**: every Monday right after the recap, the same
   leaderboard as the button: the month's standings so far, win streaks, all

@@ -108,7 +108,7 @@ test('every item a team can hold, and RED\'s, has a plain description', async ()
 // as the page does, and plays it with a simple player.
 // `onMove(req)` may answer a move request first (e.g. with an item); null
 // leaves it to the simple player.
-async function runWorker({ seed, answerShift = () => 'stay', onMove = () => null, maxMessages = 20000 }) {
+async function runWorker({ seed, trainer, name = 'Tester', answerShift = () => 'stay', onMove = () => null, maxMessages = 20000 }) {
   const { readFileSync, existsSync } = await import('node:fs');
   const vm = await import('node:vm');
   const file = new URL('../../web/vendor/battle-worker.js', import.meta.url);
@@ -126,7 +126,7 @@ async function runWorker({ seed, answerShift = () => 'stay', onMove = () => null
     return inbox.shift();
   };
   const log = [];
-  send({ type: 'start', seed, order: [0, 1, 2, 3, 4, 5], name: 'Tester' });
+  send({ type: 'start', seed, order: [0, 1, 2, 3, 4, 5], name, trainer });
   for (let i = 0; i < maxMessages; i++) {
     const message = await next();
     if (message.type === 'error') throw new Error(message.message);
@@ -323,4 +323,18 @@ test('the bag: an item takes your turn, goes first, and works like in the games'
   assert.ok(seen.xattack && seen.fullrestore && seen.revive, JSON.stringify(seen));
   assert.ok(seen.refused, 'a Hyper Potion on full HP is refused');
   assert.ok(seen.limit, 'a 5th item is refused');
+});
+
+test("on the Road to RED the week's trainer comes out, by name, with their own team", async () => {
+  const { TRAINER_TEAMS } = await import('../../web/battle/trainers.js');
+  for (const [trainer, name, lead] of [['blue', 'Blue', 'Pidgeot'], ['giovanni', 'Giovanni', 'Persian'], [undefined, 'RED', 'Pikachu']]) {
+    const result = await runWorker({ seed: 7, trainer, name: name.toLowerCase() }); // a player named like the trainer
+    if (result === null) return; // battle engine not built here
+    const lines = result.log.filter((e) => typeof e === 'string');
+    assert.ok(lines.includes(`${name} sent out ${lead}!`), `${name} leads with ${lead}: ${lines.slice(0, 3).join(' / ')}`);
+    // The winner is told apart by name, so a player called "blue" mustn't count as Blue.
+    const lastFaint = lines.filter((t) => / fainted!$/.test(t)).at(-1);
+    assert.equal(result.won, lastFaint.startsWith('Foe '), `won: ${result.won}, last faint: ${lastFaint}`);
+    if (trainer) assert.equal(TRAINER_TEAMS[trainer].team[0].species, lead);
+  }
 });

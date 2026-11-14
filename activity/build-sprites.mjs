@@ -4,7 +4,8 @@
 //
 //   web/sprites/front/<dex number>.png        front-shiny/, back/, back-shiny/
 //   web/sprites/fx/<name>.png                 from graphics/battle_anims/sprites/
-//   web/sprites/trainers/red.png              RED, for today's card picture (card-image.mjs)
+//   web/sprites/trainers/<id>.png             RED and the Road to RED's trainers (web/road.js), for
+//                                             the page, the bot and today's card picture (card-image.mjs)
 //
 // The source PNGs are 16-colour indexed images with colour 0 transparent, so
 // they're used as they are; the shiny versions swap in shiny.pal. Deoxys's
@@ -160,12 +161,19 @@ for (const [name, fx] of Object.entries(FX_SPRITES)) {
 }
 console.log(`Wrote ${Object.keys(FX_SPRITES).length} animation sheets to ${join(out, 'fx')}`);
 
-// --- RED --------------------------------------------------------------------------------
+// --- Trainers -----------------------------------------------------------------------------
 
-// The picture comes with a placeholder palette; red.pal has his real colours.
+// The road's trainers (web/road.js) -> their FireRed pictures. Each comes with
+// a placeholder palette; <name>.pal has the real colours.
+const TRAINER_PICS = {
+  red: 'red', blue: 'champion_rival', steven: 'champion_steven', giovanni: 'leader_giovanni',
+  lance: 'elite_four_lance', wallace: 'leader_wallace',
+};
 const trainers = join(source, 'graphics/trainers');
 mkdirSync(join(out, 'trainers'), { recursive: true });
-writeFileSync(join(out, 'trainers/red.png'), rewrite(readFileSync(join(trainers, 'front_pics/red_front_pic.png')), {
-  palette: readPalette(join(trainers, 'palettes/red.pal')),
-}));
-console.log(`Wrote RED's picture to ${join(out, 'trainers')}`);
+for (const [id, pic] of Object.entries(TRAINER_PICS)) {
+  writeFileSync(join(out, `trainers/${id}.png`), rewrite(readFileSync(join(trainers, `front_pics/${pic}_front_pic.png`)), {
+    palette: readPalette(join(trainers, `palettes/${pic}.pal`)),
+  }));
+}
+console.log(`Wrote ${Object.keys(TRAINER_PICS).length} trainer pictures to ${join(out, 'trainers')}`);

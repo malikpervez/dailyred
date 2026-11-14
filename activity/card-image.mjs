@@ -1,9 +1,9 @@
-// Today's card picture: the day's six lined up on the grass with RED waiting
-// on his platform, FireRed style. The bot puts it on top of the daily card
+// Today's card picture: the day's six lined up on the grass with the day's
+// trainer (RED, or the week's on the Road to RED) waiting on the platform, FireRed style. The bot puts it on top of the daily card
 // (bot.mjs) and the server draws it on request (GET /card/<date>.png,
 // app.mjs). Drawn at 400x200 like a GBA screen and doubled to 800x400, with no
 // image library: the scenery is drawn here, the lettering is
-// activity/card-title.png (scripts/draw-card-title.mjs) and the sprites are
+// activity/card-titles/<trainer>.png (scripts/draw-card-title.mjs) and the sprites are
 // the site's own (web/sprites/, scripts/get-sprites.sh).
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -21,13 +21,20 @@ const COLOURS = {
 };
 const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
 
-// Returns paint(team): the picture for [{ num, shiny }] (the day's order) as a PNG.
-export function createCardPainter({ webRoot, title = join(dirname(fileURLToPath(import.meta.url)), 'card-title.png') }) {
-  const lettering = decodePng(readFileSync(title));
-  const red = decodePng(readFileSync(join(webRoot, 'sprites/trainers/red.png')));
+// Returns paint(team, trainer): the picture for [{ num, shiny }] (the day's
+// order) facing `trainer` ('red', 'blue'... from web/road.js) as a PNG.
+export function createCardPainter({ webRoot, titles = join(dirname(fileURLToPath(import.meta.url)), 'card-titles') }) {
+  const cache = new Map();
+  const load = (file) => {
+    if (!cache.has(file)) cache.set(file, decodePng(readFileSync(file)));
+    return cache.get(file);
+  };
+  const key = (id) => (/^[a-z]+$/.test(id ?? '') ? id : 'red');
+  const trainerPic = (id) => load(join(webRoot, `sprites/trainers/${key(id)}.png`));
+  const lettering = (id) => load(join(titles, `${key(id)}.png`)); // "TODAY'S SIX vs BLUE"
   const sprite = (mon) => decodePng(readFileSync(join(webRoot, `sprites/front${mon.shiny ? '-shiny' : ''}`, `${Number(mon.num)}.png`)));
 
-  return function paint(team) {
+  return function paint(team, trainer = 'red') {
     const px = new Uint8Array(W * H * 4);
     const fill = (x, y, w, h, hex) => {
       const [r, g, b] = rgb(hex);
@@ -76,10 +83,10 @@ export function createCardPainter({ webRoot, title = join(dirname(fileURLToPath(
     for (let y = 122; y < H; y += 6) for (let x = (y * 7) % 11; x < W; x += 11) fill(x, y, 3, 1, COLOURS.grassTufts);
     fill(0, 118, W, 1, COLOURS.grassEdge);
     pad(336, 92, 54, 11);
-    paste(red, 304, 28);
+    paste(trainerPic(trainer), 304, 28);
     pad(200, 178, 196, 16);
     team.slice(0, 6).forEach((mon, i) => paste(sprite(mon), 8 + i * 64, 124));
-    paste(lettering, 0, 0);
+    paste(lettering(trainer), 0, 0);
 
     // Doubled, pixel for pixel.
     const big = new Uint8Array(W * SCALE * H * SCALE * 4);

@@ -127,13 +127,15 @@ export function matchup(calc, dex, battle, mon, foe) {
   return best(mon, foe) - best(foe, mon);
 }
 
-// The choice string for RED's side ("move 2", "switch 3", "default").
-export function chooseForRed(calc, dex, battle, request, random = Math.random) {
-  return chooseFor('p2', calc, dex, battle, request, random);
+// The choice string for the trainer's side ("move 2", "switch 3", "default").
+// `mistakes`: how often they pick a random sensible move instead of the best
+// (each trainer's own, from battle/trainers.js).
+export function chooseForRed(calc, dex, battle, request, random = Math.random, mistakes = DIFFICULTY.MISTAKE_CHANCE) {
+  return chooseFor('p2', calc, dex, battle, request, random, mistakes);
 }
 
 // The same reasoning for either side (the tests use it to play for p1 too).
-export function chooseFor(sideId, calc, dex, battle, request, random = Math.random) {
+export function chooseFor(sideId, calc, dex, battle, request, random = Math.random, mistakes = DIFFICULTY.MISTAKE_CHANCE) {
   const side = battle[sideId];
   const foe = battle[sideId === 'p1' ? 'p2' : 'p1'].active[0];
 
@@ -162,7 +164,7 @@ export function chooseFor(sideId, calc, dex, battle, request, random = Math.rand
       ...option,
       score: scoreMove(calc, dex, battle, user, foe, option.id) + random() * DIFFICULTY.NOISE,
     }));
-    if (sideId === 'p2' && random() < DIFFICULTY.MISTAKE_CHANCE) {
+    if (sideId === 'p2' && random() < mistakes) {
       const sensible = scored.filter((o) => o.score > 0);
       if (sensible.length) return `move ${sensible[Math.floor(random() * sensible.length)].slot}`;
     }

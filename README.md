@@ -2,7 +2,8 @@
 
 A daily Pokémon battle in the browser, like Wordle. Every day everyone gets
 the same six level 100 Pokémon from Generations 1–3. You look them over, pick
-your lead, and get one official battle against RED's Mt. Silver team. Practice
+your lead, and get one official battle against RED's Mt. Silver team, or,
+from Nov 23, the week's trainer on the Road to RED. Practice
 runs are unlimited and not recorded. Your wins, losses, win streak and daily
 play streak are kept in your browser (or, inside Discord, on the server).
 
@@ -81,10 +82,19 @@ web/index.html + app.js            today's page, the lead picker, stats (daily.j
   random items they were played with (`teamVersion` in `web/daily.js`).
   Each card on the team page explains its item in plain words
   (`web/battle/items.js`).
+- **The Road to RED, from Monday, Nov 23** (`web/road.js`, teams in
+  `web/battle/trainers.js`): a new trainer every Monday, all level 100, each a
+  little harder, building up to RED: Blue, Steven, Giovanni, Lance, Wallace,
+  then RED, then round again. Everyone faces the same trainer all week (by
+  their own date, like the team). The page, the battle, the share picture and
+  the bot all name the day's trainer; the page shows the week's picture and
+  who's next, and the bot's card says "Week 1 of 6 on the Road to RED". Every
+  win counts the same for Pokémon Master of the Month. Days before Nov 23 stay
+  RED battles. The bot announces the road once, at 6:00 on Nov 23.
 - **Money and items, from No. 15 (Sunday, Nov 15)** (`web/economy.js`):
   - *Prize money* for the official battle: ₽1,000 for a win plus ₽70 for each
-    of your Pokémon left; ₽270 for a loss plus ₽100 for each of RED's you
-    knocked out; nothing for running away.
+    of your Pokémon left; ₽270 for a loss plus ₽100 for each of the
+    trainer's you knocked out; nothing for running away.
   - *A free bag every Monday:* 3 Full Restores, 2 Revives and a Max Revive.
     It refills (it doesn't stack), and free items are used before bought ones.
   - *The PokéMart* at FireRed's prices: Hyper Potion ₽1,200, Full Heal ₽600,
@@ -149,12 +159,17 @@ web/index.html + app.js            today's page, the lead picker, stats (daily.j
 
 Raise `TEAM_RULES` to make the game easier.
 
-## RED and his AI
+## RED, the road's trainers and their AI
 
 RED's team is in `web/battle/red.js`: Red's Mt. Silver six from
 HeartGold/SoulSilver with Gen 3 movesets, level 100, perfect IVs and full EV
-spreads. His AI (`web/battle/ai.js`) sees the real battle, like FireRed's
-trainer AI does:
+spreads. The Road to RED's trainers (`web/battle/trainers.js`) are built the
+same way around their signature Pokémon: Blue's Indigo Plateau six, Steven's
+Steel and Rock walls with Metagross, Giovanni's Ground types (his Dugtrio's
+Arena Trap stops you switching), Lance's dragons with the red Gyarados, and
+Wallace's Water types ending with Milotic. The tests check every set against
+Gen 3's real move lists. They all play with RED's AI (`web/battle/ai.js`),
+which sees the real battle, like FireRed's trainer AI does:
 
 - a move that knocks your Pokémon out comes first (priority moves when he'd
   move second), otherwise the most expected damage, with recoil counted;
@@ -163,11 +178,15 @@ trainer AI does:
 - he never switches by choice, and when one of his Pokémon faints he sends in
   the one that matches up best against yours;
 - `DIFFICULTY.NOISE` and `DIFFICULTY.MISTAKE_CHANCE` keep him from being
-  perfect. Raise them to make him easier.
+  perfect. Raise them to make him easier. Each road trainer has its own
+  `mistakes` (how often they pick a random sensible move instead of the best):
+  RED, Steven and Giovanni 10%, Blue, Lance and Wallace 40%, because Lance's
+  and Wallace's teams are stronger than RED's.
 
 With these settings a bot that plays your team greedily (best move each turn,
-never switching by choice) beats him in about 1 battle in 10. People who
-switch well do better.
+never switching by choice) wins about 32% of battles against Blue, 25% Steven,
+22% Giovanni, 19% Lance, 16% Wallace and 14% RED (300 battles each, on the
+same daily teams). People who switch well, and use the bag, do better.
 
 ## Testing
 
@@ -218,13 +237,16 @@ texts to `web/vendor/battle-worker.LICENSE.txt`. The page footer links to both.
 
 ```
 web/                          the website (plain files, no build step except the worker)
-web/battle/                   the battle: team.js, red.js, ai.js, worker.js (bundled),
+web/road.js                   the Road to RED: the week's trainer for a date
+web/economy.js                money, the bag and the PokéMart
+web/battle/                   the battle: team.js, red.js, trainers.js, ai.js, worker.js (bundled),
                               engine.js, view.js and fx.js (loaded by the page)
 web/vendor/, web/sprites/     built or fetched (not in git)
 activity/                     the server (Discord sign-in, stats, server list) and build scripts:
                               build-battle.mjs, build-sdk.mjs, build-sprites.mjs
 scripts/fetch-vendor.sh       the font (pinned, checksummed)
-scripts/get-sprites.sh        pret/pokefirered's Pokémon and animation graphics at a pinned commit → web/sprites/
+scripts/get-sprites.sh        pret/pokefirered's Pokémon, animation and trainer graphics at a pinned commit → web/sprites/
+scripts/draw-card-title.mjs   the card picture's lettering, one per trainer → activity/card-titles/
 scripts/serve.mjs             local static server
 tests/site.mjs                the site in headless Chrome
 Dockerfile, docker-compose.yml, omv/   the Discord Activity image

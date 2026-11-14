@@ -231,6 +231,27 @@ img { image-rendering: pixelated; }
 .account-signout { color: var(--muted); }
 .account-note { flex-basis: 100%; margin: 0; color: var(--muted); }
 
+/* The Road to RED (road.js): this week's trainer, and the six of them in order. */
+.road {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.road-pic { width: 64px; height: 64px; border-radius: 10px; background: var(--frame); image-rendering: pixelated; }
+.road-text { display: grid; gap: 3px; min-width: 0; }
+.road-title { margin: 0; font: 700 17px/1.25 var(--font-pixel); }
+.road-note { margin: 0; font-size: 14px; color: var(--muted); }
+.road-steps { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 4px 0 0; padding: 0; list-style: none; font-size: 12px; }
+.road-step { padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); }
+.road-step:last-child { font-weight: 700; }
+.road-step[aria-current="step"] { border-color: var(--red); color: var(--on-red); background: var(--red); font-weight: 650; }
+
 .hero-links { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; margin: 14px 0 0; }
 .practice-note { font-size: 14px; color: var(--muted); }
 
@@ -638,7 +659,8 @@ img { image-rendering: pixelated; }
 
 .ib-top { display: flex; gap: 4px; align-items: baseline; }
 .ib-name { overflow: hidden; font-weight: 700; white-space: nowrap; text-overflow: ellipsis; }
-.infobox-foe .ib-name::before { content: "RED's "; color: var(--red); }
+/* "RED's", "Blue's"...: the day's trainer (view.js sets data-owner). */
+.infobox-foe .ib-name::before { content: attr(data-owner); color: var(--red); }
 .ib-level { margin-left: auto; white-space: nowrap; }
 
 .hp { display: flex; gap: 4px; align-items: center; margin-top: 3px; }

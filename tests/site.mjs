@@ -48,6 +48,7 @@ const step = (name) => console.log(`- ${name}`);
 const DAY1 = new Date('2026-11-12T10:00:00');
 const DAY2 = new Date('2026-11-13T10:00:00');
 const DAY3 = new Date('2026-11-16T10:00:00'); // Monday: money and items start
+const DAY4 = new Date('2026-11-23T10:00:00'); // Monday: the Road to RED starts, with Blue
 
 // Whether the battle panel is waiting for the player (moves, party or the Shift question).
 const choosing = () => ['.commands', '.party', '.confirm'].some((s) => !document.querySelector(s).hidden);
@@ -154,6 +155,8 @@ try {
   assert.equal(await page.locator('#red-list .red-mon').count(), 6);
   assert.equal(await page.textContent('#red-lead-name'), 'Pikachu');
   assert.equal(await page.textContent('#wallet-heading'), 'Coming Sunday, Nov 15: your bag', 'the bag is announced');
+  assert.equal(await page.textContent('#road-title'), 'Coming Monday, Nov 23: the Road to RED', 'so is the road');
+  assert.equal(await page.textContent('#hero-foe'), 'RED');
   assert.ok(await page.isHidden('#open-shop'));
   // What each held item does, written out on every card.
   const items = await page.$$eval('#team-list .mon-item-desc', (els) => els.map((e) => e.textContent));
@@ -328,6 +331,36 @@ try {
   await page.screenshot({ path: join(OUT, 'result-prize.png'), fullPage: true });
   await page.click('#back-home');
 
+  step("Monday Nov 23: the Road to RED starts with Blue, on the page, in the battle and in the result");
+  await page.clock.setSystemTime(DAY4);
+  await page.reload();
+  await page.waitForSelector('.app[data-state="home"]');
+  await page.evaluate(() => window.dailyRed.setSpeed('fast'));
+  assert.equal(await page.textContent('#hero-foe'), 'Blue');
+  assert.equal(await page.textContent('#road-title'), 'Week 1 of 6: Blue, Champion');
+  assert.match(await page.textContent('#road-note'), /Next: Steven, from Monday Nov 30\.$/);
+  assert.equal(await page.textContent('.road-step[aria-current="step"]'), 'Blue');
+  assert.ok(await page.evaluate(() => document.getElementById('road-pic').naturalWidth === 64), "Blue's picture loads");
+  assert.equal(await page.textContent('#red-heading'), "Blue's team");
+  assert.equal(await page.textContent('#red-lead-name'), 'Pidgeot');
+  assert.equal(await page.textContent('#red-list .red-mon:first-child .red-name'), 'Pidgeot');
+  assert.equal(await page.textContent('#play'), 'Battle Blue');
+  await page.screenshot({ path: join(OUT, 'home-road.png') });
+  await page.click('#play');
+  await page.waitForSelector('.commands', { state: 'visible', timeout: 30000 });
+  assert.equal(await page.textContent('.log-list li:first-child'), 'Blue wants to battle!');
+  assert.equal(await page.textContent('.infobox-foe .ib-name'), 'Pidgeot');
+  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.infobox-foe .ib-name'), '::before').content), '"Blue\'s "');
+  await page.screenshot({ path: join(OUT, 'battle-blue.png') });
+  await page.click('.action:has-text("RUN")');
+  await page.click('#run-dialog button[value="run"]');
+  assert.equal(await playToTheEnd(page), 'Blue won this time.');
+  assert.match(await page.textContent('#share-text'), /^Daily Red No\. 23\nRan from Blue on turn \d+\n/);
+  await page.waitForSelector('#share-image', { state: 'visible', timeout: 10000 });
+  await page.screenshot({ path: join(OUT, 'result-blue.png'), fullPage: true });
+  await page.click('#back-home');
+  assert.equal(await page.textContent('#played-result'), 'Blue won today.');
+
   step("the server board shows run-aways, last month's Master's 👑 and the Hall of Fame");
   const board = await page.evaluate(async () => {
     const { renderBoard, renderHallOfFame } = await import('./discord.js');
@@ -370,7 +403,7 @@ try {
     'You lead the November race on tiebreaks, level with Ash on 5 wins.',
     "You're 2nd in the November race, level with Ash on 5 wins but behind on tiebreaks.",
     "You're the only one in the November race so far, with 1 win.",
-    'Nobody has beaten RED yet in November. The first win takes the lead!',
+    'Nobody has won yet in November. The first win takes the lead!',
     "You're the only one in the November race so far, with 1 win.",
   ]);
 
@@ -385,7 +418,7 @@ try {
   });
   await page.goto(`${server.url}/?seed=${tomorrowSeed}`);
   await page.waitForSelector('.app[data-state="home"]');
-  assert.match(await page.textContent('#day-label'), /^No\. 16, /, "tomorrow's team isn't open for practice");
+  assert.match(await page.textContent('#day-label'), /^No\. 23, /, "tomorrow's team isn't open for practice");
 
   step('the website signs in with Discord, and the battle counts for the server');
   await signInTest(browser);

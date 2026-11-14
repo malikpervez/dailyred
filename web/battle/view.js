@@ -162,6 +162,7 @@ export function createBattleView(root, {
   let ending = null;
   let skip = null; // resolves the current text/hold early
   let lastState = null;
+  let foeName = 'RED'; // the day's trainer (reset())
 
   const speed = () => SPEEDS[getSpeed()] ?? SPEEDS.normal;
   const fx = createFx(scene, { sprites: { p1: youSprite, p2: foeSprite }, getScale: () => speed().anim });
@@ -263,7 +264,7 @@ export function createBattleView(root, {
     renderSide(foe, foeSprite, state.p2, false);
     renderSide(you, youSprite, state.p1, true);
     const left = (s) => s.party.filter((p) => p !== 'fnt').length;
-    remaining.textContent = `You ${left(state.p1)}, RED ${left(state.p2)}`;
+    remaining.textContent = `You ${left(state.p1)}, ${foeName} ${left(state.p2)}`;
     if (state.turn) frame.dataset.turn = state.turn;
     lastState = state;
   }
@@ -339,7 +340,7 @@ export function createBattleView(root, {
     if (req.kind === 'shift') {
       // RED's Pokémon fainted: he says who's next, and you may switch for free.
       const yours = req.party.find((p) => p.active)?.species ?? 'you';
-      confirmText.textContent = `RED is about to send out ${req.next.toUpperCase()}. Will ${yours.toUpperCase()} change POKéMON?`;
+      confirmText.textContent = `${foeName} is about to send out ${req.next.toUpperCase()}. Will ${yours.toUpperCase()} change POKéMON?`;
       setPanel('confirm');
       return;
     }
@@ -507,7 +508,7 @@ export function createBattleView(root, {
     icon.width = icon.height = 64;
     const title = el('div', 'sum-title');
     const name = el('p', 'sum-name');
-    if (foe) name.append(el('span', 'sum-owner', "RED's "));
+    if (foe) name.append(el('span', 'sum-owner', `${foeName}'s `));
     name.append(mon.species);
     const gender = el('span', 'sum-gender', mon.gender === 'M' ? '♂' : mon.gender === 'F' ? '♀' : '');
     gender.dataset.gender = mon.gender;
@@ -540,7 +541,7 @@ export function createBattleView(root, {
       facts.append(row);
     }
 
-    const against = request?.foe && !foe ? `RED's ${request.foe.species}` : request?.party?.find((p) => p.active)?.species;
+    const against = request?.foe && !foe ? `${foeName}'s ${request.foe.species}` : request?.party?.find((p) => p.active)?.species;
     const note = el('p', 'sum-note', against ? `Effectiveness against ${against}` : '');
     const moves = el('ul', 'sum-moves');
     for (const move of mon.moves) {
@@ -591,7 +592,6 @@ export function createBattleView(root, {
     event.stopPropagation();
     showSummary(request.foe, { foe: true });
   });
-  foe.box.title = "Tap to see RED's Pokémon";
 
   pokemonButton.addEventListener('click', () => request && showParty(request, false));
   bagButton.addEventListener('click', () => showBag());
@@ -619,7 +619,11 @@ export function createBattleView(root, {
   }
 
   return {
-    reset({ name }) {
+    // `foe`: the day's trainer's name (RED, or one of the Road to RED's).
+    reset({ name, foe: trainerName = 'RED' }) {
+      foeName = trainerName;
+      foe.box.title = `Tap to see ${foeName}'s Pokémon`;
+      foe.name.dataset.owner = `${foeName}'s `;
       queue.length = 0;
       request = null;
       ending = null;
@@ -634,8 +638,8 @@ export function createBattleView(root, {
       foe.box.hidden = you.box.hidden = true;
       fx.clear();
       frame.dataset.player = name;
-      showText('RED wants to battle!');
-      addLog('RED wants to battle!');
+      showText(`${foeName} wants to battle!`);
+      addLog(`${foeName} wants to battle!`);
       setPanel('message');
     },
     play(events) {

@@ -29,8 +29,9 @@ COPY scripts/get-sprites.sh scripts/
 RUN scripts/get-sprites.sh /tmp/pokefirered && rm -rf /tmp/pokefirered
 COPY activity/build-sdk.mjs activity/build-battle.mjs activity/team-of-day.mjs activity/
 COPY web/battle/ web/battle/
-# The bag's rules (the battle engine checks items with them).
-COPY web/economy.js web/
+# Shared rules the battle engine imports: the bag's (economy.js) and the
+# Road to RED's trainers (road.js).
+COPY web/economy.js web/road.js web/
 RUN cd activity && npm run build
 
 # --- 2. The server -------------------------------------------------------------------
@@ -43,7 +44,8 @@ COPY --from=build /src/web/vendor/ web/vendor/
 COPY --from=build /src/web/sprites/ web/sprites/
 COPY activity/server.mjs activity/app.mjs activity/store.mjs activity/bot.mjs activity/
 # Today's card picture: drawn by the server from the sprites and this lettering.
-COPY activity/card-image.mjs activity/png.mjs activity/card-title.png activity/
+COPY activity/card-image.mjs activity/png.mjs activity/
+COPY activity/card-titles/ activity/card-titles/
 # The day's six for the bot's card (the battle data, bundled: a few MB).
 COPY --from=build /src/activity/dist/ activity/dist/
 RUN mkdir -p /data && chown node:node /data

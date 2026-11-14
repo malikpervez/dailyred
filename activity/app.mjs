@@ -88,7 +88,7 @@ export function createApp({
   now = () => new Date(),
   bot = null, // bot.mjs: the live card, recaps and button presses (optional)
   publicUrl = null, // https://... this site's public address: turns on the website's sign-in
-  cardPicture = null, // date -> PNG of the day's six facing RED (card-image.mjs), for the bot's card
+  cardPicture = null, // date -> PNG of the day's six facing the day's trainer (card-image.mjs), for the bot's card
 }) {
   const pictures = new Map(); // date -> PNG, the last few days
   const site = publicUrl ? String(publicUrl).replace(/\/$/, '') : null;

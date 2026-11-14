@@ -2,13 +2,14 @@
 // battle-worker.js by activity/build-battle.mjs) so the page stays smooth.
 //
 // It generates the teams, runs the battle on Pokémon Showdown's simulator
-// (@pkmn/sim, Gen 3 rules), plays RED (ai.js), and turns the battle log into
+// (@pkmn/sim, Gen 3 rules), plays the day's trainer (ai.js; RED, or one of
+// the Road to RED's in web/road.js and trainers.js), and turns the battle log into
 // what the page shows: lines of text, each with a snapshot of the screen
 // (@pkmn/client tracks the state as the player sees it, line by line).
 //
 // Messages in (from battle/engine.js):
-//   { type: 'team', seed }                 -> { type: 'team', team, red }
-//   { type: 'start', seed, order, name }   -> events / request / end messages
+//   { type: 'team', seed, version, trainer }        -> { type: 'team', team, foe }
+//   { type: 'start', seed, order, name, trainer }   -> events / request / end messages
 //   { type: 'choose', choice }             e.g. "move 2", "switch 3", "item fullrestore 2"
 //   { type: 'forfeit' }
 // Messages out:
@@ -26,7 +27,8 @@ import { LogFormatter } from '@pkmn/view';
 import * as calc from '@smogon/calc';
 import { generateTeam, statsFor, isPhysicalType } from './team.js';
 import { itemHelp } from './items.js';
-import { RED_TEAM } from './red.js';
+import { TRAINER_TEAMS } from './trainers.js';
+import { TRAINERS } from '../road.js';
 import { chooseForRed } from './ai.js';
 import { ITEMS, CARRY_LIMIT, itemProblem } from '../economy.js';
 
@@ -492,9 +494,9 @@ async function readRed(battle) {
     }
     let choice = 'default';
     try {
-      choice = chooseForRed(calc, dex, battle.stream.battle, request);
+      choice = chooseForRed(calc, dex, battle.stream.battle, request, Math.random, battle.mistakes);
     } catch (err) {
-      console.error('RED AI failed', err);
+      console.error('Trainer AI failed', err);
     }
     const slot = Number(/^switch (\d+)$/.exec(choice)?.[1]);
     if (request.forceSwitch && slot && canShift(battle.stream.battle)) {
@@ -507,28 +509,35 @@ async function readRed(battle) {
 }
 
 // The player's name in the battle log: Showdown takes up to 18 characters
-// and no protocol separators, and it mustn't match RED's (that's how the
-// winner is told apart).
-function playerName(name) {
+// and no protocol separators, and it mustn't match the trainer's (that's how
+// the winner is told apart).
+function playerName(name, foeName) {
   const clean = String(name || '').replace(/[|\n\r,]/g, '').trim().slice(0, 18);
-  return clean && clean.toLowerCase() !== 'red' ? clean : 'You';
+  return clean && clean.toLowerCase() !== foeName.toLowerCase() ? clean : 'You';
 }
 
-function start({ seed, version, order, name }) {
+// The day's trainer (RED if none is given): { name, team, mistakes }.
+function trainer(id) {
+  const key = Object.hasOwn(TRAINER_TEAMS, id ?? '') ? id : 'red';
+  return { name: TRAINERS[key].name, ...TRAINER_TEAMS[key] };
+}
+
+function start({ seed, version, order, name, trainer: trainerId }) {
+  const foe = trainer(trainerId);
   const team = generateTeam(dex, seed, version);
   const ordered = order && order.length === team.length ? order.map((i) => team[i]) : team;
   const stream = new BattleStreams.BattleStream();
   const streams = BattleStreams.getPlayerStreams(stream);
   const client = new ClientBattle(gens);
-  const battle = { stream, streams, client, formatter: new LogFormatter('p1', client), itemsUsed: 0 };
+  const battle = { stream, streams, client, formatter: new LogFormatter('p1', client), itemsUsed: 0, mistakes: foe.mistakes };
   current = battle;
   readPlayer(battle).catch((err) => post({ type: 'error', message: String(err?.message || err) }));
   readRed(battle).catch((err) => post({ type: 'error', message: String(err?.message || err) }));
   const player = (who, sets) => JSON.stringify({ name: who, team: Teams.pack(sets) });
   streams.omniscient.write([
     `>start ${JSON.stringify({ formatid: 'gen3customgame' })}`,
-    `>player p1 ${player(playerName(name), ordered)}`,
-    `>player p2 ${player('RED', RED_TEAM)}`,
+    `>player p1 ${player(playerName(name, foe.name), ordered)}`,
+    `>player p2 ${player(foe.name, foe.team)}`,
   ].join('\n'));
 }
 
@@ -536,7 +545,10 @@ onmessage = ({ data }) => {
   try {
     switch (data.type) {
       case 'team':
-        post({ type: 'team', seed: data.seed, version: data.version, team: generateTeam(dex, data.seed, data.version).map(describe), red: RED_TEAM.map(describe) });
+        post({
+          type: 'team', seed: data.seed, version: data.version, trainer: data.trainer,
+          team: generateTeam(dex, data.seed, data.version).map(describe), foe: trainer(data.trainer).team.map(describe),
+        });
         break;
       case 'start':
         start(data);

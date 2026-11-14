@@ -13,6 +13,7 @@ import {
 import {
   ITEMS, WEEKLY_BAG, CARRY_LIMIT, PRIZE, ECONOMY_START_LABEL, walletFor, bagOf, buy, useItem, earn, economyOpen,
 } from './economy.js';
+import { ROAD, TRAINERS, trainerOn, roadOpen } from './road.js';
 import { loadTeams, startBattle, choose, forfeit, detach } from './battle/engine.js';
 import { createBattleView, spriteUrl } from './battle/view.js';
 import { drawShareImage, canvasToBlob } from './share.js';
@@ -34,6 +35,14 @@ const ui = {
   signin: $('signin'),
   signinLink: $('signin-link'),
   account: $('account'),
+  heroFoe: $('hero-foe'),
+  roadPic: $('road-pic'),
+  roadTitle: $('road-title'),
+  roadNote: $('road-note'),
+  roadSteps: $('road-steps'),
+  redLeadLabel: $('red-lead-label'),
+  redHeading: $('red-heading'),
+  redSummary: $('red-summary'),
   redLeadSprite: $('red-lead-sprite'),
   redLeadName: $('red-lead-name'),
   yourLeadSprite: $('your-lead-sprite'),
@@ -142,6 +151,8 @@ const el = (tag, className, text) => {
 };
 
 const leadKey = () => `dailyred-lead:${practiceSeed ?? date}`;
+// The day's trainer (road.js): RED, or the week's on the Road to RED.
+const foe = () => trainerOn(date);
 // The team rules for the page's team (practice teams: the newest).
 const rules = () => teamVersion(practiceSeed ? null : date);
 
@@ -242,19 +253,44 @@ function monCard(mon, index, { red = false } = {}) {
 
 function renderTeams() {
   const yourLead = teams.team[lead];
-  const redLead = teams.red[0];
+  const redLead = teams.foe[0];
   ui.yourLeadSprite.src = spriteUrl(yourLead.num, { shiny: yourLead.shiny });
   ui.yourLeadName.textContent = yourLead.species;
   ui.redLeadSprite.src = spriteUrl(redLead.num);
   ui.redLeadName.textContent = redLead.species;
 
   ui.teamList.replaceChildren(...teams.team.map((mon, i) => monCard(mon, i)));
-  ui.redList.replaceChildren(...teams.red.map((mon, i) => {
+  ui.redList.replaceChildren(...teams.foe.map((mon, i) => {
     const row = el('li', 'red-mon');
     row.append(el('span', 'red-index', String(i + 1)), sprite(mon, 'red-sprite'), el('span', 'red-name', mon.species), typeBadges(mon.types));
     return row;
   }));
-  ui.redDetails.replaceChildren(...teams.red.map((mon, i) => monCard(mon, i, { red: true })));
+  ui.redDetails.replaceChildren(...teams.foe.map((mon, i) => monCard(mon, i, { red: true })));
+}
+
+// The hero and team section name the day's trainer; the road strip shows
+// where the week is on the Road to RED.
+function renderTrainer() {
+  const t = foe();
+  ui.heroFoe.textContent = t.name;
+  ui.redLeadLabel.textContent = `${t.name} leads with`;
+  ui.redHeading.textContent = `${t.name}'s team`;
+  ui.redSummary.textContent = `Show ${t.name}'s moves and items`;
+  ui.roadPic.src = `sprites/trainers/${t.id}.png`;
+  ui.roadPic.alt = t.name;
+  const short = (d) => new Date(`${d}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  if (!roadOpen(date)) {
+    ui.roadTitle.textContent = `Coming Monday, ${short(t.next.from)}: the Road to RED`;
+    ui.roadNote.textContent = 'A new trainer every week, each one a little harder, all the way up to RED. Then it starts over.';
+  } else {
+    ui.roadTitle.textContent = `Week ${t.week} of ${ROAD.length}: ${t.name}, ${t.title}`;
+    ui.roadNote.textContent = `${t.style} Next: ${t.next.name}, from Monday ${short(t.next.from)}.`;
+  }
+  ui.roadSteps.replaceChildren(...ROAD.map((id, i) => {
+    const step = el('li', 'road-step', TRAINERS[id].name);
+    if (roadOpen(date) && i === t.week - 1) step.setAttribute('aria-current', 'step');
+    return step;
+  }));
 }
 
 function setLead(index) {
@@ -284,14 +320,15 @@ function renderHome() {
   // battle that counts is everyone's first try with it.
   ui.practice.hidden = Boolean(practiceSeed) || !result;
   ui.practiceLocked.hidden = Boolean(practiceSeed) || Boolean(result);
-  ui.play.textContent = practiceSeed ? 'Battle RED (practice)' : 'Battle RED';
-  if (result) ui.playedResult.textContent = result === 'won' ? 'You beat RED today!' : 'RED won today.';
+  const { name: foeName } = foe();
+  ui.play.textContent = practiceSeed ? `Battle ${foeName} (practice)` : `Battle ${foeName}`;
+  if (result) ui.playedResult.textContent = result === 'won' ? `You beat ${foeName} today!` : `${foeName} won today.`;
   tick();
   renderWallet();
 
   const record = `${stats.wins}W ${stats.losses}L`;
-  if (result === 'won') discord?.setPresence('Beat RED today', `${record} · ${winStreak} win streak`);
-  else if (result === 'lost') discord?.setPresence('Lost to RED today', record);
+  if (result === 'won') discord?.setPresence(`Beat ${foeName} today`, `${record} · ${winStreak} win streak`);
+  else if (result === 'lost') discord?.setPresence(`Lost to ${foeName} today`, record);
   else discord?.setPresence("Today's battle: not yet", record);
   refreshBoard();
 }
@@ -302,8 +339,9 @@ async function loadDay() {
   renderHeader();
   setState('loading');
   ui.loadingText.textContent = "Loading today's team…";
+  renderTrainer();
   try {
-    teams = await loadTeams(seed, rules());
+    teams = await loadTeams(seed, rules(), foe().id);
   } catch (err) {
     showError(err);
     return;
@@ -471,7 +509,7 @@ for (const button of document.querySelectorAll('[data-board]')) {
   button.addEventListener('click', () => {
     boardTab = button.dataset.board;
     for (const b of document.querySelectorAll('[data-board]')) b.setAttribute('aria-pressed', String(b === button));
-    renderBoard(ui.boardList, boardPlayers, boardTab);
+    renderBoard(ui.boardList, boardPlayers, boardTab, foe().name);
     if (boardPlayers.length) {
       ui.boardNote.textContent = boardTab === 'month' ? 'Most wins this month becomes the Pokémon Master of the Month. Streaks start over on the 1st.' : '';
     }
@@ -497,7 +535,7 @@ async function refreshBoard() {
   try {
     const { players, hallOfFame = [], reminders = null } = await discord.board(today());
     boardPlayers = players;
-    renderBoard(ui.boardList, players, boardTab);
+    renderBoard(ui.boardList, players, boardTab, foe().name);
     ui.hall.hidden = !hallOfFame.length;
     renderHallOfFame(ui.hallList, hallOfFame);
     ui.reminder.hidden = !reminders;
@@ -505,7 +543,7 @@ async function refreshBoard() {
       ui.reminderBox.checked = reminders.on;
       ui.reminderTime.textContent = reminders.time;
     }
-    ui.boardNote.textContent = !players.length ? 'Nobody has played here yet. Be the first to battle RED!'
+    ui.boardNote.textContent = !players.length ? `Nobody has played here yet. Be the first to battle ${foe().name}!`
       : boardTab === 'month' ? 'Most wins this month becomes the Pokémon Master of the Month. Streaks start over on the 1st.' : '';
   } catch (err) {
     console.warn("Couldn't load today's players", err);
@@ -570,23 +608,23 @@ async function beginBattle({ practice }) {
       return;
     }
   }
-  battle = { official, date, ran: false, done: false, practiceUsed: {} };
+  battle = { official, date, foe: foe(), ran: false, done: false, practiceUsed: {} };
   const name = discord?.user?.name ?? 'You';
   ui.practiceChip.hidden = official;
   ui.battleDone.hidden = true;
   ui.turnLabel.textContent = '';
-  view.reset({ name });
+  view.reset({ name, foe: battle.foe.name });
   setState('battle');
-  document.title = 'Daily Red: battling RED';
+  document.title = `Daily Red: battling ${battle.foe.name}`;
   window.scrollTo({ top: 0 });
 
   if (official) {
     markBattleStarted(stats, date);
     discord?.report('start', date);
-    discord?.setPresence('Battling RED', `${stats.wins}W ${stats.losses}L`);
+    discord?.setPresence(`Battling ${battle.foe.name}`, `${stats.wins}W ${stats.losses}L`);
   }
 
-  startBattle({ seed, version: rules(), order: battleOrder(), name }, {
+  startBattle({ seed, version: rules(), order: battleOrder(), name, trainer: battle.foe.id }, {
     onEvents: (events) => {
       const turn = events.findLast((e) => e.turn)?.turn;
       if (turn) {
@@ -616,10 +654,11 @@ function endBattle(won, tie = false) {
     // Prize money: the server pays it when the result arrives; here, now.
     if (!discord) battle.prize = wallets.earn(battle.date, { won, ...details });
   }
-  const text = won ? 'You defeated RED!'
+  const name = battle.foe.name;
+  const text = won ? `You defeated ${name}!`
     : tie ? 'Both last Pokémon fell at once. A draw counts as a loss.'
-    : battle.ran ? 'You gave up. RED wins.'
-    : 'Your team was wiped out. RED wins.';
+    : battle.ran ? `You gave up. ${name} wins.`
+    : `Your team was wiped out. ${name} wins.`;
   view.end(text, () => showDone(won));
 }
 
@@ -640,14 +679,15 @@ function outcome(won) {
     grid: (state?.p1.party ?? []).map((p) => (p === 'fnt' ? '⬛' : '🟥')).join(''),
     // The day's order (not the battle order, which would show the lead).
     team: teams.team.map((m) => ({ num: m.num, shiny: m.shiny, fainted: fainted('p1').has(m.num) })),
-    red: teams.red.map((m) => ({ num: m.num, fainted: fainted('p2').has(m.num) })),
+    foe: teams.foe.map((m) => ({ num: m.num, shiny: m.shiny, fainted: fainted('p2').has(m.num) })),
+    foeName: battle.foe.name,
   };
 }
 
 function shareText(o) {
-  const line = o.won ? `Beat RED with ${o.left} left`
-    : o.ran ? `Ran from RED on turn ${o.turns || 1}`
-    : `Lost to RED (he had ${o.redLeft} left)`;
+  const line = o.won ? `Beat ${o.foeName} with ${o.left} left`
+    : o.ran ? `Ran from ${o.foeName} on turn ${o.turns || 1}`
+    : `Lost to ${o.foeName} (he had ${o.redLeft} left)`;
   return `${o.title}\n${line}\n${o.grid}`;
 }
 
@@ -656,7 +696,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 async function makeShareImage(o) {
   const streak = o.practice ? 0 : currentStreaks(stats, battle.date).winStreak;
   const detail = [
-    o.won ? `${o.left} of 6 left` : o.ran ? null : `RED had ${o.redLeft} left`,
+    o.won ? `${o.left} of 6 left` : o.ran ? null : `${o.foeName} had ${o.redLeft} left`,
     o.turns ? plural(o.turns, 'turn') : null,
     streak > 1 ? `${streak}-day win streak` : null,
   ].filter(Boolean).join(' · ');
@@ -665,10 +705,11 @@ async function makeShareImage(o) {
     title: o.title,
     date: o.practice ? '' : label,
     outcome: o.won ? 'won' : o.ran ? 'ran' : 'lost',
-    headline: o.won ? 'Beat RED!' : o.ran ? `Ran from RED on turn ${o.turns || 1}` : 'Lost to RED',
+    headline: o.won ? `Beat ${o.foeName}!` : o.ran ? `Ran from ${o.foeName} on turn ${o.turns || 1}` : `Lost to ${o.foeName}`,
     detail: detail || (o.ran ? 'Live to battle another day' : ''),
     team: o.team,
-    red: o.red,
+    foe: o.foe,
+    foeName: o.foeName,
     footer: discord?.user?.name ?? 'Daily Red',
   });
   // A data: URL for the preview (Discord's Activity frame may not allow blob: images).
@@ -707,7 +748,7 @@ async function showPrize(current) {
 
 async function showDone(won) {
   const o = outcome(won);
-  ui.doneTitle.textContent = won ? 'You beat RED!' : 'RED won this time.';
+  ui.doneTitle.textContent = won ? `You beat ${battle.foe.name}!` : `${battle.foe.name} won this time.`;
   ui.shareText.textContent = shareText(o);
   ui.shareNote.hidden = true;
   ui.shareImage.hidden = true;

@@ -208,7 +208,7 @@ test('buttons: signed requests only; Battle RED launches the Activity; Leaderboa
     assert.equal(board.data.flags, undefined, 'everyone in the channel sees it');
     assert.equal(board.data.embeds[0].title, 'Daily Red leaderboard · November 2026');
     assert.deepEqual(board.data.embeds[0].fields, [
-      { name: '🏆 Master race', value: 'Nobody has battled RED yet in November.' },
+      { name: '🏆 Master race', value: 'Nobody has battled yet in November.' },
       { name: '🔥 Win streaks', value: '<@1> **6** (best 9)' },
       { name: '📈 All time', value: '<@1> **6W** 75% · <@2> **1W** 25%' },
     ]);
@@ -254,7 +254,7 @@ test('on the 1st, after the recap, the Pokémon Master of the Month is announced
     '<@1> wears the 👑 all December and joins the Hall of Fame.',
     "Everyone's streaks start over today. Good luck in December!",
   ].join('\n'));
-  assert.equal(month.body.embeds[0].footer.text, '3 trainers battled RED 10 times in November');
+  assert.equal(month.body.embeds[0].footer.text, '3 trainers played 10 battles in November');
 
   await bot.tick();
   assert.equal(discord.posts().length, 4, 'only once');
@@ -710,4 +710,50 @@ test("today's card picture: the day's six drawn on the field, served for days up
   } finally {
     server.close();
   }
+});
+
+test("the Road to RED: from Monday, Nov 23 the card, recap and buttons name the week's trainer, with news that morning", async () => {
+  const { publicKey } = generateKeyPairSync('ed25519');
+  const rawKey = publicKey.export({ format: 'der', type: 'spki' }).subarray(12).toString('hex');
+  const discord = fakeDiscord();
+  let clock = new Date('2026-11-23T11:00:00Z'); // Monday 6:00 AM EST
+  const store = openStore(':memory:');
+  const site = 'https://nas.example.ts.net';
+  const bot = createBot({ token: 'bot-token', clientId: '999', publicKey: rawKey, store, fetch: discord.fetch, now: () => clock, log: quiet, followUpDelay: 0, publicUrl: site });
+  const player = (id, stats) => { store.savePlayer({ id, name: 'Ash', avatarUrl: '', stats: { ...EMPTY, ...stats } }); store.joinRoom(`g:${GUILD}`, id); };
+  player('1', { wins: 1, winStreak: 1, dayStreak: 1, lastPlayed: '2026-11-22', lastResult: 'won' });
+  store.saveResult({ playerId: '1', date: '2026-11-22', won: true, monsLeft: 2, redLeft: 0, turns: 20 });
+
+  await bot.tick();
+  assert.deepEqual(titles(discord), ['How to play Daily Red', "Yesterday's results · Daily Red No. 22", '📊 Weekly leaderboard · November 2026',
+    '🏔️ New: the Road to RED', 'Daily Red No. 23 · Mon, Nov 23']);
+  const [, recap, , news, card] = discord.posts();
+  assert.match(description(recap), /^\*\*1 of 1 beat RED\*\*/, 'Sunday was still RED');
+  assert.deepEqual(description(news).split('\n').slice(2, 8), [
+    '▶️ **Blue**, Champion · from Nov 23',
+    '• **Steven**, Champion · from Nov 30',
+    '• **Giovanni**, Team Rocket Boss · from Dec 7',
+    '• **Lance**, Dragon Master · from Dec 14',
+    '• **Wallace**, Champion · from Dec 21',
+    '• **RED**, Pokémon Trainer · from Dec 28 🏔️',
+  ]);
+  assert.match(description(news), /^Starting today, every Monday brings a new trainer/);
+  assert.match(description(news), /every win counts the same for Pokémon Master of the Month/);
+  assert.equal(description(card), '🏔️ Week 1 of 6 on the Road to RED: **Blue**, Champion\n\nNobody has battled Blue yet today.\n\n🏆 November race: <@1> 1');
+  assert.equal(card.body.embeds[0].thumbnail.url, `${site}/sprites/trainers/blue.png`);
+  assert.equal(card.body.components[0].components[0].label, 'Battle Blue');
+  assert.equal(recap.body.embeds[0].thumbnail.url, `${site}/sprites/front/25.png`, "RED's days keep Pikachu");
+
+  // Ash beats Blue: the card says so; tomorrow's recap too, and no second announcement.
+  player('1', { wins: 2, winStreak: 2, dayStreak: 2, lastPlayed: '2026-11-23', lastResult: 'won' });
+  store.saveResult({ playerId: '1', date: '2026-11-23', won: true, monsLeft: 3, redLeft: 0, turns: 18 });
+  await bot.updateCard(GUILD, '2026-11-23');
+  assert.match(description(discord.edits().at(-1)), /<@1> \*\*Beat Blue\*\* with 3 left · 18 turns · 🔥 2-day win streak/);
+  clock = new Date('2026-11-24T11:00:00Z');
+  const before = discord.posts().length;
+  await bot.tick();
+  const after = discord.posts().slice(before);
+  assert.deepEqual(after.map((p) => p.body.embeds[0].title), ["Yesterday's results · Daily Red No. 23", 'Daily Red No. 24 · Tue, Nov 24']);
+  assert.match(description(after[0]), /^\*\*1 of 1 beat Blue\*\*/);
+  assert.match(description(after[0]), /🥇 <@1> \*\*Beat Blue\*\* with 3 left/);
 });
