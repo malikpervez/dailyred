@@ -359,7 +359,7 @@ test("opening the game for a server you're new to puts today's result on its car
 });
 
 test('money and items: prize money once a day, the PokéMart, the bag only in battle, all checked here', async () => {
-  let time = new Date('2026-11-15T12:00:00Z');
+  let time = new Date('2026-11-14T12:00:00Z');
   const store = openStore(':memory:');
   const site = createServer(createApp({ webRoot, store, clientId: '1234567890', clientSecret: 'secret', fetch: fakeDiscord, now: () => time }));
   await new Promise((ok) => site.listen(0, '127.0.0.1', ok));
@@ -373,13 +373,14 @@ test('money and items: prize money once a day, the PokéMart, the bag only in ba
     return { status: res.status, ...(await res.json()) };
   };
   try {
-    // Sunday Nov 15: not open yet, and a battle pays nothing.
-    assert.equal((await call('/api/shop', { date: '2026-11-15', item: 'fullheal' })).status, 400);
-    await call('/api/battle', { event: 'start', date: '2026-11-15', room: 'g:42' });
-    assert.equal((await call('/api/bag/use', { date: '2026-11-15', item: 'revive' })).status, 400);
-    const sunday = await call('/api/battle', { event: 'result', date: '2026-11-15', room: 'g:42', won: true, monsLeft: 3 });
-    assert.deepEqual([sunday.prize, sunday.wallet.cash], [0, 0]);
+    // Saturday Nov 14: not open yet, and a battle pays nothing.
+    assert.equal((await call('/api/shop', { date: '2026-11-14', item: 'fullheal' })).status, 400);
+    await call('/api/battle', { event: 'start', date: '2026-11-14', room: 'g:42' });
+    assert.equal((await call('/api/bag/use', { date: '2026-11-14', item: 'revive' })).status, 400);
+    const saturday = await call('/api/battle', { event: 'result', date: '2026-11-14', room: 'g:42', won: true, monsLeft: 3 });
+    assert.deepEqual([saturday.prize, saturday.wallet.cash], [0, 0]);
 
+    assert.match((await call('/api/shop', { date: '2026-11-14', item: 'fullheal' })).error, /open on Sunday, Nov 15/);
     time = new Date('2026-11-16T12:00:00Z');
     const me = await call('/api/me?date=2026-11-16');
     assert.deepEqual([me.wallet.cash, me.wallet.week, me.wallet.freeUsed], [0, '2026-11-16', {}]);

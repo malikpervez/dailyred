@@ -81,7 +81,7 @@ web/index.html + app.js            today's page, the lead picker, stats (daily.j
   random items they were played with (`teamVersion` in `web/daily.js`).
   Each card on the team page explains its item in plain words
   (`web/battle/items.js`).
-- **Money and items, from No. 16 (Monday, Nov 16)** (`web/economy.js`):
+- **Money and items, from No. 15 (Sunday, Nov 15)** (`web/economy.js`):
   - *Prize money* for the official battle: ₽1,000 for a win plus ₽70 for each
     of your Pokémon left; ₽270 for a loss plus ₽100 for each of RED's you
     knocked out; nothing for running away.
@@ -179,7 +179,7 @@ cd tests && npm install && npm test   # the site in headless Chrome (CHROME_PATH
 The site test checks practice is locked, plays an official battle to the
 end, checks the stats, the daily lock, a practice run (giving up, the
 practice bag), the next day's team, that leaving halfway counts as a loss,
-and on Nov 16 the PokéMart, items in an official battle and the prize money
+and from Nov 15 the PokéMart, items in an official battle and the prize money
 (in the browser, and signed in through the server). Screenshots go to `tests/output/`.
 
 In the browser console, `dailyRed.teams`, `dailyRed.stats`, `dailyRed.wallet` and

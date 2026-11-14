@@ -11,7 +11,7 @@ import {
   inDiscord, connectDiscord, webSession, connectWeb, renderBoard, renderHallOfFame, standingText,
 } from './discord.js';
 import {
-  ITEMS, WEEKLY_BAG, CARRY_LIMIT, PRIZE, walletFor, bagOf, buy, useItem, earn, economyOpen,
+  ITEMS, WEEKLY_BAG, CARRY_LIMIT, PRIZE, ECONOMY_START_LABEL, walletFor, bagOf, buy, useItem, earn, economyOpen,
 } from './economy.js';
 import { loadTeams, startBattle, choose, forfeit, detach } from './battle/engine.js';
 import { createBattleView, spriteUrl } from './battle/view.js';
@@ -322,7 +322,7 @@ function showError(err) {
 }
 
 // --- Money and items ----------------------------------------------------------------
-// From No. 16 (Nov 16): prize money for official battles, a free bag every
+// From No. 15 (Nov 15): prize money for official battles, a free bag every
 // Monday and the PokéMart (economy.js). Signed in with Discord, the server
 // keeps the wallet and checks every purchase and item; otherwise this browser
 // keeps it.
@@ -367,7 +367,7 @@ function renderWallet() {
   const open = economyOpen(date);
   ui.openShop.hidden = !open;
   if (!open) {
-    ui.walletHeading.textContent = 'Coming Monday, Nov 16: your bag';
+    ui.walletHeading.textContent = `Coming ${ECONOMY_START_LABEL}: your bag`;
     ui.walletCash.textContent = '';
     ui.walletItems.replaceChildren();
     ui.walletNote.textContent = `Every official battle will pay prize money: ${money(PRIZE.win)} for a win plus ${money(PRIZE.perLeft)} for each of your Pokémon left, or ${money(PRIZE.loss)} for a loss plus ${money(PRIZE.perKO)} for each of RED's you knock out. Spend it in the PokéMart. Every Monday you also get a free bag: 3 Full Restores, 2 Revives and a Max Revive. Up to ${CARRY_LIMIT} items a battle, and each one takes your turn.`;

@@ -112,7 +112,9 @@ let shiftSeen = false;
 // Clicks through a battle until it ends: the first usable move each turn, the
 // first healthy Pokémon when one faints. Returns the result text.
 async function playToTheEnd(page) {
-  for (let i = 0; i < 2000; i++) {
+  // Long battles (30+ turns, animations on) take a few minutes: a time limit, not a click count.
+  const deadline = Date.now() + 6 * 60 * 1000;
+  while (Date.now() < deadline) {
     if (await page.isVisible('#battle-done')) break;
     // The screen can move on between the check and the click (the next
     // message starts), so clicks give up quickly and the loop looks again.
@@ -151,7 +153,7 @@ try {
   assert.equal(await page.locator('#team-list .mon-card').count(), 6);
   assert.equal(await page.locator('#red-list .red-mon').count(), 6);
   assert.equal(await page.textContent('#red-lead-name'), 'Pikachu');
-  assert.equal(await page.textContent('#wallet-heading'), 'Coming Monday, Nov 16: your bag', 'the bag is announced');
+  assert.equal(await page.textContent('#wallet-heading'), 'Coming Sunday, Nov 15: your bag', 'the bag is announced');
   assert.ok(await page.isHidden('#open-shop'));
   // What each held item does, written out on every card.
   const items = await page.$$eval('#team-list .mon-item-desc', (els) => els.map((e) => e.textContent));
@@ -183,7 +185,7 @@ try {
   assert.equal((await page.evaluate(() => window.dailyRed.stats)).pending, '2026-11-12');
   assert.equal(await page.textContent('.infobox-you .ib-name'), team[3]);
   assert.ok(await page.isHidden('#practice-chip'));
-  assert.ok(await page.isHidden('.action:has-text("BAG")'), 'no bag in official battles before Nov 16');
+  assert.ok(await page.isHidden('.action:has-text("BAG")'), 'no bag in official battles before Nov 15');
   await page.screenshot({ path: join(OUT, 'battle.png') });
   assert.equal(await page.getAttribute('[data-anims="on"]', 'aria-pressed'), 'true', 'animations start on');
 

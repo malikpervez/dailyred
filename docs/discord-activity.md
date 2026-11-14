@@ -398,7 +398,7 @@ docker compose start dailyred
   twice or out of order. As on the website, the game is the referee: a player
   who edits the page could still report a win they didn't earn. It's a
   friendly daily game, not a ranked ladder.
-- **Money and items** (from Nov 16, `web/economy.js`, also shared): the
+- **Money and items** (from Nov 15, `web/economy.js`, also shared): the
   server pays the prize money when the day's result arrives (once a day),
   sells PokéMart items (`POST /api/shop`) and takes items out of the bag
   during today's battle (`POST /api/bag/use`: only while it's on, up to 4).

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ECONOMY_START, CARRY_LIMIT, WEEKLY_BAG, ITEMS, NO_EFFECT, prizeFor, weekOf, walletFor, bagOf, earn, buy, useItem, usedIn, economyOpen,
+  ECONOMY_START, ECONOMY_START_LABEL, CARRY_LIMIT, WEEKLY_BAG, ITEMS, NO_EFFECT, prizeFor, weekOf, walletFor, bagOf, earn, buy, useItem, usedIn, economyOpen,
   itemProblem, EconomyError,
 } from '../../web/economy.js';
 
@@ -14,16 +14,21 @@ test('prize money: wins pay more for Pokémon left, losses for RED Pokémon knoc
   assert.equal(prizeFor({ won: false, gaveUp: true, redLeft: 4 }), 0);
 });
 
-test('weeks start on Monday; it all starts on Monday, Nov 16', () => {
-  assert.equal(ECONOMY_START, '2026-11-16');
+test('weeks start on Monday; it all starts on Sunday, Nov 15', () => {
+  assert.equal(ECONOMY_START, '2026-11-15');
+  assert.equal(ECONOMY_START_LABEL, 'Sunday, Nov 15');
   assert.equal(weekOf('2026-11-16'), '2026-11-16');
   assert.equal(weekOf('2026-11-22'), '2026-11-16'); // Sunday
   assert.equal(weekOf('2026-11-23'), '2026-11-23');
   assert.equal(weekOf('2026-12-01'), '2026-11-30');
-  assert.ok(!economyOpen('2026-11-15'));
-  assert.ok(economyOpen('2026-11-16'));
-  const w = walletFor(null, '2026-11-15');
-  assert.equal(earn(w, '2026-11-15', { won: true, monsLeft: 6 }), 0, 'no prize money before it starts');
+  assert.ok(!economyOpen('2026-11-14'));
+  assert.ok(economyOpen('2026-11-15'));
+  const w = walletFor(null, '2026-11-14');
+  assert.equal(earn(w, '2026-11-14', { won: true, monsLeft: 6 }), 0, 'no prize money before it starts');
+  // Launch day is a Sunday: it gets the full free bag, and Monday refills it.
+  const sunday = walletFor(null, '2026-11-15');
+  useItem(sunday, '2026-11-15', 'maxrevive');
+  assert.equal(bagOf(walletFor(sunday, '2026-11-16')).maxrevive.total, 1);
 });
 
 test('a week: the free bag, buying, using up to the limit, free items first', () => {

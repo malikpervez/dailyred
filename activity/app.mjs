@@ -39,7 +39,7 @@ import {
 } from '../web/daily.js';
 import { previousMonth } from './bot.mjs';
 import { dayNumber } from '../web/daily.js';
-import { walletFor, earn, buy, useItem, usedIn, economyOpen, EconomyError } from '../web/economy.js';
+import { walletFor, earn, buy, useItem, usedIn, economyOpen, EconomyError, ECONOMY_START_LABEL } from '../web/economy.js';
 
 // daily.js saves through this; the server saves players itself.
 useStatsStorage({ read: () => null, write: () => {} });
@@ -330,7 +330,7 @@ export function createApp({
   const walletOf = (id, date) => walletFor(store.getWallet(id), date);
 
   function spend(user, date, change) {
-    if (!economyOpen(date)) throw new HttpError(400, 'The PokéMart and the bag open on Monday, Nov 16.');
+    if (!economyOpen(date)) throw new HttpError(400, `The PokéMart and the bag open on ${ECONOMY_START_LABEL}.`);
     if (!store.getPlayer(user.id)) store.savePlayer(loadPlayer(user));
     const wallet = walletOf(user.id, date);
     try {

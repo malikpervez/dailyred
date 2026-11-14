@@ -1,4 +1,4 @@
-// Money and items, from No. 16 (Monday, Nov 16, 2026): prize money for every
+// Money and items, from No. 15 (Sunday, Nov 15, 2026): prize money for every
 // official battle, a PokéMart, and a free bag that refills every Monday. The
 // same rules run on the page (the plain website keeps the wallet in this
 // browser) and on the activity server (Discord sign-in: the server keeps it
@@ -17,7 +17,10 @@
 // Picked from a simulated month (30 players, 900 battles): with the free bag
 // and these prices, about 1 win in 5 against RED (1 in 7 without items).
 
-export const ECONOMY_START = '2026-11-16';
+export const ECONOMY_START = '2026-11-15';
+// For messages: "Sunday, Nov 15".
+export const ECONOMY_START_LABEL = new Date(`${ECONOMY_START}T12:00:00Z`)
+  .toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'UTC' });
 export const CARRY_LIMIT = 4; // items per battle
 export const WEEKLY_BAG = { fullrestore: 3, revive: 2, maxrevive: 1 };
 
@@ -130,7 +133,7 @@ export function bagOf(wallet) {
 // Items used so far in `date`'s official battle.
 export const usedIn = (wallet, date) => (wallet.battle?.date === date ? wallet.battle.used : 0);
 
-// Pays out an official battle's result; returns the prize (0 before No. 16).
+// Pays out an official battle's result; returns the prize (0 before ECONOMY_START).
 export function earn(wallet, date, result) {
   if (!economyOpen(date)) return 0;
   const prize = prizeFor(result);
