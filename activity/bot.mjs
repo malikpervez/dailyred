@@ -22,6 +22,9 @@
 //     below the recap, so each day starts with something to tap.
 //   - News: a one-time announcement on the morning a feature starts (NEWS),
 //     between the recap and today's card.
+//   - Each result: when someone finishes the day's battle, a short post of
+//     how it went (squares, prize money, their place in the month's race),
+//     just below the card, like Wordle's app.
 //   - /dailyred: your day, how to play and the buttons, privately.
 //   - Buttons on all of them: "Battle RED" opens the website for that server
 //     (or, without PUBLIC_URL, launches the Activity),
@@ -97,19 +100,22 @@ export function compareMonths(a, b) {
 
 // `crowned`: the set of player ids who are the reigning Pokémon Master.
 const who = (id, crowned) => `<@${id}>${crowned?.has(id) ? ' 👑' : ''}`;
+const ordinal = (n) => `${n}${{ 1: 'st', 2: 'nd', 3: 'rd' }[n % 100 > 10 && n % 100 < 14 ? 0 : n % 10] ?? 'th'}`;
 
 // `foe`: the day's trainer's name (RED, or the week's on the Road to RED).
-function resultLine(player, result, streaks, crowned, foe = 'RED') {
+// `named`: start with the player's mention (off where their name is shown already).
+function resultLine(player, result, streaks, crowned, foe = 'RED', { named = true } = {}) {
+  const name = named ? `${who(player.id, crowned)} ` : '';
   // Items from the bag (from Nov 15) count with the turns.
   const turns = (result.turns ? ` · ${plural(result.turns, 'turn')}` : '') + (result.items ? ` · 🎒 ${plural(result.items, 'item')}` : '');
   let line;
   if (result.won) {
-    line = `${who(player.id, crowned)} **Beat ${foe}**${result.monsLeft != null ? ` with ${result.monsLeft} left` : ''}${turns}`;
+    line = `${name}**Beat ${foe}**${result.monsLeft != null ? ` with ${result.monsLeft} left` : ''}${turns}`;
     if (streaks.winStreak > 1) line += ` · 🔥 ${streaks.winStreak}-day win streak`;
   } else if (result.gaveUp) {
-    line = `${who(player.id, crowned)} 🏃 Ran from ${foe}${result.turns ? ` on turn ${result.turns}` : ''}`;
+    line = `${name}🏃 Ran from ${foe}${result.turns ? ` on turn ${result.turns}` : ''}`;
   } else {
-    line = `${who(player.id, crowned)} Lost to ${foe}${result.redLeft != null ? `, he had ${result.redLeft} left` : ''}${turns}`;
+    line = `${name}Lost to ${foe}${result.redLeft != null ? `, he had ${result.redLeft} left` : ''}${turns}`;
     if (streaks.dayStreak > 1) line += ` · 📅 ${streaks.dayStreak} days in a row`;
   }
   const grid = squares(result.monsLeft);
@@ -504,6 +510,56 @@ export function createBot({
     };
     const next = (queues.get(queueKey) ?? Promise.resolve()).then(run)
       .catch((err) => log.warn(`Daily Red bot couldn't update the card for server ${guildId}: ${err.message}`));
+    queues.set(queueKey, next);
+    next.finally(() => { if (queues.get(queueKey) === next) queues.delete(queueKey); });
+    return next;
+  }
+
+  // --- Each result -----------------------------------------------------------------------
+  // When someone finishes the day's battle (POST /api/battle, app.mjs): how
+  // it went, with their name and avatar, the squares, the prize money it
+  // paid (`prize`, web/economy.js) and their place in the month's race. It
+  // goes in the card's queue, so it lands just below the card. Never throws.
+  function resultMessage(guildId, date, playerId, { prize = 0 } = {}) {
+    const room = `g:${guildId}`;
+    const { results, players } = dayResults(room, date);
+    const player = players.find((p) => p.id === playerId);
+    const result = results.get(playerId);
+    if (!player || !result) return null;
+    const crowned = crownedOn(guildId, date);
+    const foe = trainerOn(date);
+    const month = date.slice(0, 7);
+    const race = monthStandings(room, month).filter((x) => x.wins > 0);
+    const place = race.findIndex((x) => x.id === playerId);
+    const extras = [
+      prize > 0 && `💰 +₽${prize.toLocaleString('en-US')}`,
+      place >= 0 && `🏆 ${ordinal(place + 1)} in the ${monthName(month)} race with ${plural(race[place].wins, 'win')}`,
+    ].filter(Boolean).join(' · ');
+    const all = [...results.values()];
+    return {
+      embeds: [{
+        color: result.won ? GOLD : RED,
+        author: {
+          name: `${player.name}${crowned.has(playerId) ? ' 👑' : ''} · Daily Red No. ${dayNumber(date)}`,
+          ...(player.avatarUrl && { icon_url: player.avatarUrl }),
+        },
+        description: [resultLine(player, result, currentStreaks(player.stats, date), crowned, foe.name, { named: false }), extras].filter(Boolean).join('\n'),
+        footer: { text: `${all.filter((r) => r.won).length} of ${all.length} here beat ${foe.name} today` },
+      }],
+      components: buttons(battleLabel(date), guildId),
+      allowed_mentions: { parse: [] },
+    };
+  }
+
+  function postResult(guildId, date, playerId, details = {}) {
+    if (!posting) return Promise.resolve();
+    const queueKey = `${guildId}:${date}`;
+    const run = async () => {
+      const message = resultMessage(guildId, date, playerId, details);
+      if (message) await post(guildId, message);
+    };
+    const next = (queues.get(queueKey) ?? Promise.resolve()).then(run)
+      .catch((err) => log.warn(`Daily Red bot couldn't post a result in server ${guildId}: ${err.message}`));
     queues.set(queueKey, next);
     next.finally(() => { if (queues.get(queueKey) === next) queues.delete(queueKey); });
     return next;
@@ -1079,6 +1135,7 @@ export function createBot({
 
   return {
     updateCard,
+    postResult,
     ensureCard,
     refreshBoard,
     tick,

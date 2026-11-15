@@ -504,7 +504,13 @@ test('when a battle finishes and the card has scrolled up, it moves back to the 
     assert.equal(res.status, 200);
     await new Promise((ok) => setTimeout(ok, 50)); // the card updates in the background
     assert.equal(discord.deletes().at(-1).path, `/channels/c-general/messages/${moved}`);
-    assert.equal(discord.posts().length, 3);
+    assert.equal(discord.posts().length, 4, 'the card again, then the result just below it');
+    const [card, result] = discord.posts().slice(-2);
+    assert.equal(card.body.embeds[0].title, 'Daily Red No. 12 · Thu, Nov 12');
+    assert.equal(result.body.embeds[0].author.name, 'misty · Daily Red No. 12');
+    assert.equal(description(result), 'Lost to RED, he had 3 left · 25 turns\n⬛⬛⬛⬛⬛⬛');
+    assert.equal(result.body.embeds[0].footer.text, '1 of 2 here beat RED today');
+    assert.deepEqual(result.body.allowed_mentions, { parse: [] });
   } finally {
     server.close();
   }
@@ -749,6 +755,13 @@ test("the Road to RED: from Monday, Nov 23 the card, recap and buttons name the 
   store.saveResult({ playerId: '1', date: '2026-11-23', won: true, monsLeft: 3, redLeft: 0, turns: 18 });
   await bot.updateCard(GUILD, '2026-11-23');
   assert.match(description(discord.edits().at(-1)), /<@1> \*\*Beat Blue\*\* with 3 left · 18 turns · 🔥 2-day win streak/);
+  // ...and its own post: how it went, the prize money and the month's race.
+  await bot.postResult(GUILD, '2026-11-23', '1', { prize: 1210 });
+  const posted = discord.posts().at(-1);
+  assert.deepEqual(posted.body.embeds[0].author, { name: 'Ash · Daily Red No. 23' });
+  assert.equal(description(posted), '**Beat Blue** with 3 left · 18 turns · 🔥 2-day win streak\n🟥🟥🟥⬛⬛⬛\n💰 +₽1,210 · 🏆 1st in the November race with 2 wins');
+  assert.equal(posted.body.embeds[0].footer.text, '1 of 1 here beat Blue today');
+  assert.equal(posted.body.components[0].components[0].label, 'Battle Blue');
   clock = new Date('2026-11-24T11:00:00Z');
   const before = discord.posts().length;
   await bot.tick();

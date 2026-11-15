@@ -209,7 +209,8 @@ In the browser console, `dailyRed.teams`, `dailyRed.stats`, `dailyRed.wallet` an
 Daily Red can also run inside Discord as an Activity, with Discord sign-in,
 stats that follow you across devices, a "Today in this server" board with
 Today / This month / Streaks / All time tabs, and (with the bot) a live card
-in #general that fills in as people play, a recap of yesterday every morning
+in #general that fills in as people play, a post of each player's result as
+they finish, a recap of yesterday every morning
 at 6:00 Eastern like Wordle, a leaderboard every Monday, opt-in 🔔 reminders,
 and the Pokémon Master of the Month (most wins) on the 1st, who wears a 👑
 the next month and joins the server's Hall of Fame. Friends who can't open

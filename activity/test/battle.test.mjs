@@ -310,7 +310,8 @@ test('the bag: an item takes your turn, goes first, and works like in the games'
       if (item === 'revive') {
         assert.equal(turn[1], `${mon.species} was revived!`);
         // Back with half its HP, and it can be sent out again.
-        const later = result.log.slice(i + 1).find((e) => e.req)?.req.party[Number(slot) - 1];
+        // (By species: switching reorders the party, so slot numbers move.)
+        const later = result.log.slice(i + 1).find((e) => e.req)?.req.party.find((p) => p.species === mon.species);
         if (later) {
           assert.notEqual(later.status, 'fnt');
           assert.ok(later.hp > 0 && later.hp <= Math.ceil(later.maxhp / 2), `${later.hp}/${later.maxhp}`);

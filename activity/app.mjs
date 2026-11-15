@@ -421,6 +421,7 @@ export function createApp({
 
     const wallet = walletOf(user.id, date);
     let prize = 0;
+    let finished = false; // the day's result, saved just now
     if (body.event === 'start') {
       markBattleStarted(stats, date);
     } else if (body.event === 'result') {
@@ -434,6 +435,7 @@ export function createApp({
         };
         store.saveResult({ playerId: user.id, date, ...result, items: usedIn(wallet, date) });
         prize = earn(wallet, date, result); // once a day: the first result counts
+        finished = true;
       }
       recordResult(stats, date, body.won); // ignored if the day already has a result
     } else {
@@ -446,6 +448,7 @@ export function createApp({
     if (bot && room?.startsWith('g:')) {
       bot.updateCard(room.slice(2), date, { bump: body.event === 'result' });
       if (body.event === 'result') bot.refreshBoard?.(room.slice(2)); // the posted Leaderboard too
+      if (finished) bot.postResult?.(room.slice(2), date, user.id, { prize }); // and how it went, below the card
     }
     return { stats, wallet, prize };
   }

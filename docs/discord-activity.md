@@ -238,6 +238,11 @@ The bot posts these in each server's **#general**:
   the card has scrolled up (10 or more newer messages in the channel), the
   bot deletes it and posts it again at the bottom, so there's still one card
   a day and nobody gets pinged.
+- **Each result**: when someone finishes the day's battle, a short post just
+  below the card with their name and avatar: how it went ("Beat Blue with 3
+  left · 18 turns"), their 🟥⬛ squares, items used and streak, the prize money
+  it paid and their place in the month's race. Nobody gets pinged. Practice
+  runs aren't posted, and neither is a battle left halfway.
 - **The morning recap**: at 6:00 AM Eastern, yesterday's results ranked (wins
   first, then Pokémon left, then fewest turns), win streak leaders, the
   month's Master race, how many days in a row the server has played, and who
