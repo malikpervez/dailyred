@@ -1,6 +1,6 @@
-// End-to-end test of a Cup Monday in headless Chrome: four players sign up
-// on the Cup page, the pool comes out at 6 PM, and the live draft runs at
-// 8 PM (activity/cup-week.mjs), each player in their own browser: picks show
+// End-to-end test of a Cup's start in headless Chrome: four players sign up
+// on the Cup page from the 25th, the pool comes out on the 1st at 6 PM, and
+// the live draft runs at 8 PM (activity/cup-month.mjs), each player in their own browser: picks show
 // up on everyone's screen, a player who runs out of time gets their wish
 // list's first choice, and one on autodraft picks straight away.
 //
@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { chromium } from 'playwright-core';
 import { createApp } from '../activity/app.mjs';
-import { createCupWeek } from '../activity/cup-week.mjs';
+import { createCupMonth } from '../activity/cup-month.mjs';
 import { openStore } from '../activity/store.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,11 +42,11 @@ const fakeDiscord = async (url, init = {}) => {
 const store = openStore(':memory:');
 store.savePlayer({ id: 'someone', name: 'Someone', avatarUrl: '', stats: {} });
 store.joinRoom(`g:${GUILD}`, 'someone'); // a server with Daily Red
-let time = Date.parse('2026-11-23T10:00:00Z'); // Monday, 5 AM in New York
+let time = Date.parse('2026-11-25T10:00:00Z'); // Nov 25, 5 AM in New York
 const at = (iso) => { time = Date.parse(iso); };
-const cupWeek = createCupWeek({ store, loadEngine: () => import('../activity/cup-engine.mjs'), now: () => time, log: { log() {}, warn() {} } });
+const cupMonth = createCupMonth({ store, loadEngine: () => import('../activity/cup-engine.mjs'), now: () => time, log: { log() {}, warn() {} } });
 const http = createServer(createApp({
-  webRoot: join(ROOT, 'web'), store, clientId: '1234', clientSecret: 'secret', fetch: fakeDiscord, publicUrl: 'http://127.0.0.1:0', cupWeek,
+  webRoot: join(ROOT, 'web'), store, clientId: '1234', clientSecret: 'secret', fetch: fakeDiscord, publicUrl: 'http://127.0.0.1:0', cupMonth,
 }));
 await new Promise((ok) => http.listen(0, '127.0.0.1', ok));
 const site = `http://127.0.0.1:${http.address().port}`;
@@ -78,17 +78,20 @@ const shot = (page, name) => page.screenshot({ path: join(OUT, `cup-${name}.png`
 const cupOf = (page) => page.evaluate(() => window.dailyRedCupHub.cup);
 
 try {
-  step('before 6 AM Monday: no Cup yet, and a countdown to sign-ups');
+  step('before 6 AM on the 25th: no Cup this month, and a countdown to next month\'s sign-ups');
   const ash = await signedIn('ash');
-  assert.equal(await ash.textContent('#cup-title'), 'No Cup yet this week');
-  assert.match(await ash.textContent('#cup-clock-label'), /Sign-ups open in/);
+  assert.equal(await ash.textContent('#cup-title'), 'No Cup in November');
+  assert.equal(await ash.textContent('#cup-clock-label'), 'Sign-ups for December open in');
+  assert.equal(await ash.textContent('#cup-clock-time'), '1h 00m');
   assert.equal(await ash.isVisible('#cup-join'), false);
 
   step('sign-ups: players join from the page, and everyone sees the list grow');
-  at('2026-11-23T14:00:00Z'); // 9 AM
+  at('2026-11-25T14:00:00Z'); // 9 AM
   await ash.reload();
   await ash.waitForSelector('#cup-join');
-  assert.equal(await ash.textContent('#cup-title'), 'Sign-ups are open');
+  assert.equal(await ash.textContent('#cup-title'), 'Sign-ups are open for December');
+  assert.equal(await ash.textContent('#cup-clock-time'), '6d 9h');
+  assert.equal(await ash.textContent('.masthead-meta'), 'December 2026');
   await ash.click('#cup-join');
   await ash.waitForSelector('.cup-in');
   const pages = { ash };
@@ -98,12 +101,12 @@ try {
     await pages[name].waitForSelector('.cup-in');
   }
   await ash.waitForFunction(() => document.querySelectorAll('.cup-player').length === 4);
-  assert.equal(await ash.textContent('#cup-players-title'), 'Players (4 of 8)');
+  assert.equal(await ash.textContent('#cup-players-title'), 'Players (4 of 16)');
   await shot(ash, 'signups');
 
-  step('6 PM: sign-ups close, the order is drawn and the pool comes out on everyone\'s page');
-  at('2026-11-23T23:00:00Z');
-  await cupWeek.tick();
+  step('the 1st at 6 PM: sign-ups close, the order is drawn and the pool comes out on everyone\'s page');
+  at('2026-12-01T23:00:00Z');
+  await cupMonth.tick();
   await ash.waitForFunction(() => document.querySelectorAll('.pool-mon').length === 24);
   assert.equal(await ash.textContent('#cup-title'), 'The pool is out');
   assert.match(await ash.textContent('#cup-clock-label'), /The draft starts in/);
@@ -130,8 +133,8 @@ try {
   await ash.waitForFunction(() => window.dailyRedCupHub.cup.players.find((p) => p.name === 'Gary').autodraft);
 
   step('8 PM: the draft. Picks show up everywhere; autodraft picks straight away');
-  at('2026-11-24T01:00:00Z');
-  await cupWeek.tick();
+  at('2026-12-02T01:00:00Z');
+  await cupMonth.tick();
   await ash.waitForFunction(() => window.dailyRedCupHub.cup.stage === 'draft');
   let missed = false;
   let screenshots = 0;
@@ -147,7 +150,7 @@ try {
       await ash.waitForSelector('#cup-hub[data-my-turn="true"]');
       assert.equal(await ash.textContent('#cup-title'), 'Your pick!');
       time += 91 * 1000;
-      await cupWeek.tick();
+      await cupMonth.tick();
       await ash.waitForFunction((n) => window.dailyRedCupHub.cup.picks.length > n, before);
       const pick = (await cupOf(ash)).picks[before];
       assert.deepEqual([pick.auto, pick.pool], [true, wish.find((i) => !state.picks.some((p) => p.pool === i))]);

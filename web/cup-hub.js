@@ -1,6 +1,6 @@
-// The Daily Red Cup's page for a server: cup.html?g=<server id>. Sign-ups on
-// Monday, then the pool (with your wish list) and the live draft at 8 PM New
-// York time. Everything comes from the server (activity/cup-week.mjs), which
+// The Daily Red Cup's page for a server: cup.html?g=<server id>. A Cup a
+// month: sign-ups from the 25th, then on the 1st the pool (with your wish
+// list) and the live draft at 8 PM New York time. Everything comes from the server (activity/cup-month.mjs), which
 // sends the whole Cup again whenever anything changes.
 import { el, sprite, typeBadges, monCard } from './mon-card.js';
 
@@ -9,7 +9,7 @@ const app = document.querySelector('.app');
 const params = new URLSearchParams(location.search);
 
 let guild = params.get('g') ?? '';
-let cup = null; // the server's view (cup-week.mjs view())
+let cup = null; // the server's view (cup-month.mjs view())
 let offset = 0; // server clock - this clock
 let sort = 'bst';
 let hideTaken = false;
@@ -62,12 +62,16 @@ function toast(text) {
 
 const serverNow = () => Date.now() + offset;
 const clockTime = (ms) => new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
-const dayLabel = (week) => new Date(`${week}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+const dayLabel = (ms) => new Date(ms).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/New_York' });
+const monthName = (month) => new Date(`${month}-15T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+const monthLabel = (month) => new Date(`${month}-15T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 
 function countdown(ms) {
   const s = Math.max(0, Math.ceil(ms / 1000));
+  const d = Math.floor(s / 86400);
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
+  if (d) return `${d}d ${h % 24}h`;
   if (h) return `${h}h ${String(m).padStart(2, '0')}m`;
   return `${m}:${String(s % 60).padStart(2, '0')}`;
 }
@@ -75,10 +79,14 @@ function countdown(ms) {
 // What the big clock counts down to.
 function clockTarget() {
   if (!cup) return null;
-  if (cup.next) return { at: cup.next.signupsOpen, label: 'Sign-ups open in' };
+  if (['none', 'cancelled'].includes(cup.stage)) {
+    const next = cup.times && serverNow() < cup.times.signupsOpen ? cup.times : cup.next;
+    return next && { at: next.signupsOpen, label: `Sign-ups for ${monthName(next.month ?? cup.month)} open in` };
+  }
   if (cup.stage === 'signup') return { at: cup.times.signupsClose, label: 'Sign-ups close in' };
   if (cup.stage === 'pool') return { at: cup.times.draft, label: 'The draft starts in' };
   if (cup.stage === 'draft' && cup.deadline) return { at: cup.deadline, label: cup.onClock === cup.me.id ? 'Your pick: time left' : 'Time left for this pick' };
+  if (cup.stage === 'drafted' && serverNow() < cup.times.bracket) return { at: cup.times.bracket, label: 'The bracket starts in' };
   return null;
 }
 
@@ -112,19 +120,16 @@ function show(next) {
 function render() {
   const { stage, me } = cup;
   document.title = myTurn() ? 'Your pick! · Daily Red Cup' : 'Daily Red Cup';
-  $('cup-label').textContent = `Week of ${dayLabel(cup.week)}`;
+  $('cup-label').textContent = monthLabel(cup.month);
+  const nextOpen = cup.next ? `Sign-ups for ${monthName(cup.next.month)} open ${dayLabel(cup.next.signupsOpen)} at 6 AM ET.` : '';
   const banner = {
-    none: ['No Cup yet this week', 'Sign-ups open Monday at 6 AM ET: up to 8 players, then a live draft that night.'],
-    signup: ['Sign-ups are open', `Up to ${cup.max} players (at least ${cup.min}). Sign-ups close at ${clockTime(cup.times?.signupsClose)} ET and the draft is tonight at ${clockTime(cup.times?.draft)} ET.`],
-    cancelled: ['No Cup this week', cup.reason === 'too-few' ? `Only ${cup.players?.length} signed up, and the Cup needs ${cup.min}. Try again next Monday!` : 'Nobody signed up. Try again next Monday!'],
-    pool: ['The pool is out', `The draft starts at ${clockTime(cup.times?.draft)} ET, ${cup.pickSeconds} seconds a pick. Look over the pool and rank a wish list: if your time runs out, the draft picks from it for you.`],
+    none: [`The ${monthName(cup.month)} Cup`, `Sign-ups open on the 25th of each month at 6 AM ET: up to ${cup.max} players, then a live draft on the 1st.`],
+    signup: [`Sign-ups are open for ${monthName(cup.month)}`, `Up to ${cup.max} players (at least ${cup.min}). Sign-ups close ${dayLabel(cup.times?.signupsClose)} at ${clockTime(cup.times?.signupsClose)} ET, and the live draft is that night at ${clockTime(cup.times?.draft)} ET. Then a double-elimination bracket all month, a round every ${cup.roundDays} days.`],
+    cancelled: [`No Cup in ${monthName(cup.month)}`, `${cup.reason === 'too-few' ? `Only ${cup.players?.length} signed up, and the Cup needs ${cup.min}.` : 'Nobody signed up.'} ${nextOpen}`],
+    pool: ['The pool is out', `The draft starts tonight at ${clockTime(cup.times?.draft)} ET, ${cup.pickSeconds} seconds a pick. Look over the pool and rank a wish list: if your time runs out, the draft picks from it for you.`],
     draft: [myTurn() ? 'Your pick!' : `${cup.onClock ? nameOf(cup.onClock) : 'Someone'} is picking`, cup.pick ? `Round ${cup.pick.round} of 6 · pick ${cup.pick.overall} of ${cup.totalPicks}` : ''],
-    drafted: ['The teams are set', 'Everyone has their six. The bracket starts Tuesday.'],
+    drafted: ['The teams are set', `Everyone has their six for ${monthName(cup.month)}. The bracket starts ${dayLabel(cup.times?.bracket)}: a round every ${cup.roundDays} days.`],
   }[stage] ?? ['Daily Red Cup', ''];
-  if (cup.next && stage !== 'none') {
-    banner[0] = `Last week: ${banner[0].toLowerCase()}`;
-    banner[1] = 'Sign-ups for this week open Monday at 6 AM ET.';
-  }
   $('cup-title').textContent = banner[0];
   $('cup-note').textContent = banner[1];
   // The pick just made, at the top (on a phone the board is further down).
@@ -137,7 +142,7 @@ function render() {
   // Join / Leave / Autodraft.
   const actions = $('cup-actions');
   actions.replaceChildren();
-  if (stage === 'signup' && !cup.next) {
+  if (stage === 'signup') {
     if (me.joined) {
       actions.append(el('span', 'cup-in', "✓ You're in"));
       const leave = el('button', 'button button-small', 'Leave');
@@ -145,7 +150,7 @@ function render() {
       leave.addEventListener('click', () => act('leave'));
       actions.append(leave);
     } else if (cup.players.length < cup.max) {
-      const join = el('button', 'button button-primary', 'Join this week’s Cup');
+      const join = el('button', 'button button-primary', `Join the ${monthName(cup.month)} Cup`);
       join.type = 'button';
       join.id = 'cup-join';
       join.addEventListener('click', () => act('join'));

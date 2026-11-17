@@ -7,8 +7,8 @@
 // the first Pokémon still there on their wish list, or else the best one left
 // (highest base stat total).
 //
-// A draft is plain data (saved as JSON with the rest of the week's Cup, see
-// cup-week.mjs): { order: [player ids], pool: [{ set, info, bst }], picks:
+// A draft is plain data (saved as JSON with the rest of the month's Cup, see
+// cup-month.mjs): { order: [player ids], pool: [{ set, info, bst }], picks:
 // [{ player, pool: index, auto, at }], wishlists: { player id: [indexes] } }.
 
 export const TEAM_SIZE = 6;

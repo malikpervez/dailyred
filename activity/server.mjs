@@ -30,7 +30,7 @@ import { openStore } from './store.mjs';
 import { dailySeed, teamVersion } from '../web/daily.js';
 import { trainerOn } from '../web/road.js';
 import { createCup } from './cup.mjs';
-import { createCupWeek } from './cup-week.mjs';
+import { createCupMonth } from './cup-month.mjs';
 import { createCardPainter } from './card-image.mjs';
 
 // Values pasted into OMV's environment box can pick up spaces or quotes.
@@ -72,14 +72,14 @@ try {
   console.warn("activity/dist/team-of-day.mjs is missing (npm run build in activity/): the bot's card won't list today's team.");
 }
 
-// The Daily Red Cup's week (cup-week.mjs): sign-ups on Mondays, the pool at
+// The Daily Red Cup's week (cup-month.mjs): sign-ups on Mondays, the pool at
 // 6 PM, the live draft at 8 PM New York time. The bot posts about it.
 let bot = null;
-const cupWeek = createCupWeek({
+const cupMonth = createCupMonth({
   store,
   onChange: (cup, what) => bot?.cupChanged?.(cup, what),
 });
-setInterval(() => cupWeek.tick().catch((err) => console.warn(`Cup: ${err.message}`)), 2000).unref();
+setInterval(() => cupMonth.tick().catch((err) => console.warn(`Cup: ${err.message}`)), 2000).unref();
 
 if ((env.DISCORD_BOT_TOKEN || env.DISCORD_PUBLIC_KEY) && env.DISCORD_CLIENT_ID) {
   bot = createBot({
@@ -94,7 +94,7 @@ if ((env.DISCORD_BOT_TOKEN || env.DISCORD_PUBLIC_KEY) && env.DISCORD_CLIENT_ID) 
     publicUrl: env.PUBLIC_URL || null,
     teamOfDay,
     cardPictures: Boolean(cardPicture),
-    cupWeek,
+    cupMonth,
     cupChannelName: env.CUP_CHANNEL || 'daily-red-cup',
   });
   bot.start();
@@ -125,7 +125,7 @@ const handle = createApp({
   publicUrl: env.PUBLIC_URL || null,
   cardPicture,
   cup,
-  cupWeek,
+  cupMonth,
 });
 console.log(env.PUBLIC_URL && env.DISCORD_CLIENT_SECRET
   ? `Website sign-in on: the app's only OAuth2 redirect must be ${env.PUBLIC_URL.replace(/\/$/, '')}/auth/callback`

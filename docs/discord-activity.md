@@ -348,11 +348,12 @@ the Monday leaderboard and reminders use the same zone) and `REMINDER_TIME`.
 If a server has no #general, the bot uses its system channel (where "welcome"
 messages go). The recap is skipped on days nobody in the server played.
 
-**The Daily Red Cup** (a weekly draft and bracket): make a text channel called
-**#daily-red-cup** that the bot can see and post in (or name another one with
-`CUP_CHANNEL`). Every Monday at 6 AM New York time the bot posts the week's
-sign-ups there with **Join** and **Leave** buttons, keeps that post up to date
-through the 8 PM draft, and mentions each player when it's their pick. Servers
+**The Daily Red Cup** (a monthly draft and bracket): make a text channel
+called **#daily-red-cup** that the bot can see and post in (or name another one
+with `CUP_CHANNEL`). On the 25th of each month at 6 AM New York time the bot
+posts next month's sign-ups there with **Join** and **Leave** buttons, keeps
+that post up to date through the live draft on the 1st at 8 PM, and mentions
+each player when it's their pick. Servers
 without the channel get no Cup posts. The Cup's page is
 `https://<your address>/cup.html?g=<server id>` (the post links to it).
 

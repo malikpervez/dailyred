@@ -225,24 +225,24 @@ NAS, and builds in a minute or two. Setup:
 
 ## The Daily Red Cup (in progress, on the `cup` branch)
 
-A weekly tournament between friends, in its own Discord channel: everyone who
-opts in by Monday 6 PM ET joins a fantasy-style draft (6 random Pokémon per
-player from all 386, picked in snake order, so careless drafters end up with a
-Metapod), then a double-elimination bracket of player-vs-player battles, with
-the grand final by Sunday.
+A monthly tournament between friends, in its own Discord channel: everyone
+who opts in by the 1st joins a fantasy-style draft (6 random Pokémon per player
+from all 386, picked in snake order, so careless drafters end up with a
+Metapod), then a double-elimination bracket of player-vs-player battles
+through the month.
 
-**Sign-ups and the draft** (phase 2, `activity/cup-week.mjs`,
-`activity/cup-draft.mjs`, `web/cup-hub.js`). Each Monday, New York time:
+**Sign-ups and the draft** (phase 2, `activity/cup-month.mjs`,
+`activity/cup-draft.mjs`, `web/cup-hub.js`). In New York time:
 
-- **6 AM** sign-ups open: up to 8 players, at least 4. Join on the Cup page
-  (`cup.html?g=<server>`) or with the **Join** button on the bot's post in
-  `#daily-red-cup`.
-- **6 PM** sign-ups close, the draft order is drawn at random and the pool
+- **The 25th, 6 AM** sign-ups for next month's Cup open: up to 16 players, at
+  least 4. Join on the Cup page (`cup.html?g=<server>`) or with the **Join**
+  button on the bot's post in `#daily-red-cup`.
+- **The 1st, 6 PM** sign-ups close, the draft order is drawn at random and the pool
   comes out: six Pokémon per player, any of the 386 (legendaries and junk
   alike), each a level 100 set with moves, item and ability made by the
   daily team's rules (`draftPool` in `web/battle/team.js`). Players look it
   over and rank a private wish list.
-- **8 PM** the live snake draft: 90 seconds a pick, everyone's page updating
+- **The 1st, 8 PM** the live snake draft: 90 seconds a pick, everyone's page updating
   as picks are made. When time runs out the pick is the first Pokémon still
   on that player's wish list, or else the best one left (highest base stat
   total). Players who can't be there turn on **autodraft**. The bot mentions
@@ -262,11 +262,11 @@ to move, and survives closing the page or restarting the server. After 24
 hours without a move, RED's AI makes it. The page is `cup.html?b=<id>`, with
 Daily Red's battle screen (the battle engine's remote mode, `web/cup.js`).
 
-Next (phase 3): the double-elimination bracket from Tuesday, one round a day
-with 24-hour match windows (a no-show forfeits), and the results in the Cup's
-channel. `cd tests && node cup.mjs` plays a Cup battle in two browsers,
+Next (phase 3): the double-elimination bracket from the 2nd, a round every 3
+days, one battle a match (a no-show forfeits when the round ends), and the
+results in the Cup's channel. `cd tests && node cup.mjs` plays a Cup battle in two browsers,
 closing one and restarting the server mid-battle; `node cup-draft.mjs` runs a
-Monday: four players sign up, the pool comes out and they draft live.
+Cup's start: four players sign up, the pool comes out and they draft live.
 
 ## Copyright and licenses
 

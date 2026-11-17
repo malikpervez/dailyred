@@ -1,4 +1,4 @@
-// The Daily Red Cup's page. cup.html?g=<server>: the week's Cup (sign-ups,
+// The Daily Red Cup's page. cup.html?g=<server>: the month's Cup (sign-ups,
 // the draft: cup-hub.js). cup.html?b=<battle id>: a battle. The battle runs on
 // the server (activity/cup.mjs); this page shows it with Daily Red's battle
 // screen (battle/view.js) through the battle engine's remote mode, sends your

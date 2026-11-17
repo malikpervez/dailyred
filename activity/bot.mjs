@@ -41,7 +41,7 @@ import {
   economyOpen, ECONOMY_START, ECONOMY_START_LABEL, PRIZE, ITEMS, WEEKLY_BAG, CARRY_LIMIT, prizeFor, walletFor,
 } from '../web/economy.js';
 import { ROAD, ROAD_START, TRAINERS, trainerOn, roadOpen } from '../web/road.js';
-import { scheduleFor, MAX_PLAYERS, MIN_PLAYERS } from './cup-week.mjs';
+import { scheduleFor, nextMonth as cupNextMonth, MAX_PLAYERS, MIN_PLAYERS, ROUND_DAYS } from './cup-month.mjs';
 import { onClock as draftOnClock } from './cup-draft.mjs';
 
 const API = 'https://discord.com/api/v10';
@@ -152,7 +152,7 @@ export function createBot({
   cardPictures = false, // whether the server draws /card/<date>.png (card-image.mjs)
   api = API,
   log = console,
-  cupWeek = null, // cup-week.mjs: the Daily Red Cup, posted in #<cupChannelName>
+  cupMonth = null, // cup-month.mjs: the Daily Red Cup, posted in #<cupChannelName>
   cupChannelName = 'daily-red-cup',
 }) {
   // The public key as pasted from the Developer Portal: 64 hex digits.
@@ -1097,11 +1097,13 @@ export function createBot({
         });
       }
     }
-    // Mondays from 6 AM: the Cup's sign-ups, in servers with a Cup channel
-    // (cupWeek.current() opens them; the post follows via cupChanged()).
-    if (cupWeek && weekday === 'Mon' && time >= '06:00' && time < '18:00') {
+    // From the 25th at 6 AM to the 1st: next month's Cup sign-ups, in servers
+    // with a Cup channel (cupMonth.current() opens them when it's time; the
+    // post follows via cupChanged()).
+    const day = Number(today.slice(8));
+    if (cupMonth && (day >= 25 || day === 1)) {
       for (const guildId of guilds) {
-        if (await cupChannelFor(guildId)) cupWeek.current(guildId);
+        if (await cupChannelFor(guildId)) cupMonth.current(guildId);
       }
     }
     if (time >= reminderTime) {
@@ -1114,10 +1116,10 @@ export function createBot({
     }
   }
 
-  // --- The Daily Red Cup (cup-week.mjs) -----------------------------------------------------------
+  // --- The Daily Red Cup (cup-month.mjs) -----------------------------------------------------------
   //
-  // Only in servers with a #daily-red-cup channel: on Mondays at 6 AM the
-  // sign-up post (Join / Leave), edited as the week goes on into the draft
+  // Only in servers with a #daily-red-cup channel: on the 25th at 6 AM the
+  // sign-up post for next month (Join / Leave), edited into the draft
   // board; a mention for each player when it's their pick (deleted once
   // they've picked); and one for everyone when the pool is out and when the
   // teams are set.
@@ -1143,27 +1145,28 @@ export function createBot({
   const speciesOf = (cup, index) => cup.draft.pool[index].set.species;
 
   function cupBoardMessage(cup) {
-    const times = scheduleFor(cup.week);
+    const times = scheduleFor(cup.month);
+    const firstDay = dateLabel(`${cup.month}-01`);
     const { players, draft } = cup;
     const lines = [];
     let color = CUP_GOLD;
     if (cup.stage === 'signup') {
       lines.push(
-        `Sign-ups are open until **${etTime(times.signupsClose)} ET** today: up to ${MAX_PLAYERS} players, at least ${MIN_PLAYERS}.`,
-        `The **live draft** is tonight at **${etTime(times.draft)} ET**: a pool of six random Pokémon per player (any of the 386, level 100, moves and items set), picked in turn, snake order, 90 seconds a pick. Whatever's left goes to whoever's left!`,
-        'Then a **double-elimination bracket**, one round a day from Tuesday to the final on Sunday.',
+        `Sign-ups are open until **${firstDay} at ${etTime(times.signupsClose)} ET**: up to ${MAX_PLAYERS} players, at least ${MIN_PLAYERS}.`,
+        `The **live draft** is that night at **${etTime(times.draft)} ET**: a pool of six random Pokémon per player (any of the 386, level 100, moves and items set), picked in turn, snake order, 90 seconds a pick. Whatever's left goes to whoever's left! Can't make it? Rank a wish list and turn on autodraft.`,
+        `Then a **double-elimination bracket** all month: a round every ${ROUND_DAYS} days, one battle a match, whenever you and your opponent are both on.`,
         '',
         `**Players (${players.length} of ${MAX_PLAYERS})**`,
         players.length ? players.map((p) => mention(p.id)).join(' ') : 'Nobody yet: be the first!',
       );
     } else if (cup.stage === 'cancelled') {
       color = 0x808080;
-      lines.push(`No Cup this week: ${players.length} signed up, and it needs ${MIN_PLAYERS}. Sign-ups open again next Monday at 6 AM ET.`);
+      lines.push(`No Cup this month: ${players.length} signed up, and it needs ${MIN_PLAYERS}. Sign-ups for ${monthName(cupNextMonth(cup.month))} open on the 25th at 6 AM ET.`);
     } else if (draft) {
       const picks = (id) => draft.picks.filter((p) => p.player === id).map((p) => speciesOf(cup, p.pool));
       if (cup.stage === 'pool') lines.push(`Sign-ups are closed: **${players.length} players**. The pool is out: look it over and rank a wish list before the draft at **${etTime(times.draft)} ET**.`, '');
       if (cup.stage === 'draft') lines.push(`The draft is on: pick **${draft.picks.length + 1} of ${draft.pool.length}**.`, '');
-      if (cup.stage === 'drafted') lines.push('**The teams are set!** The bracket starts Tuesday.', '');
+      if (cup.stage === 'drafted') lines.push(`**The teams are set!** The bracket starts tomorrow: a round every ${ROUND_DAYS} days.`, '');
       lines.push(cup.stage === 'pool' ? '**Draft order**' : '**Teams**');
       players.forEach((p, i) => {
         const team = picks(p.id);
@@ -1180,7 +1183,7 @@ export function createBot({
     return {
       embeds: [{
         color,
-        title: `🏆 Daily Red Cup · week of ${dateLabel(cup.week).replace(/^\w+, /, '')}`,
+        title: `🏆 Daily Red Cup · ${monthLabel(cup.month)}`,
         description: lines.join('\n'),
       }],
       components: row.length ? [{ type: 1, components: row }] : [],
@@ -1240,10 +1243,10 @@ export function createBot({
     };
     const everyone = cup.players.map((p) => p.id);
     if (what === 'closed') {
-      await ping(`🏆 Sign-ups are closed! ${everyone.map(mention).join(' ')}: the pool is out. Look it over and rank your wish list before the draft at ${etTime(scheduleFor(cup.week).draft)} ET.`, everyone);
+      await ping(`🏆 Sign-ups are closed! ${everyone.map(mention).join(' ')}: the pool is out. Look it over and rank your wish list before the draft tonight at ${etTime(scheduleFor(cup.month).draft)} ET.`, everyone);
     } else if (what === 'drafted') {
       await dropPing();
-      await ping(`🏆 The teams are set! ${everyone.map(mention).join(' ')}: the bracket starts Tuesday.`, everyone);
+      await ping(`🏆 The teams are set! ${everyone.map(mention).join(' ')}: the bracket starts tomorrow, a round every ${ROUND_DAYS} days.`, everyone);
     } else if (cup.stage === 'draft') {
       // Whose pick it is (not if they're on autodraft: theirs is instant).
       const up = cupOnClock(cup);
@@ -1269,16 +1272,17 @@ export function createBot({
       avatarUrl: u.avatar ? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=64` : `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(u.id) >> 22n) % 6n)}.png`,
     };
     try {
-      if (joining) cupWeek.join(body.guild_id, user);
-      else cupWeek.leave(body.guild_id, user);
+      if (joining) cupMonth.join(body.guild_id, user);
+      else cupMonth.leave(body.guild_id, user);
     } catch (err) {
       return reply(err.message);
     }
-    const times = scheduleFor(cupWeek.current(body.guild_id)?.week ?? zonedNow().date);
+    const month = cupMonth.current(body.guild_id).month;
+    const times = scheduleFor(month);
     const link = cupLink(body.guild_id);
     return reply(joining
-      ? `🏆 You're in this week's Daily Red Cup! Sign-ups close at ${etTime(times.signupsClose)} ET, when the pool comes out; the draft is tonight at ${etTime(times.draft)} ET.${link ? ` The draft room: ${link}` : ''}`
-      : "You've left this week's Cup. Changed your mind? Press Join again before sign-ups close.");
+      ? `🏆 You're in the ${monthName(month)} Daily Red Cup! Sign-ups close on ${dateLabel(`${month}-01`)} at ${etTime(times.signupsClose)} ET, when the pool comes out; the live draft is that night at ${etTime(times.draft)} ET.${link ? ` The draft room: ${link}` : ''}`
+      : `You've left the ${monthName(month)} Cup. Changed your mind? Press Join again before sign-ups close.`);
   }
 
   // --- Interactions (button presses) -----------------------------------------------------------
@@ -1325,7 +1329,7 @@ export function createBot({
     if (body.type === 2 && id === 'dailyred-preview' && body.guild_id) return { type: 4, data: previewMessage(body.guild_id) };
     if (body.type === 3 && (id === BANNER_ON || id === BANNER_OFF) && body.guild_id) return setBanner(body, id === BANNER_ON);
     if (body.type === 3 && (id === CUP_JOIN || id === CUP_LEAVE) && body.guild_id) {
-      if (!cupWeek) return { type: 4, data: { flags: 64, content: "The Cup isn't on in this server." } };
+      if (!cupMonth) return { type: 4, data: { flags: 64, content: "The Cup isn't on in this server." } };
       return cupButton(body, id === CUP_JOIN);
     }
     if (body.type === 2 && id === REDO_COMMAND && body.guild_id) return redo(body);

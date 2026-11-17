@@ -1,22 +1,22 @@
-// The Daily Red Cup's week, one per Discord server. Monday, in New York time:
+// The Daily Red Cup: one a month per Discord server. In New York time:
 //
-//   6 AM   sign-ups open (up to MAX_PLAYERS; join on the Cup page or with the
-//          bot's Join button)
-//   6 PM   sign-ups close. With fewer than MIN_PLAYERS there's no Cup that
-//          week. Otherwise the draft order is drawn and the pool revealed
-//          (six Pokémon per player, cup-draft.mjs), so everyone can look it
-//          over and rank a wish list.
-//   8 PM   the live snake draft: PICK_SECONDS per pick, then the autopick.
-//          Players who can't be there can turn on autodraft.
+//   the 25th, 6 AM   sign-ups for next month's Cup open (up to MAX_PLAYERS;
+//                    join on the Cup page or with the bot's Join button)
+//   the 1st, 6 PM    sign-ups close. With fewer than MIN_PLAYERS there's no
+//                    Cup that month. Otherwise the draft order is drawn and the
+//                    pool revealed (six Pokémon per player, cup-draft.mjs), so
+//                    everyone can look it over and rank a wish list.
+//   the 1st, 8 PM    the live snake draft: PICK_SECONDS per pick, then the
+//                    autopick. Players who can't be there turn on autodraft.
 //
-// Then the bracket (from Tuesday; not here yet).
+// Then the bracket, from the 2nd: a round every ROUND_DAYS days (not here yet).
 //
 // Stages: 'signup' -> 'pool' -> 'draft' -> 'drafted', or 'cancelled'. Each
 // Cup is saved whole (store.saveCup) after every change, so a restart picks
 // up where it was; tick() (every couple of seconds, server.mjs) moves the
 // stages on and makes the autopicks.
 //
-//   GET  /api/cup?g=<server>          this week's Cup as this player sees it
+//   GET  /api/cup?g=<server>          the month's Cup as this player sees it
 //   GET  /api/cup/events?g=<server>   Server-Sent Events: the same, on every change
 //   POST /api/cup/join|leave          { g }
 //   POST /api/cup/wishlist            { g, list: [pool indexes] }
@@ -27,16 +27,14 @@ import {
   newDraft, onClock, makePick, autoPick, setWishlist, isDone, pickNumber, teamOf, totalPicks,
   PICK_SECONDS, TEAM_SIZE, DraftError,
 } from './cup-draft.mjs';
-import { weekOf } from '../web/economy.js';
 
-export const MAX_PLAYERS = 8;
+export const MAX_PLAYERS = 16;
 export const MIN_PLAYERS = 4;
+export const ROUND_DAYS = 3;
 export const TIME_ZONE = 'America/New_York';
-// Monday's times, in TIME_ZONE.
-export const SCHEDULE = { signupsOpen: '06:00', signupsClose: '18:00', draft: '20:00' };
 const HEARTBEAT_MS = 25 * 1000;
 
-export class CupWeekError extends Error {
+export class CupMonthError extends Error {
   constructor(status, message) {
     super(message);
     this.status = status;
@@ -69,11 +67,28 @@ const zonedTimeUtc = ({ date, time }) => {
   return Date.UTC(y, m - 1, d, hh, mm);
 };
 
-export function scheduleFor(week, zone = TIME_ZONE) {
-  return Object.fromEntries(Object.entries(SCHEDULE).map(([k, t]) => [k, zonedTime(week, t, zone)]));
+// 'YYYY-MM' months.
+export const monthOf = (ms, zone = TIME_ZONE) => zonedParts(ms, zone).date.slice(0, 7);
+export function nextMonth(month) {
+  const [y, m] = month.split('-').map(Number);
+  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+}
+export function previousMonth(month) {
+  const [y, m] = month.split('-').map(Number);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
 }
 
-export function createCupWeek({
+// When `month`'s Cup happens.
+export function scheduleFor(month, zone = TIME_ZONE) {
+  return {
+    signupsOpen: zonedTime(`${previousMonth(month)}-25`, '06:00', zone),
+    signupsClose: zonedTime(`${month}-01`, '18:00', zone),
+    draft: zonedTime(`${month}-01`, '20:00', zone),
+    bracket: zonedTime(`${month}-02`, '00:00', zone), // round 1
+  };
+}
+
+export function createCupMonth({
   store,
   loadEngine = () => import('./dist/cup-engine.mjs'),
   now = () => Date.now(),
@@ -85,8 +100,13 @@ export function createCupWeek({
   let engine = null;
   const listeners = new Map(); // cup id -> Set of { userId, send }
 
-  const thisWeek = () => weekOf(zonedParts(now(), timeZone).date);
-  const idFor = (guildId, week) => `${guildId}:${week}`;
+  // The month whose Cup is up now: this month's, until sign-ups for the
+  // next one open on the 25th.
+  const cupMonth = () => {
+    const month = monthOf(now(), timeZone);
+    return now() >= scheduleFor(nextMonth(month), timeZone).signupsOpen ? nextMonth(month) : month;
+  };
+  const idFor = (guildId, month) => `${guildId}:${month}`;
 
   function save(cup, what) {
     store.saveCup(cup);
@@ -98,14 +118,15 @@ export function createCupWeek({
     }
   }
 
-  // This week's Cup for the server: made when sign-ups open (null before).
+  // The server's Cup for the month that's up (cupMonth()), made when its
+  // sign-ups open.
   function current(guildId) {
-    const week = thisWeek();
-    const saved = store.getCup(idFor(guildId, week));
+    const month = cupMonth();
+    const saved = store.getCup(idFor(guildId, month));
     if (saved) return saved;
-    const times = scheduleFor(week, timeZone);
+    const times = scheduleFor(month, timeZone);
     if (now() < times.signupsOpen) return null;
-    const cup = { id: idFor(guildId, week), guildId, week, stage: 'signup', players: [], autodraft: {}, draft: null, clock: null };
+    const cup = { id: idFor(guildId, month), guildId, month, stage: 'signup', players: [], autodraft: {}, draft: null, clock: null };
     if (now() >= times.signupsClose) {
       cup.stage = 'cancelled'; // nobody signed up in time
       cup.reason = 'nobody';
@@ -116,22 +137,20 @@ export function createCupWeek({
     return cup;
   }
 
-  // What the page shows: this week's Cup, or the last one before sign-ups open.
-  function latest(guildId) {
-    return current(guildId) ?? store.latestCup(guildId);
-  }
+  // What the page shows.
+  const latest = (guildId) => current(guildId) ?? store.latestCup(guildId);
 
   // --- Sign-ups -----------------------------------------------------------------------
 
   // Until 6 PM (even if tick() hasn't closed them yet).
-  const signupsOpen = (cup) => cup?.stage === 'signup' && now() < scheduleFor(cup.week, timeZone).signupsClose;
+  const signupsOpen = (cup) => cup?.stage === 'signup' && now() < scheduleFor(cup.month, timeZone).signupsClose;
 
   function join(guildId, user) {
     const cup = current(guildId);
-    if (!cup) throw new CupWeekError(409, 'Sign-ups open Monday at 6 AM ET.');
-    if (!signupsOpen(cup)) throw new CupWeekError(409, "Sign-ups for this week's Cup are closed.");
+    if (!cup) throw new CupMonthError(409, 'Sign-ups open on the 25th at 6 AM ET.');
+    if (!signupsOpen(cup)) throw new CupMonthError(409, 'Sign-ups for this Cup are closed. The next one opens on the 25th.');
     if (cup.players.some((p) => p.id === user.id)) return cup;
-    if (cup.players.length >= MAX_PLAYERS) throw new CupWeekError(409, `This week's Cup is full (${MAX_PLAYERS} players).`);
+    if (cup.players.length >= MAX_PLAYERS) throw new CupMonthError(409, `This Cup is full (${MAX_PLAYERS} players).`);
     cup.players.push({ id: user.id, name: String(user.name ?? 'Trainer').slice(0, 40), avatarUrl: user.avatarUrl ?? null });
     save(cup, 'joined');
     return cup;
@@ -139,7 +158,7 @@ export function createCupWeek({
 
   function leave(guildId, user) {
     const cup = current(guildId);
-    if (!signupsOpen(cup)) throw new CupWeekError(409, "Sign-ups are closed: you're in this week's Cup.");
+    if (!signupsOpen(cup)) throw new CupMonthError(409, "Sign-ups are closed: you're in this Cup.");
     const before = cup.players.length;
     cup.players = cup.players.filter((p) => p.id !== user.id);
     if (cup.players.length !== before) save(cup, 'left');
@@ -198,11 +217,11 @@ export function createCupWeek({
 
   function pick(guildId, user, index) {
     const cup = current(guildId);
-    if (cup?.stage !== 'draft') throw new CupWeekError(409, cup?.stage === 'pool' ? 'The draft starts at 8 PM ET.' : "The draft isn't on.");
+    if (cup?.stage !== 'draft') throw new CupMonthError(409, cup?.stage === 'pool' ? 'The draft starts at 8 PM ET.' : "The draft isn't on.");
     try {
       makePick(cup.draft, user.id, index, { at: now() });
     } catch (err) {
-      if (err instanceof DraftError) throw new CupWeekError(409, err.message);
+      if (err instanceof DraftError) throw new CupMonthError(409, err.message);
       throw err;
     }
     cup.clock = now();
@@ -213,8 +232,8 @@ export function createCupWeek({
 
   function inDraft(guildId, user) {
     const cup = current(guildId);
-    if (!cup?.draft || !['pool', 'draft'].includes(cup.stage)) throw new CupWeekError(409, "The pool isn't out yet: it's revealed when sign-ups close.");
-    if (!cup.draft.order.includes(user.id)) throw new CupWeekError(403, "You're not in this week's Cup.");
+    if (!cup?.draft || !['pool', 'draft'].includes(cup.stage)) throw new CupMonthError(409, "The pool isn't out yet: it's revealed when sign-ups close.");
+    if (!cup.draft.order.includes(user.id)) throw new CupMonthError(403, "You're not in this Cup.");
     return cup;
   }
 
@@ -223,7 +242,7 @@ export function createCupWeek({
     try {
       setWishlist(cup.draft, user.id, list);
     } catch (err) {
-      throw new CupWeekError(400, err.message);
+      throw new CupMonthError(400, err.message);
     }
     store.saveCup(cup); // private: nobody else's page changes
     return cup;
@@ -241,7 +260,7 @@ export function createCupWeek({
   async function tick() {
     for (const { id } of store.activeCups()) {
       const cup = store.getCup(id);
-      const times = scheduleFor(cup.week, timeZone);
+      const times = scheduleFor(cup.month, timeZone);
       if (cup.stage === 'signup' && now() >= times.signupsClose) {
         await closeSignups(id);
       } else if (cup.stage === 'pool' && now() >= times.draft) {
@@ -258,19 +277,21 @@ export function createCupWeek({
   // --- What the page sees -----------------------------------------------------------------
 
   function view(cup, userId) {
-    // Before Monday's sign-ups there's no Cup this week: `next` says when.
-    const next = cup?.week === thisWeek() ? null : scheduleFor(thisWeek(), timeZone);
-    if (!cup) return { stage: 'none', week: thisWeek(), next, times: next, max: MAX_PLAYERS, min: MIN_PLAYERS, now: now() };
+    if (!cup) {
+      const month = cupMonth();
+      return { stage: 'none', month, times: scheduleFor(month, timeZone), next: { month: nextMonth(month), ...scheduleFor(nextMonth(month), timeZone) }, max: MAX_PLAYERS, min: MIN_PLAYERS, now: now(), roundDays: ROUND_DAYS };
+    }
     const { draft } = cup;
     const joined = cup.players.some((p) => p.id === userId);
     const drafting = draft && !isDone(draft);
     return {
       id: cup.id,
-      week: cup.week,
+      month: cup.month,
       stage: cup.stage,
       reason: cup.reason ?? null,
-      next, // last week's Cup: when this week's sign-ups open
-      times: scheduleFor(cup.week, timeZone),
+      times: scheduleFor(cup.month, timeZone),
+      next: { month: nextMonth(cup.month), ...scheduleFor(nextMonth(cup.month), timeZone) }, // the next Cup's sign-ups
+      roundDays: ROUND_DAYS,
       now: now(), // the server's clock, for the countdowns
       max: MAX_PLAYERS,
       min: MIN_PLAYERS,
@@ -302,8 +323,7 @@ export function createCupWeek({
     });
     const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
     send(view(cup, user.id));
-    // Before sign-ups open there's no Cup yet: listen for this week's.
-    const id = cup?.week === thisWeek() ? cup.id : idFor(guildId, thisWeek());
+    const id = cup?.id ?? idFor(guildId, cupMonth());
     const listener = { userId: user.id, send };
     if (!listeners.has(id)) listeners.set(id, new Set());
     listeners.get(id).add(listener);

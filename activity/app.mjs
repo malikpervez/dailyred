@@ -23,7 +23,7 @@
 //
 //   GET /card/<date>.png           today's six facing the day's trainer, for the bot's card (card-image.mjs)
 //
-//   /api/cup[/events|/join|/leave|/wishlist|/autodraft|/pick]   the week's Cup: sign-ups and the draft (cup-week.mjs)
+//   /api/cup[/events|/join|/leave|/wishlist|/autodraft|/pick]   the week's Cup: sign-ups and the draft (cup-month.mjs)
 //   /api/cup/battles/<id>[/events|/choose]   the Cup's player-vs-player battles (cup.mjs)
 //
 // Every /api call except config, token and web/session needs "Authorization:
@@ -45,7 +45,7 @@ import { previousMonth } from './bot.mjs';
 import { dayNumber } from '../web/daily.js';
 import { walletFor, earn, buy, useItem, usedIn, economyOpen, EconomyError, ECONOMY_START_LABEL } from '../web/economy.js';
 import { CupError } from './cup.mjs';
-import { CupWeekError } from './cup-week.mjs';
+import { CupMonthError } from './cup-month.mjs';
 
 // daily.js saves through this; the server saves players itself.
 useStatsStorage({ read: () => null, write: () => {} });
@@ -96,7 +96,7 @@ export function createApp({
   publicUrl = null, // https://... this site's public address: turns on the website's sign-in
   cardPicture = null, // date -> PNG of the day's six facing the day's trainer (card-image.mjs), for the bot's card
   cup = null, // cup.mjs: the Cup's battles (optional)
-  cupWeek = null, // cup-week.mjs: the week's Cup, sign-ups and draft (optional)
+  cupMonth = null, // cup-month.mjs: the week's Cup, sign-ups and draft (optional)
 }) {
   const pictures = new Map(); // date -> PNG, the last few days
   const site = publicUrl ? String(publicUrl).replace(/\/$/, '') : null;
@@ -603,7 +603,7 @@ export function createApp({
       result = reminder(user, await readJson(req));
     } else if (route === 'POST /api/share') {
       result = await share(req);
-    } else if (cupWeek && /^\/api\/cup(\/(events|join|leave|wishlist|autodraft|pick))?$/.test(url.pathname)) {
+    } else if (cupMonth && /^\/api\/cup(\/(events|join|leave|wishlist|autodraft|pick))?$/.test(url.pathname)) {
       // The week's Cup for a server (?g= or { g }): signed-in players of that server.
       const user = await requireUser(req);
       const action = url.pathname.slice('/api/cup'.length);
@@ -613,22 +613,22 @@ export function createApp({
       allowRoom(user, `g:${guild}`);
       try {
         if (req.method === 'GET' && action === '') {
-          result = cupWeek.view(guild, user);
+          result = cupMonth.view(guild, user);
         } else if (req.method === 'GET' && action === '/events') {
-          cupWeek.events(req, res, guild, user);
-          return; // a stream, answered by cup-week.mjs
+          cupMonth.events(req, res, guild, user);
+          return; // a stream, answered by cup-month.mjs
         } else if (req.method === 'POST' && action !== '' && action !== '/events') {
-          if (action === '/join') cupWeek.join(guild, user);
-          else if (action === '/leave') cupWeek.leave(guild, user);
-          else if (action === '/wishlist') cupWeek.wishlist(guild, user, body.list);
-          else if (action === '/autodraft') cupWeek.autodraft(guild, user, body.on === true);
-          else if (action === '/pick') cupWeek.pick(guild, user, body.index);
-          result = cupWeek.view(guild, user);
+          if (action === '/join') cupMonth.join(guild, user);
+          else if (action === '/leave') cupMonth.leave(guild, user);
+          else if (action === '/wishlist') cupMonth.wishlist(guild, user, body.list);
+          else if (action === '/autodraft') cupMonth.autodraft(guild, user, body.on === true);
+          else if (action === '/pick') cupMonth.pick(guild, user, body.index);
+          result = cupMonth.view(guild, user);
         } else {
           throw new HttpError(405, 'Method not allowed');
         }
       } catch (err) {
-        throw err instanceof CupWeekError ? new HttpError(err.status, err.message) : err;
+        throw err instanceof CupMonthError ? new HttpError(err.status, err.message) : err;
       }
     } else if (cup && /^\/api\/cup\/battles\//.test(url.pathname)) {
       // The Cup's battles (cup.mjs): signed-in players only.
