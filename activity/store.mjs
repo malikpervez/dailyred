@@ -14,6 +14,8 @@
 //   recaps        which morning recaps (date) and monthly announcements
 //                 ('month:YYYY-MM') have been posted
 //   settings      small things the server remembers (key/value)
+//   progress      each player's official battle in progress (its seed and
+//                 inputs: web/battle/worker.js), to continue it after a crash
 import { DatabaseSync } from 'node:sqlite';
 
 export function openStore(file) {
@@ -69,6 +71,12 @@ export function openStore(file) {
       losses    INTEGER NOT NULL,
       PRIMARY KEY (guild_id, month, player_id)
     );
+    CREATE TABLE IF NOT EXISTS progress (
+      player_id  TEXT PRIMARY KEY,
+      date       TEXT NOT NULL,
+      data       TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS reminders (
       guild_id  TEXT NOT NULL,
       player_id TEXT NOT NULL,
@@ -80,6 +88,8 @@ export function openStore(file) {
   if (!hasColumn('results', 'gave_up')) db.exec('ALTER TABLE results ADD COLUMN gave_up INTEGER NOT NULL DEFAULT 0');
   if (!hasColumn('results', 'items')) db.exec('ALTER TABLE results ADD COLUMN items INTEGER NOT NULL DEFAULT 0');
   if (!hasColumn('players', 'wallet')) db.exec('ALTER TABLE players ADD COLUMN wallet TEXT');
+  // The prize money a result paid (null for results from before this was kept).
+  if (!hasColumn('results', 'prize')) db.exec('ALTER TABLE results ADD COLUMN prize INTEGER');
 
   const getPlayer = db.prepare('SELECT id, name, avatar_url, stats, wallet FROM players WHERE id = ?');
   const putWallet = db.prepare('UPDATE players SET wallet = ? WHERE id = ?');
@@ -93,9 +103,12 @@ export function openStore(file) {
     SELECT p.id, p.name, p.avatar_url, p.stats FROM room_players r JOIN players p ON p.id = r.player_id
     WHERE r.room = ? ORDER BY p.updated_at DESC LIMIT 200
   `);
+  const deleteResult = db.prepare('DELETE FROM results WHERE player_id = ? AND date = ?');
+  const getResult = db.prepare('SELECT won, mons_left, red_left, turns, gave_up, items, prize FROM results WHERE player_id = ? AND date = ?');
+  const playerResults = db.prepare('SELECT date, won FROM results WHERE player_id = ? ORDER BY date');
   const putResult = db.prepare(`
-    INSERT OR IGNORE INTO results (player_id, date, won, mons_left, red_left, turns, gave_up, items, finished_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO results (player_id, date, won, mons_left, red_left, turns, gave_up, items, prize, finished_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const roomResults = db.prepare(`
     SELECT r.player_id, r.won, r.mons_left, r.red_left, r.turns, r.gave_up, r.items FROM results r
@@ -147,6 +160,12 @@ export function openStore(file) {
     SELECT DISTINCT rp.room FROM results r JOIN room_players rp ON rp.player_id = r.player_id
     WHERE r.date >= ? AND rp.room LIKE 'g:%'
   `);
+  const getProgress = db.prepare('SELECT data FROM progress WHERE player_id = ? AND date = ?');
+  const putProgress = db.prepare(`
+    INSERT INTO progress (player_id, date, data, updated_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT (player_id) DO UPDATE SET date = excluded.date, data = excluded.data, updated_at = excluded.updated_at
+  `);
+  const deleteProgress = db.prepare('DELETE FROM progress WHERE player_id = ?');
   const getSetting = db.prepare('SELECT value FROM settings WHERE key = ?');
   const putSetting = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value');
 
@@ -156,6 +175,7 @@ export function openStore(file) {
   const toResult = (row) => ({
     won: Boolean(row.won), monsLeft: row.mons_left, redLeft: row.red_left, turns: row.turns, gaveUp: Boolean(row.gave_up),
     items: row.items ?? 0,
+    ...(row.prize !== undefined && { prize: row.prize }), // getResult() only
   });
 
   return {
@@ -176,9 +196,17 @@ export function openStore(file) {
     roomPlayers: (room) => roomPlayers.all(room).map(toPlayer),
 
     // The first result saved for a player and day stays (like their stats).
-    saveResult({ playerId, date, won, monsLeft = null, redLeft = null, turns = null, gaveUp = false, items = 0 }) {
-      putResult.run(playerId, date, won ? 1 : 0, monsLeft, redLeft, turns, gaveUp ? 1 : 0, items, Date.now());
+    saveResult({ playerId, date, won, monsLeft = null, redLeft = null, turns = null, gaveUp = false, items = 0, prize = null }) {
+      putResult.run(playerId, date, won ? 1 : 0, monsLeft, redLeft, turns, gaveUp ? 1 : 0, items, prize, Date.now());
     },
+    // A player's result on a day ({ won, monsLeft, ... }) or null; all their results ([{ date, won }], oldest first);
+    // and clearing one (/dailyred-redo).
+    getResult: (playerId, date) => {
+      const row = getResult.get(playerId, date);
+      return row ? toResult(row) : null;
+    },
+    playerResults: (playerId) => playerResults.all(playerId).map((row) => ({ date: row.date, won: Boolean(row.won) })),
+    deleteResult: (playerId, date) => { deleteResult.run(playerId, date); },
     // Map of player id -> { won, monsLeft, redLeft, turns, gaveUp, items } for a room's players on a day.
     roomResults: (room, date) => new Map(roomResults.all(room, date).map((row) => [row.player_id, toResult(row)])),
     // Days on which anyone in the room finished a battle, newest first (up to `until`).
@@ -213,6 +241,13 @@ export function openStore(file) {
     knownGuilds: () => knownGuilds.all().map((row) => row.room.slice(2)),
     // Servers where anyone finished a battle on or after `date`.
     roomsSince: (date) => roomsSince.all(date).map((row) => row.room),
+    // A player's official battle in progress on `date` (as the page sent it), or null.
+    getProgress: (playerId, date) => {
+      const text = getProgress.get(playerId, date)?.data;
+      return text ? JSON.parse(text) : null;
+    },
+    saveProgress: (playerId, date, data) => { putProgress.run(playerId, date, JSON.stringify(data), Date.now()); },
+    clearProgress: (playerId) => { deleteProgress.run(playerId); },
     getSetting: (key) => getSetting.get(key)?.value ?? null,
     setSetting: (key, value) => { putSetting.run(key, String(value)); },
 

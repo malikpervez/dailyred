@@ -13,7 +13,10 @@ function onMessage({ data }) {
       teams.get(`${data.seed}:${data.version}:${data.trainer}`)?.resolve(data);
       break;
     case 'events':
-      handlers.onEvents?.(data.events);
+      handlers.onEvents?.(data.events, Boolean(data.instant));
+      break;
+    case 'progress':
+      handlers.onProgress?.(data.progress);
       break;
     case 'request':
       handlers.onRequest?.(data.request);
@@ -61,10 +64,13 @@ export function loadTeams(seed, version, trainer) {
 }
 
 // Starts a battle with the seed's team in `order` (indexes into the team, the
-// lead first) against `trainer`. `on` gets onEvents, onRequest, onEnd(won, tie) and onError(err).
-export function startBattle({ seed, version, order, name, trainer }, on) {
+// lead first) against `trainer`. `on` gets onEvents(events, instant),
+// onRequest, onEnd(won, tie), onProgress(progress) and onError(err).
+// `resume`: a battle's last progress, to pick it up where it stopped (its
+// events so far come first, with instant set).
+export function startBattle({ seed, version, order, name, trainer, resume = null }, on) {
   handlers = on;
-  getWorker().postMessage({ type: 'start', seed, version, order, name, trainer });
+  getWorker().postMessage({ type: 'start', seed, version, order, name, trainer, resume });
 }
 
 export const choose = (choice) => worker?.postMessage({ type: 'choose', choice });

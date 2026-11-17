@@ -110,16 +110,23 @@ export function currentStreaks(stats, date) {
   return { winStreak: alive ? stats.winStreak : 0, dayStreak: alive ? stats.dayStreak : 0 };
 }
 
-// From the moment RED's battle starts the day counts as played, so leaving
-// mid-battle counts as a loss (see settleAbandonedGame).
+// From the moment the official battle starts the day counts as played. It
+// can be continued after a crash or a closed page that same day (its
+// progress is saved: app.js); one left unfinished past midnight is a loss
+// (settleAbandonedGame).
 export function markBattleStarted(stats, date) {
   if (stats.pending === date || resultFor(stats, date)) return;
   stats.pending = date;
   save(stats);
 }
 
+// The parts of the stats a result changes: kept from before it, so a server
+// admin can clear it (/dailyred-redo, undoResult).
+const RESULT_FIELDS = ['wins', 'losses', 'winStreak', 'bestWinStreak', 'dayStreak', 'lastPlayed', 'lastResult'];
+
 export function recordResult(stats, date, won) {
   if (stats.lastPlayed === date) return;
+  stats.before = { date, stats: Object.fromEntries(RESULT_FIELDS.map((k) => [k, stats[k] ?? EMPTY[k]])) };
   const consecutive = stats.lastPlayed === addDays(date, -1) && sameMonth(stats.lastPlayed, date);
   stats.dayStreak = consecutive ? stats.dayStreak + 1 : 1;
   if (won) {
@@ -136,9 +143,48 @@ export function recordResult(stats, date, won) {
   save(stats);
 }
 
-// A battle that started but never finished (tab closed, page reloaded) is a loss.
-export function settleAbandonedGame(stats) {
+// Clears the result of `date` (the player's latest), back to how the stats
+// were before it: from the copy recordResult keeps, or for a result recorded
+// before it kept one, rebuilt from `history` (the player's other results,
+// [{ date, won }]). For a battle lost to a crash. Returns false if `date`
+// isn't their latest result.
+export function undoResult(stats, date, history = []) {
+  if (!date || stats.lastPlayed !== date) return false;
+  if (stats.before?.date === date) {
+    Object.assign(stats, stats.before.stats);
+  } else {
+    if (stats.lastResult === 'won') stats.wins = Math.max(0, stats.wins - 1);
+    else stats.losses = Math.max(0, stats.losses - 1);
+    const earlier = history.filter((r) => r.date < date).sort((a, b) => (a.date < b.date ? -1 : 1));
+    const last = earlier.at(-1);
+    stats.lastPlayed = last?.date ?? null;
+    stats.lastResult = last ? (last.won ? 'won' : 'lost') : null;
+    // The streaks as they stood after `last`: days in a row within its month.
+    let dayStreak = 0;
+    let winStreak = 0;
+    let wins = true;
+    for (let i = earlier.length - 1; i >= 0; i--) {
+      const next = earlier[i + 1];
+      if (next && !(earlier[i].date === addDays(next.date, -1) && sameMonth(earlier[i].date, next.date))) break;
+      dayStreak++;
+      if (wins && earlier[i].won) winStreak++;
+      else wins = false;
+    }
+    stats.dayStreak = dayStreak;
+    stats.winStreak = winStreak;
+  }
+  stats.pending = null;
+  delete stats.before;
+  return true; // the server saves it
+}
+
+// A battle that started but never finished is a loss once its day is over.
+// `today`: the player's date; today's unfinished battle can still be
+// continued, so it's left alone (without `today`, any unfinished battle is
+// settled).
+export function settleAbandonedGame(stats, today = null) {
   if (stats.pending && stats.pending !== stats.lastPlayed) {
+    if (today && stats.pending >= today) return stats;
     recordResult(stats, stats.pending, false);
   } else if (stats.pending) {
     stats.pending = null;

@@ -339,3 +339,72 @@ test("on the Road to RED the week's trainer comes out, by name, with their own t
     if (trainer) assert.equal(TRAINER_TEAMS[trainer].team[0].species, lead);
   }
 });
+
+test('after a crash, the saved progress rebuilds exactly the same battle, which plays on to the end', async () => {
+  const { readFileSync, existsSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const file = new URL('../../web/vendor/battle-worker.js', import.meta.url);
+  if (!existsSync(file)) return; // battle engine not built here
+  const code = readFileSync(file, 'utf8');
+  const engine = () => {
+    const inbox = [];
+    let waiter = null;
+    const ctx = vm.createContext({
+      postMessage: (m) => { inbox.push(structuredClone(m)); if (waiter) { const w = waiter; waiter = null; w(); } },
+      console, setTimeout, clearTimeout, setImmediate, queueMicrotask, TextEncoder, TextDecoder, structuredClone,
+    });
+    vm.runInContext(code, ctx);
+    return {
+      send: (data) => ctx.onmessage({ data }),
+      async next() {
+        while (!inbox.length) await new Promise((ok) => { waiter = ok; setTimeout(ok, 200); });
+        return inbox.shift();
+      },
+    };
+  };
+  // Plays first usable moves (an item at the third request), staying in after RED loses one.
+  const answer = (r, n) => (r.kind === 'shift' ? 'stay'
+    : r.kind === 'switch' ? `switch ${r.party.find((p) => !p.active && p.status !== 'fnt').slot}`
+    : n === 3 && r.canBag ? `item xattack ${r.party.find((p) => p.active).slot}`
+    : `move ${r.moves.find((m) => !m.disabled)?.slot ?? 1}`);
+  const shape = (r) => JSON.stringify({ kind: r.kind, party: r.party.map((p) => [p.species, p.hp, p.status, p.active]), foe: r.foe && [r.foe.species, r.foe.hp], left: r.itemsLeft });
+  const start = { type: 'start', seed: 20261117, version: 2, order: [1, 0, 2, 3, 4, 5], name: 'Ash', trainer: 'blue' };
+
+  const first = engine();
+  first.send(start);
+  let progress = null;
+  let last = null;
+  let turn = 0;
+  for (let n = 0; n < 8;) {
+    const m = await first.next();
+    assert.notEqual(m.type, 'error', m.message);
+    if (m.type === 'progress') progress = m.progress;
+    if (m.type === 'events') turn = m.events.findLast((e) => e.turn)?.turn ?? turn;
+    if (m.type !== 'request' || m.request.kind === 'wait') continue;
+    last = m.request;
+    n++;
+    if (n < 8) first.send({ type: 'choose', choice: answer(m.request, n) });
+  }
+  assert.ok(progress.inputs.some(([kind]) => kind === 'item'), 'the item is in the saved inputs');
+
+  // The page crashed. A new engine, the saved progress:
+  const second = engine();
+  second.send({ ...start, resume: progress });
+  let caughtUp = null;
+  let replayedTo = 0;
+  let ended = null;
+  for (let i = 0; i < 5000 && !ended; i++) {
+    const m = await second.next();
+    assert.notEqual(m.type, 'error', m.message);
+    if (m.type === 'events' && m.instant) replayedTo = m.events.findLast((e) => e.turn)?.turn ?? replayedTo;
+    if (m.type === 'end') ended = m;
+    if (m.type !== 'request' || m.request.kind === 'wait') continue;
+    if (!caughtUp) {
+      caughtUp = m.request;
+      assert.equal(replayedTo, turn, 'the battle so far, at once');
+      assert.equal(shape(caughtUp), shape(last), 'the same Pokémon, HP, foe and items left');
+    }
+    second.send({ type: 'choose', choice: answer(m.request, 0) });
+  }
+  assert.ok(ended, 'and it plays on to the end');
+});

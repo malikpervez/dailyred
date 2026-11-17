@@ -279,7 +279,7 @@ try {
   const after = await page.evaluate(() => window.dailyRed.stats);
   assert.deepEqual([after.wins, after.losses], [stats.wins, stats.losses], 'practice runs are not recorded');
 
-  step('the next day brings a new team; leaving the battle halfway counts as a loss');
+  step('the next day brings a new team; a battle cut off halfway (a crash) is continued, not lost');
   await page.clock.setSystemTime(DAY2);
   await page.reload();
   await page.waitForSelector('.app[data-state="home"]');
@@ -287,13 +287,38 @@ try {
   assert.notDeepEqual(nextTeam, team);
   assert.ok(await page.isVisible('#play'));
   await page.click('#play');
-  await page.waitForSelector('.commands', { state: 'visible', timeout: 30000 });
-  page.on('dialog', (dialog) => dialog.accept()); // "Leave site?"
+  // A couple of turns (switching in or staying in as needed), then the page goes away mid-battle.
+  const turnNow = () => page.evaluate(() => Number(document.getElementById('turn-label').textContent.match(/\d+/)?.[0] ?? 0));
+  for (const deadline = Date.now() + 90000; Date.now() < deadline;) {
+    const quick = { timeout: 1500 };
+    if ((await turnNow()) >= 3 && (await page.isVisible('.commands'))) break;
+    if (await page.isVisible('.confirm')) await page.click('.confirm-no', quick).catch(() => {});
+    else if (await page.isVisible('.summary')) await page.click('.sum-shift:not(:disabled)', quick).catch(() => {});
+    else if (await page.isVisible('.party')) await page.click('.party-mon:not(:disabled)', quick).catch(() => {});
+    else if (await page.isVisible('.commands')) await page.click('.move:not(:disabled)', quick).catch(() => {});
+    else await page.waitForTimeout(50);
+  }
+  assert.ok((await turnNow()) >= 3 && (await page.isVisible('.commands')), 'turn 3, choosing');
+  const beforeCrash = { turn: await page.textContent('#turn-label'), you: await page.textContent('.infobox-you .hp-numbers'), foe: await page.getAttribute('.infobox-foe .hp-fill', 'style') };
   await page.reload();
   await page.waitForSelector('.app[data-state="home"]');
   stats = await page.evaluate(() => window.dailyRed.stats);
-  assert.deepEqual([stats.losses, stats.lastPlayed, stats.lastResult], [won ? 1 : 2, '2026-11-13', 'lost']);
+  assert.deepEqual([stats.losses, stats.pending], [won ? 0 : 1, '2026-11-13'], 'not a loss');
+  assert.equal(await page.textContent('#play'), 'Continue your battle');
+  await page.click('#play');
+  await page.waitForSelector('.commands', { state: 'visible', timeout: 30000 });
+  const afterCrash = { turn: await page.textContent('#turn-label'), you: await page.textContent('.infobox-you .hp-numbers'), foe: await page.getAttribute('.infobox-foe .hp-fill', 'style') };
+  assert.deepEqual(afterCrash, beforeCrash, 'exactly where it was: the same turn and HP');
+  assert.match(await page.textContent('.log-list'), /Turn 2/, 'with the log so far');
+  await page.screenshot({ path: join(OUT, 'continued.png') });
+  await page.click('.action:has-text("RUN")');
+  await page.click('#run-dialog button[value="run"]');
+  await playToTheEnd(page);
+  await page.click('#back-home');
+  stats = await page.evaluate(() => window.dailyRed.stats);
+  assert.deepEqual([stats.losses, stats.lastPlayed, stats.lastResult, stats.pending], [won ? 1 : 2, '2026-11-13', 'lost', null], 'one result for the day');
   assert.equal(await page.textContent('#stat-day-streak'), '2');
+  assert.equal(await page.evaluate(() => localStorage.getItem('dailyred-progress')), null, 'nothing left to continue');
 
   step('Monday Nov 16: the bag refills, the PokéMart sells, items work in the battle that counts, and it pays');
   await page.clock.setSystemTime(DAY3);

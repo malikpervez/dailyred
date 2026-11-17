@@ -321,7 +321,7 @@ function renderHome() {
   ui.practice.hidden = Boolean(practiceSeed) || !result;
   ui.practiceLocked.hidden = Boolean(practiceSeed) || Boolean(result);
   const { name: foeName } = foe();
-  ui.play.textContent = practiceSeed ? `Battle ${foeName} (practice)` : `Battle ${foeName}`;
+  ui.play.textContent = practiceSeed ? `Battle ${foeName} (practice)` : savedBattle() ? 'Continue your battle' : `Battle ${foeName}`;
   if (result) ui.playedResult.textContent = result === 'won' ? `You beat ${foeName} today!` : `${foeName} won today.`;
   tick();
   renderWallet();
@@ -336,6 +336,12 @@ function renderHome() {
 async function loadDay() {
   date = today();
   seed = practiceSeed ?? dailySeed(date);
+  // Today's battle was started but can't be continued (nothing saved, e.g.
+  // an older version of the page): a loss, as it always was.
+  if (!practiceSeed && stats.pending === date && !resultFor(stats, date) && !savedBattle()) {
+    recordResult(stats, date, false);
+    discord?.report('result', date, false, {});
+  }
   renderHeader();
   setState('loading');
   ui.loadingText.textContent = "Loading today's team…";
@@ -588,6 +594,35 @@ for (const button of document.querySelectorAll('[data-speed]')) {
   });
 }
 
+// --- Continuing after a crash ------------------------------------------------------
+// Today's official battle is saved as it goes (its seed and every move: the
+// battle engine's 'progress'), in this browser and, signed in with Discord,
+// on the server. Reopening the page offers "Continue your battle" instead of
+// counting a loss; the engine replays the moves to rebuild exactly the same
+// battle. Left unfinished past midnight, it's a loss (settleAbandonedGame).
+const PROGRESS_KEY = 'dailyred-progress';
+const localProgress = {
+  read() { try { return JSON.parse(localStorage.getItem(PROGRESS_KEY)); } catch { return null; } },
+  write(saved) { try { localStorage.setItem(PROGRESS_KEY, JSON.stringify(saved)); } catch { /* the server's copy, if any */ } },
+  clear() { try { localStorage.removeItem(PROGRESS_KEY); } catch { /* fine */ } },
+};
+
+// Today's battle in progress, { date, order, trainer, version, progress }, or
+// null: the further along of the server's copy and this browser's.
+function savedBattle() {
+  if (practiceSeed || !stats || stats.pending !== date || resultFor(stats, date)) return null;
+  const copies = [discord?.progress, localProgress.read()]
+    .filter((saved) => saved?.date === date && saved.progress?.seed && Array.isArray(saved.progress.inputs));
+  return copies.sort((a, b) => b.progress.inputs.length - a.progress.inputs.length)[0] ?? null;
+}
+
+function keepProgress(progress) {
+  if (!battle?.official || battle.done) return;
+  const saved = { date: battle.date, order: battle.order, trainer: battle.foe.id, version: rules(), progress };
+  localProgress.write(saved);
+  discord?.saveProgress(saved);
+}
+
 async function beginBattle({ practice }) {
   if (signInFirst && !practiceSeed) return;
   if (practice && !practiceSeed && !resultFor(stats, date)) {
@@ -608,7 +643,11 @@ async function beginBattle({ practice }) {
       return;
     }
   }
-  battle = { official, date, foe: foe(), ran: false, done: false, practiceUsed: {} };
+  const resume = official ? savedBattle() : null; // today's, after a crash
+  battle = {
+    official, date, foe: foe(), ran: false, done: false, practiceUsed: {},
+    order: resume?.order ?? battleOrder(), resumed: Boolean(resume),
+  };
   const name = discord?.user?.name ?? 'You';
   ui.practiceChip.hidden = official;
   ui.battleDone.hidden = true;
@@ -618,21 +657,24 @@ async function beginBattle({ practice }) {
   document.title = `Daily Red: battling ${battle.foe.name}`;
   window.scrollTo({ top: 0 });
 
-  if (official) {
+  if (official && !resume) {
     markBattleStarted(stats, date);
     discord?.report('start', date);
-    discord?.setPresence(`Battling ${battle.foe.name}`, `${stats.wins}W ${stats.losses}L`);
   }
+  if (official) discord?.setPresence(`Battling ${battle.foe.name}`, `${stats.wins}W ${stats.losses}L`);
 
-  startBattle({ seed, version: rules(), order: battleOrder(), name, trainer: battle.foe.id }, {
-    onEvents: (events) => {
+  startBattle({ seed, version: rules(), order: battle.order, name, trainer: battle.foe.id, resume: resume?.progress ?? null }, {
+    onEvents: (events, instant) => {
       const turn = events.findLast((e) => e.turn)?.turn;
       if (turn) {
         ui.turnLabel.textContent = `Turn ${turn}`;
         if (battle) battle.turns = turn;
       }
-      view.play(events);
+      // Continuing after a crash: the battle so far at once.
+      if (instant) view.catchUp(events);
+      else view.play(events);
     },
+    onProgress: (progress) => keepProgress(progress),
     onRequest: (request) => view.request(request),
     onEnd: (won, tie) => endBattle(won, tie),
     onError: (err) => {
@@ -646,6 +688,7 @@ function endBattle(won, tie = false) {
   if (!battle || battle.done) return;
   battle.done = true;
   if (battle.official) {
+    localProgress.clear();
     recordResult(stats, battle.date, won);
     // How it went, for the server's board and the Discord bot's card.
     const alive = (side) => (view.state?.[side].party ?? []).filter((p) => p !== 'fnt').length;
@@ -853,10 +896,6 @@ ui.play.addEventListener('click', () => beginBattle({ practice: false }));
 ui.practice.addEventListener('click', () => beginBattle({ practice: true }));
 $('retry').addEventListener('click', () => location.reload());
 
-// An official battle in progress counts as a loss if the page closes.
-window.addEventListener('beforeunload', (event) => {
-  if (battle?.official && !battle.done) event.preventDefault();
-});
 
 // For debugging from the console and for the automated tests.
 window.dailyRed = {
@@ -975,7 +1014,7 @@ async function start() {
       ui.signinLink.href = `auth/login${linkedServer ? `?g=${linkedServer}` : ''}`;
     }
   }
-  stats = settleAbandonedGame(loadStats());
+  stats = settleAbandonedGame(loadStats(), today()); // today's unfinished battle can be continued
   await loadDay();
 }
 

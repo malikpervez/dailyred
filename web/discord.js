@@ -98,9 +98,10 @@ export function connectWeb(web, room) {
 // results reported to it, and the server's board.
 async function session({ call, room, ...rest }) {
   const date = today();
-  const { user, stats: serverStats, wallet: serverWallet } = await call('GET', `api/me?settle=1&date=${date}${room ? `&room=${room}` : ''}`);
+  const { user, stats: serverStats, wallet: serverWallet, progress: serverProgress } = await call('GET', `api/me?settle=1&date=${date}${room ? `&room=${room}` : ''}`);
   let cached = serverStats;
   let wallet = serverWallet ?? null;
+  let progress = serverProgress ?? null; // today's battle so far, if one is on
   let reports = Promise.resolve();
   return {
     user,
@@ -121,6 +122,16 @@ async function session({ call, room, ...rest }) {
       const data = await call('GET', `api/me?date=${today()}`);
       cached = data.stats;
       wallet = data.wallet ?? wallet;
+      progress = data.progress ?? null;
+    },
+
+    // Today's official battle so far (web/app.js), to continue it after a
+    // crash, on any device. Saved after every move, after the battle's start.
+    get progress() { return progress; },
+    saveProgress(saved) {
+      progress = saved;
+      reports = reports.then(() => call('POST', 'api/battle/progress', { date: saved.date, progress: saved }))
+        .catch((err) => console.warn("Couldn't save the battle's progress", err));
     },
 
     // Money and items (economy.js), kept and checked by the server. get() is
