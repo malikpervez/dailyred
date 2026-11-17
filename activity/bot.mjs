@@ -425,7 +425,7 @@ export function createBot({
     // The month's top three, so every update is a leaderboard update too.
     const month = date.slice(0, 7);
     const race = monthStandings(room, month).filter((x) => x.wins > 0).slice(0, 3);
-    const raceLine = race.length ? `🏆 ${monthName(month)} race: ${race.map((x) => `${who(x.id, crowned)} ${x.wins}`).join(' · ')}` : '';
+    const raceLine = race.length ? `🏁 ${monthName(month)} race: ${race.map((x) => `${who(x.id, crowned)} ${x.wins}`).join(' · ')}` : '';
     const road = roadOpen(date) ? `🏔️ Week ${foe.week} of ${ROAD.length} on the Road to RED: **${foe.name}**, ${foe.title}` : '';
     const description = [road, teamLine(date), cap(lines).join('\n') || `Nobody has battled ${foe.name} yet today.`].filter(Boolean).join('\n\n');
     const card = {
@@ -1144,6 +1144,11 @@ export function createBot({
   }
 
   const cupLink = (guildId) => (site ? `${site}/cup.html?g=${guildId}` : null);
+  // A link button to the Cup page (a bare link would unfurl into a preview
+  // under every message).
+  const cupButtonRow = (guildId, label = 'Open the Cup') => (cupLink(guildId)
+    ? [{ type: 1, components: [{ type: 2, style: 5, label, emoji: { name: '🏆' }, url: cupLink(guildId) }] }]
+    : []);
   const etTime = (ms) => new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }).replace(':00', '');
   const mention = (id) => `<@${id}>`;
   const speciesOf = (cup, index) => cup.draft.pool[index].set.species;
@@ -1274,9 +1279,9 @@ export function createBot({
       keep();
     };
     const ping = async (content, ids) => {
-      const link = cupLink(cup.guildId);
       const posted = await discord('POST', `/channels/${channelId}/messages`, {
-        content: `${content}${link ? `\n${link}` : ''}`,
+        content,
+        components: cupButtonRow(cup.guildId, cup.stage === 'draft' ? 'Draft room' : 'Open the Cup'),
         allowed_mentions: { users: ids }, // only the Cup's players
       });
       return posted.id;
@@ -1330,7 +1335,7 @@ export function createBot({
 
   // The Join / Leave buttons.
   function cupButton(body, joining) {
-    const reply = (content) => ({ type: 4, data: { flags: 64, content, allowed_mentions: { parse: [] } } });
+    const reply = (content, components = []) => ({ type: 4, data: { flags: 64, content, components, allowed_mentions: { parse: [] } } });
     const u = body.member?.user ?? body.user;
     if (!u?.id) return reply("Couldn't tell who pressed that.");
     const user = {
@@ -1346,10 +1351,9 @@ export function createBot({
     }
     const month = cupMonth.current(body.guild_id).month;
     const times = scheduleFor(month);
-    const link = cupLink(body.guild_id);
     return reply(joining
-      ? `🏆 You're in the ${monthName(month)} Daily Red Cup! Sign-ups close on ${dateLabel(`${month}-01`)} at ${etTime(times.signupsClose)} ET, when the pool comes out; the live draft is that night at ${etTime(times.draft)} ET.${link ? ` The draft room: ${link}` : ''}`
-      : `You've left the ${monthName(month)} Cup. Changed your mind? Press Join again before sign-ups close.`);
+      ? `🏆 You're in the ${monthName(month)} Daily Red Cup! Sign-ups close on ${dateLabel(`${month}-01`)} at ${etTime(times.signupsClose)} ET, when the pool comes out; the live draft is that night at ${etTime(times.draft)} ET.`
+      : `You've left the ${monthName(month)} Cup. Changed your mind? Press Join again before sign-ups close.`, joining ? cupButtonRow(body.guild_id) : []);
   }
 
   // --- Interactions (button presses) -----------------------------------------------------------

@@ -106,7 +106,7 @@ test('the live card goes to #general and is edited as players start and finish',
     '⬛⬛⬛⬛⬛⬛',
     '<@3> ⚔️ Battling RED…',
     '',
-    '🏆 November race: <@1> 1',
+    '🏁 November race: <@1> 1',
   ].join('\n'));
   assert.match(edit.body.embeds[0].footer.text, /^1 of 2 beat RED · 1 battling · New team at midnight/);
   assert.doesNotMatch(JSON.stringify(edit.body), /Pikachu|lead/i, "the card never shows anyone's team");
@@ -749,7 +749,7 @@ test("the Road to RED: from Monday, Nov 23 the card, recap and buttons name the 
   ]);
   assert.match(description(news), /^Starting today, every Monday brings a new trainer/);
   assert.match(description(news), /every win counts the same for Pokémon Master of the Month/);
-  assert.equal(description(card), '🏔️ Week 1 of 6 on the Road to RED: **Blue**, Champion\n\nNobody has battled Blue yet today.\n\n🏆 November race: <@1> 1');
+  assert.equal(description(card), '🏔️ Week 1 of 6 on the Road to RED: **Blue**, Champion\n\nNobody has battled Blue yet today.\n\n🏁 November race: <@1> 1');
   assert.equal(card.body.embeds[0].thumbnail.url, `${site}/sprites/trainers/blue.png`);
   assert.equal(card.body.components[0].components[0].label, 'Battle Blue');
   assert.equal(recap.body.embeds[0].thumbnail.url, `${site}/sprites/front/25.png`, "RED's days keep Pikachu");
@@ -807,7 +807,7 @@ test("/dailyred-redo: an admin clears a player's crash loss; their record, money
   assert.equal(store.getResult('1', '2026-11-17'), null);
   assert.equal(walletFor(store.getWallet('1'), '2026-11-17').cash, 2420, 'a battle left unfinished paid nothing');
   await settle();
-  assert.match(description(discord.edits().at(-1)), /^<@2> Lost to RED[^]*🏆 November race: <@1> 2$/, "off today's card, still in the race");
+  assert.match(description(discord.edits().at(-1)), /^<@2> Lost to RED[^]*🏁 November race: <@1> 2$/, "off today's card, still in the race");
 
   assert.equal(redo('2', String(1n << 3n)).content, "Cleared Misty's loss today. Their record is back to 1W 0L, and they can battle again today.");
   assert.deepEqual(store.getPlayer('2').stats, before);
