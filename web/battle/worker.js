@@ -9,7 +9,8 @@
 //
 // Messages in (from battle/engine.js):
 //   { type: 'team', seed, version, trainer }        -> { type: 'team', team, foe }
-//   { type: 'start', seed, order, name, trainer }   -> events / request / end messages
+//   { type: 'start', seed, order, name, trainer, resume? }   -> events / request / end / progress messages
+//                                          resume: a battle's saved progress, to pick up after a crash
 //   { type: 'choose', choice }             e.g. "move 2", "switch 3", "item fullrestore 2"
 //   { type: 'forfeit' }
 // The Cup (another player, battle run by the server, cup.mjs): the page
@@ -22,9 +23,10 @@
 //   { type: 'request', request }           what the player can do now (with
 //                                          `notice` if an item didn't work)
 //   { type: 'end', won, tie }    a tie (both last Pokémon down at once) isn't a win
+//   { type: 'progress', progress }  after every input: { seed, inputs }, all it takes to rebuild the battle
 //   { type: 'error', message }
 
-import { Dex, BattleStreams, Teams } from '@pkmn/sim';
+import { Dex, BattleStreams, Teams, PRNG } from '@pkmn/sim';
 import { Generations } from '@pkmn/data';
 import { Battle as ClientBattle } from '@pkmn/client';
 import { Protocol } from '@pkmn/protocol';
@@ -331,6 +333,13 @@ function useBagItem(battle, choice) {
     post({ type: 'request', request: { ...summarizeRequest(request), notice: problem } });
     return;
   }
+  input(battle, ['item', item, Number(slotText)]);
+  input(battle, ['p1', `move ${placeholderMove(request.active[0])}`]);
+}
+
+// The item's effect (input() calls this, live and when replaying).
+function itemNow(battle, item, slot) {
+  const sim = battle.stream.battle;
   if (!battle.bagHooked) {
     battle.bagHooked = true;
     sim.onEvent('BeforeMove', sim.format, 100, (pokemon) => {
@@ -339,10 +348,9 @@ function useBagItem(battle, choice) {
       return false;
     });
   }
-  applyItem(sim, mon, item);
+  applyItem(sim, sim.p1.pokemon[slot - 1], item);
   battle.itemsUsed += 1;
   battle.itemTurn = sim.turn;
-  battle.streams.p1.write(`move ${placeholderMove(request.active[0])}`);
 }
 
 function applyItem(sim, mon, item) {
@@ -428,31 +436,69 @@ function answerShift(battle, choice) {
   if (!mon || mon.isActive || mon.fainted) {
     const held = battle.shift.choice;
     battle.shift = null;
-    battle.streams.p2.write(held);
+    input(battle, ['p2', held]);
     return;
   }
   battle.shift.state = 'switching';
   battle.shiftSlot = slot;
-  sim.p1.active[0].switchFlag = true;
-  sim.makeRequest('switch');
-  for (const side of sim.sides) side.emitRequest();
-  sim.sentRequests = true;
+  input(battle, ['shift']);
 }
+
+// --- Saving and resuming --------------------------------------------------------------
+// Every change to the simulator goes through input(), in order: the player's
+// choices, RED's, items and the Shift switch. The battle is then its random
+// seed plus these inputs (the simulator is deterministic for a seed), which
+// the page saves after every one ('progress'), on the server when signed in.
+// After a crash, start({ resume }) plays them again at once to rebuild exactly
+// the same battle, and it carries on from there.
+//   ['p1' | 'p2', choice]  ['item', item, slot]  ['shift']  ['forfeit']
+function input(battle, entry) {
+  const [kind, a, b] = entry;
+  const sim = battle.stream.battle;
+  if (kind === 'p1' || kind === 'p2') {
+    battle.streams[kind].write(a);
+  } else if (kind === 'item') {
+    itemNow(battle, a, Number(b));
+  } else if (kind === 'shift') {
+    // FireRed's Shift: the free switch U-turn gives (answerShift).
+    sim.p1.active[0].switchFlag = true;
+    sim.makeRequest('switch');
+    for (const side of sim.sides) side.emitRequest();
+    sim.sentRequests = true;
+  } else if (kind === 'forfeit') {
+    battle.streams.omniscient.write('>forcelose p1');
+  } else {
+    return;
+  }
+  battle.inputs.push(entry);
+  if (!battle.catchingUp) post({ type: 'progress', progress: { seed: battle.seed, inputs: battle.inputs } });
+}
+
+// Marks the end of a replay in both players' streams, after everything it
+// produced: until the reader gets here, it's catching up (shown at once, and
+// RED doesn't choose again for turns he already chose).
+const CAUGHT_UP = '|caughtup|';
 
 async function readPlayer(battle) {
   const { client, formatter, streams } = battle;
   for await (const chunk of streams.p1) {
     if (battle !== current) return;
+    if (chunk === CAUGHT_UP) {
+      battle.playerCaughtUp = true;
+      if (battle.request && !battle.request.wait) post({ type: 'request', request: summarizeRequest(battle.request) });
+      continue;
+    }
     if (chunk.startsWith('|request|')) {
       const request = Protocol.parseRequest(chunk.slice(9));
       client.update(request);
       battle.request = request; // for the bag
+      if (!battle.playerCaughtUp) continue; // replaying: only the last one matters
 
       if (request.forceSwitch && battle.shiftSlot) {
         // The free switch the player already picked.
         const slot = battle.shiftSlot;
         battle.shiftSlot = null;
-        streams.p1.write(`switch ${slot}`);
+        input(battle, ['p1', `switch ${slot}`]);
         continue;
       }
       // "Wait for RED" while he's asking the Shift question: keep the question up.
@@ -460,7 +506,7 @@ async function readPlayer(battle) {
       post({ type: 'request', request: summarizeRequest(request) });
       continue;
     }
-    processLog(battle, chunk);
+    processLog(battle, chunk, !battle.playerCaughtUp); // replaying after a crash: shown at once
   }
 }
 
@@ -618,30 +664,44 @@ function remoteEvent(battle, event, instant) {
 async function readRed(battle) {
   for await (const chunk of battle.streams.p2) {
     if (battle !== current) return;
+    if (chunk === CAUGHT_UP) {
+      // After a replay: choose now only if he hadn't chosen yet this turn.
+      battle.redCaughtUp = true;
+      const request = battle.redRequest;
+      if (request && !battle.stream.battle.p2.isChoiceDone()) redChooses(battle, request);
+      continue;
+    }
     if (!chunk.startsWith('|request|')) continue;
     const request = JSON.parse(chunk.slice(9));
-    if (request.wait || request.teamPreview) continue;
-    if (request.forceSwitch && battle.shift?.state === 'switching') {
-      // Asked again after the player's free switch: the Pokémon he announced.
-      const held = battle.shift.choice;
-      battle.shift = null;
-      battle.streams.p2.write(held);
-      continue;
-    }
-    let choice = 'default';
-    try {
-      choice = chooseForRed(calc, dex, battle.stream.battle, request, Math.random, battle.mistakes);
-    } catch (err) {
-      console.error('Trainer AI failed', err);
-    }
-    const slot = Number(/^switch (\d+)$/.exec(choice)?.[1]);
-    if (request.forceSwitch && slot && canShift(battle.stream.battle)) {
-      battle.shift = { choice, state: 'asking' };
-      post({ type: 'request', request: shiftOffer(battle.stream.battle, slot) });
-      continue;
-    }
-    battle.streams.p2.write(choice);
+    battle.redRequest = request;
+    if (!battle.redCaughtUp) continue; // replaying: his choices are in the inputs
+    redChooses(battle, request);
   }
+}
+
+// RED's choice for `request` (or FireRed's Shift question first).
+function redChooses(battle, request) {
+  if (request.wait || request.teamPreview) return;
+  if (request.forceSwitch && battle.shift?.state === 'switching') {
+    // Asked again after the player's free switch: the Pokémon he announced.
+    const held = battle.shift.choice;
+    battle.shift = null;
+    input(battle, ['p2', held]);
+    return;
+  }
+  let choice = 'default';
+  try {
+    choice = chooseForRed(calc, dex, battle.stream.battle, request, Math.random, battle.mistakes);
+  } catch (err) {
+    console.error('Trainer AI failed', err);
+  }
+  const slot = Number(/^switch (\d+)$/.exec(choice)?.[1]);
+  if (request.forceSwitch && slot && canShift(battle.stream.battle)) {
+    battle.shift = { choice, state: 'asking' };
+    post({ type: 'request', request: shiftOffer(battle.stream.battle, slot) });
+    return;
+  }
+  input(battle, ['p2', choice]);
 }
 
 // The player's name in the battle log: Showdown takes up to 18 characters
@@ -658,23 +718,35 @@ function trainer(id) {
   return { name: TRAINERS[key].name, ...TRAINER_TEAMS[key] };
 }
 
-function start({ seed, version, order, name, trainer: trainerId }) {
+function start({ seed, version, order, name, trainer: trainerId, resume = null }) {
   const foe = trainer(trainerId);
   const team = generateTeam(dex, seed, version);
   const ordered = order && order.length === team.length ? order.map((i) => team[i]) : team;
   const stream = new BattleStreams.BattleStream();
   const streams = BattleStreams.getPlayerStreams(stream);
   const client = new ClientBattle(gens);
-  const battle = { stream, streams, client, formatter: new LogFormatter('p1', client), itemsUsed: 0, mistakes: foe.mistakes };
+  const battle = {
+    stream, streams, client, formatter: new LogFormatter('p1', client), itemsUsed: 0, mistakes: foe.mistakes,
+    seed: resume?.seed ?? PRNG.generateSeed(), inputs: [], playerCaughtUp: !resume, redCaughtUp: !resume, catchingUp: false,
+  };
   current = battle;
   readPlayer(battle).catch((err) => post({ type: 'error', message: String(err?.message || err) }));
   readRed(battle).catch((err) => post({ type: 'error', message: String(err?.message || err) }));
   const player = (who, sets) => JSON.stringify({ name: who, team: Teams.pack(sets) });
   streams.omniscient.write([
-    `>start ${JSON.stringify({ formatid: 'gen3customgame' })}`,
+    `>start ${JSON.stringify({ formatid: 'gen3customgame', seed: battle.seed })}`,
     `>player p1 ${player(playerName(name, foe.name), ordered)}`,
     `>player p2 ${player(foe.name, foe.team)}`,
   ].join('\n'));
+  if (resume) {
+    // Everything that happened before the crash, at once, then the marker.
+    battle.catchingUp = true;
+    for (const entry of resume.inputs ?? []) input(battle, entry);
+    battle.catchingUp = false;
+    stream.pushMessage('sideupdate', `p1\n${CAUGHT_UP}`);
+    stream.pushMessage('sideupdate', `p2\n${CAUGHT_UP}`);
+  }
+  post({ type: 'progress', progress: { seed: battle.seed, inputs: battle.inputs } });
 }
 
 onmessage = ({ data }) => {
@@ -692,10 +764,10 @@ onmessage = ({ data }) => {
       case 'choose':
         if (current?.shift?.state === 'asking') answerShift(current, data.choice);
         else if (current && String(data.choice).startsWith('item ')) useBagItem(current, data.choice);
-        else current?.streams.p1.write(data.choice);
+        else if (current) input(current, ['p1', String(data.choice)]);
         break;
       case 'forfeit':
-        current?.streams.omniscient.write('>forcelose p1');
+        if (current) input(current, ['forfeit']);
         break;
       case 'remote-start':
         startRemote(data);

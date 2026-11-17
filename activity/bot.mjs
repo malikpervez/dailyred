@@ -36,9 +36,9 @@
 // It only uses Discord's HTTP API with the bot token (plus one Gateway login,
 // which Discord requires before a bot's first message).
 import { createPublicKey, verify } from 'node:crypto';
-import { EMPTY, addDays, currentStreaks, dayNumber, resultFor } from '../web/daily.js';
+import { EMPTY, addDays, currentStreaks, dayNumber, resultFor, undoResult } from '../web/daily.js';
 import {
-  economyOpen, ECONOMY_START, ECONOMY_START_LABEL, PRIZE, ITEMS, WEEKLY_BAG, CARRY_LIMIT,
+  economyOpen, ECONOMY_START, ECONOMY_START_LABEL, PRIZE, ITEMS, WEEKLY_BAG, CARRY_LIMIT, prizeFor, walletFor,
 } from '../web/economy.js';
 import { ROAD, ROAD_START, TRAINERS, trainerOn, roadOpen } from '../web/road.js';
 
@@ -52,6 +52,8 @@ const BOARD_BUTTON = 'dailyred:board';
 const REMIND_BUTTON = 'dailyred:remind';
 const BANNER_ON = 'dailyred:banner-on';
 const BANNER_OFF = 'dailyred:banner-off';
+const REDO_COMMAND = 'dailyred-redo';
+const REDO_DAYS = 3; // how far back /dailyred-redo reaches
 const MANAGE_GUILD = 1n << 5n;
 const ADMINISTRATOR = 1n << 3n;
 const MAX_LINES = 25;
@@ -307,7 +309,7 @@ export function createBot({
   // Adds /dailyred to Discord (once; POST adds or updates just this command,
   // leaving the Activity's own launch command alone).
   async function registerCommand() {
-    const version = '2';
+    const version = '3';
     if (store.getSetting('command:dailyred') === version) return;
     await discord('POST', `/applications/${clientId}/commands`, {
       name: 'dailyred',
@@ -324,8 +326,17 @@ export function createBot({
       integration_types: [0],
       default_member_permissions: String(MANAGE_GUILD), // only shown to people who can manage the server
     });
+    await discord('POST', `/applications/${clientId}/commands`, {
+      name: REDO_COMMAND,
+      type: 1,
+      description: "Admins: clear a player's latest result (a battle lost to a crash) so they can battle again",
+      options: [{ type: 6, name: 'player', description: 'Whose result to clear', required: true }], // 6: a user
+      contexts: [0],
+      integration_types: [0],
+      default_member_permissions: String(MANAGE_GUILD),
+    });
     store.setSetting('command:dailyred', version);
-    log.log('Daily Red bot added the /dailyred and /dailyred-preview commands.');
+    log.log('Daily Red bot added the /dailyred, /dailyred-preview and /dailyred-redo commands.');
   }
   // The picture beside the bot's posts: the day's trainer on the Road to RED,
   // RED's Pikachu on RED's days.
@@ -464,6 +475,52 @@ export function createBot({
     if (store.getCard(body.guild_id, today)) updateCard(body.guild_id, today);
     log.log(`Daily Red bot: the card banner is ${on ? 'on' : 'off'} in server ${body.guild_id}.`);
     return { type: 7, data: previewMessage(body.guild_id) }; // UPDATE_MESSAGE: the preview shows the new state
+  }
+
+  // /dailyred-redo player: for a battle lost to a crash. Clears the player's
+  // latest result (from the last few days): their record goes back as it
+  // was, the prize money it paid comes off, and the card and leaderboard
+  // drop it. If it was today's, they can battle again today. Only people
+  // who can manage the server; only they see the reply.
+  function redo(body) {
+    const reply = (content) => ({ type: 4, data: { flags: 64, content, allowed_mentions: { parse: [] } } });
+    const permissions = BigInt(body.member?.permissions ?? 0);
+    if (!(permissions & MANAGE_GUILD) && !(permissions & ADMINISTRATOR)) {
+      return reply('Only people who can manage this server can clear a result.');
+    }
+    const playerId = String(body.data?.options?.find((o) => o.name === 'player')?.value ?? '');
+    const player = playerId ? store.getPlayer(playerId) : null;
+    const user = body.data?.resolved?.users?.[playerId];
+    const name = player?.name ?? user?.global_name ?? user?.username ?? 'That player';
+    const stats = { ...EMPTY, ...player?.stats };
+    const date = stats.lastPlayed;
+    const today = zonedNow().date;
+    if (!player || !date) return reply(`${name} has no Daily Red result to clear.`);
+    if (date < addDays(today, -REDO_DAYS)) {
+      return reply(`${name}'s latest result is from ${dateLabel(date)}: only results from the last ${REDO_DAYS} days can be cleared.`);
+    }
+    const result = store.getResult(playerId, date);
+    const lost = stats.lastResult === 'won' ? 'win' : 'loss';
+    undoResult(stats, date, store.playerResults(playerId));
+    store.savePlayer({ ...player, stats });
+    store.deleteResult(playerId, date);
+    store.clearProgress(playerId);
+    // The prize money: what the result paid (older results didn't keep it:
+    // a finished battle's is worked out again; a battle left unfinished paid nothing).
+    const wallet = walletFor(store.getWallet(playerId), date);
+    const paid = result?.prize ?? (result?.turns != null && economyOpen(date) ? prizeFor(result) : 0);
+    const refund = wallet.month === date.slice(0, 7) ? Math.min(paid, wallet.cash) : 0;
+    wallet.cash -= refund;
+    wallet.earned = Math.max(0, wallet.earned - refund);
+    if (wallet.battle?.date === date) wallet.battle = null; // a fresh battle carries a full bag
+    store.saveWallet(playerId, wallet);
+    if (store.getCard(body.guild_id, date)) updateCard(body.guild_id, date);
+    refreshBoard(body.guild_id);
+    log.log(`Daily Red bot: cleared player ${playerId}'s result on ${date} in server ${body.guild_id}.`);
+    const record = `${stats.wins}W ${stats.losses}L`;
+    return reply(date === today
+      ? `Cleared ${name}'s ${lost} today. Their record is back to ${record}, and they can battle again today.`
+      : `Cleared ${name}'s ${lost} on ${dateLabel(date)}. Their record is back to ${record}. That day's battle can't be played again, but today's can.`);
   }
 
   // Whether the card has scrolled up: not among the channel's latest
@@ -1086,6 +1143,7 @@ export function createBot({
     }
     if (body.type === 2 && id === 'dailyred-preview' && body.guild_id) return { type: 4, data: previewMessage(body.guild_id) };
     if (body.type === 3 && (id === BANNER_ON || id === BANNER_OFF) && body.guild_id) return setBanner(body, id === BANNER_ON);
+    if (body.type === 2 && id === REDO_COMMAND && body.guild_id) return redo(body);
     if (body.type === 2 && id === 'dailyred') {
       if (!body.guild_id) return { type: 4, data: { flags: 64, content: 'Daily Red is played in servers: try /dailyred in one.' } };
       return { type: 4, data: commandMessage(body.guild_id, String(body.member?.user?.id ?? body.user?.id ?? '')) };

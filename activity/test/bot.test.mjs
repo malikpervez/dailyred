@@ -7,7 +7,8 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import { createBot, compareResults, compareMonths } from '../bot.mjs';
 import { createApp } from '../app.mjs';
 import { openStore } from '../store.mjs';
-import { EMPTY } from '../../web/daily.js';
+import { EMPTY, recordResult } from '../../web/daily.js';
+import { walletFor } from '../../web/economy.js';
 
 const GUILD = '111';
 const quiet = { log() {}, warn() {} };
@@ -594,6 +595,7 @@ test('/dailyred shows your day privately; old Activity buttons point to the webs
   assert.deepEqual(added.map((c) => [c.method, c.body.name, c.body.contexts, c.body.default_member_permissions]), [
     ['POST', 'dailyred', [0], undefined],
     ['POST', 'dailyred-preview', [0], '32'], // only for people who can manage the server
+    ['POST', 'dailyred-redo', [0], '32'],
   ], 'added once');
 });
 
@@ -769,4 +771,50 @@ test("the Road to RED: from Monday, Nov 23 the card, recap and buttons name the 
   assert.deepEqual(after.map((p) => p.body.embeds[0].title), ["Yesterday's results · Daily Red No. 23", 'Daily Red No. 24 · Tue, Nov 24']);
   assert.match(description(after[0]), /^\*\*1 of 1 beat Blue\*\*/);
   assert.match(description(after[0]), /🥇 <@1> \*\*Beat Blue\*\* with 3 left/);
+});
+
+test("/dailyred-redo: an admin clears a player's crash loss; their record, money, card and board go back", async () => {
+  const { store, bot, discord, player } = setup({ clock: new Date('2026-11-17T15:00:00Z') });
+  const redo = (playerId, permissions = '32', users = {}) => bot.interaction({
+    type: 2, guild_id: GUILD, member: { user: { id: '9' }, permissions },
+    data: { name: 'dailyred-redo', options: [{ name: 'player', type: 6, value: playerId }], resolved: { users } },
+  }).data;
+  const settle = () => new Promise((ok) => setTimeout(ok, 20));
+
+  // Ash won on the 15th and 16th, then lost on the 17th to a crash, recorded
+  // before results kept a copy of the stats (or their prize money).
+  for (const date of ['2026-11-15', '2026-11-16']) store.saveResult({ playerId: '1', date, won: true, monsLeft: 3, redLeft: 0, turns: 20 });
+  store.saveResult({ playerId: '1', date: '2026-11-17', won: false });
+  player('1', 'Ash', { wins: 2, losses: 1, winStreak: 0, bestWinStreak: 2, dayStreak: 3, lastPlayed: '2026-11-17', lastResult: 'lost' });
+  store.saveWallet('1', { ...walletFor(null, '2026-11-17'), cash: 2420, earned: 2420 });
+  // Misty's loss today was recorded with a copy of her stats, and paid ₽370.
+  const misty = { ...EMPTY, wins: 1, winStreak: 1, bestWinStreak: 1, dayStreak: 1, lastPlayed: '2026-11-16', lastResult: 'won' };
+  const before = { ...misty };
+  recordResult(misty, '2026-11-17', false);
+  player('2', 'Misty', misty);
+  store.saveResult({ playerId: '2', date: '2026-11-17', won: false, monsLeft: 0, redLeft: 5, turns: 14, items: 2, prize: 370 });
+  store.saveWallet('2', { ...walletFor(null, '2026-11-17'), cash: 1370, earned: 1370, battle: { date: '2026-11-17', used: 2 } });
+  await bot.updateCard(GUILD, '2026-11-17');
+  assert.match(description(discord.posts()[0]), /<@1> Lost to RED/);
+
+  assert.equal(redo('1', '2048').content, 'Only people who can manage this server can clear a result.');
+  assert.equal(store.getPlayer('1').stats.losses, 1, 'nothing changed');
+
+  assert.equal(redo('1').content, "Cleared Ash's loss today. Their record is back to 2W 0L, and they can battle again today.");
+  assert.deepEqual(store.getPlayer('1').stats, { ...EMPTY, wins: 2, winStreak: 2, bestWinStreak: 2, dayStreak: 2, lastPlayed: '2026-11-16', lastResult: 'won' });
+  assert.equal(store.getResult('1', '2026-11-17'), null);
+  assert.equal(walletFor(store.getWallet('1'), '2026-11-17').cash, 2420, 'a battle left unfinished paid nothing');
+  await settle();
+  assert.match(description(discord.edits().at(-1)), /^<@2> Lost to RED[^]*🏆 November race: <@1> 2$/, "off today's card, still in the race");
+
+  assert.equal(redo('2', String(1n << 3n)).content, "Cleared Misty's loss today. Their record is back to 1W 0L, and they can battle again today.");
+  assert.deepEqual(store.getPlayer('2').stats, before);
+  const wallet = walletFor(store.getWallet('2'), '2026-11-17');
+  assert.deepEqual([wallet.cash, wallet.earned, wallet.battle], [1000, 1000, null], 'the prize comes off; a fresh battle carries a full bag');
+
+  // Only someone's latest result, from the last few days.
+  assert.match(redo('2').content, /^Cleared Misty's win on Mon, Nov 16\. Their record is back to 0W 0L\./);
+  player('3', 'Brock', { losses: 1, lastPlayed: '2026-11-10', lastResult: 'lost' });
+  assert.equal(redo('3').content, "Brock's latest result is from Tue, Nov 10: only results from the last 3 days can be cleared.");
+  assert.equal(redo('4', '32', { 4: { id: '4', username: 'gary', global_name: 'Gary' } }).content, 'Gary has no Daily Red result to clear.');
 });

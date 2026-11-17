@@ -63,8 +63,11 @@ web/index.html + app.js            today's page, the lead picker, stats (daily.j
   the same calendar day. `?seed=123` shows the team for another seed as a
   practice team.
 - **One official battle a day:** it counts as played from the moment it
-  starts, so closing the page halfway is a loss (`settleAbandonedGame`).
-  Giving up (RUN) is a loss too. A draw (both last Pokémon down at once)
+  starts. Its seed and every move are saved as it goes (in the browser, and
+  on the server when signed in), so a battle cut off by a crash or a closed
+  page carries on from the same turn when the page opens again that day
+  (`resume` in `web/battle/worker.js`). One left unfinished when the day ends
+  is a loss (`settleAbandonedGame`). Giving up (RUN) is a loss too. A draw (both last Pokémon down at once)
   counts as a loss.
 - **Practice runs** with today's team unlock once today's battle is done, so
   the battle that counts is everyone's first try with the team. `?seed=`
@@ -197,7 +200,7 @@ cd tests && npm install && npm test   # the site in headless Chrome (CHROME_PATH
 
 The site test checks practice is locked, plays an official battle to the
 end, checks the stats, the daily lock, a practice run (giving up, the
-practice bag), the next day's team, that leaving halfway counts as a loss,
+practice bag), the next day's team, that a battle cut off halfway is continued from the same turn,
 and from Nov 15 the PokéMart, items in an official battle and the prize money
 (in the browser, and signed in through the server). Screenshots go to `tests/output/`.
 

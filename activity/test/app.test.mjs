@@ -146,7 +146,9 @@ test('a daily win: start, result, then locked for the day', async () => {
 
   res = await battle('token-ash', { event: 'result', date: TODAY, won: true, monsLeft: 4, redLeft: 0, turns: 18 });
   let { stats } = await res.json();
-  assert.deepEqual(stats, { wins: 1, losses: 0, winStreak: 1, bestWinStreak: 1, dayStreak: 1, lastPlayed: TODAY, lastResult: 'won', pending: null });
+  const { before: undo, ...record } = stats; // how they were before it, for /dailyred-redo
+  assert.deepEqual(record, { wins: 1, losses: 0, winStreak: 1, bestWinStreak: 1, dayStreak: 1, lastPlayed: TODAY, lastResult: 'won', pending: null });
+  assert.deepEqual(undo, { date: TODAY, stats: { wins: 0, losses: 0, winStreak: 0, bestWinStreak: 0, dayStreak: 0, lastPlayed: null, lastResult: null } });
 
   // A second result for the same day changes nothing (one battle a day).
   res = await battle('token-ash', { event: 'result', date: TODAY, won: false });
@@ -186,12 +188,21 @@ test("the board lists the server's players, today's results first", async () => 
   assert.equal((await get(`/api/board?room=nope&date=${TODAY}`, 'token-gary')).status, 400);
 });
 
-test('leaving mid-battle counts as a loss when the activity is opened again', async () => {
-  const res = await get('/api/me?settle=1&room=g:42', 'token-gary');
-  const { stats } = await res.json();
-  assert.equal(stats.losses, 1);
-  assert.equal(stats.lastResult, 'lost');
-  assert.equal(stats.pending, null);
+test('a battle left halfway can be continued the same day, and is a loss once the day is over', async () => {
+  // Gary's battle (started above) is saved as it goes...
+  const saved = { date: TODAY, order: [2, 0, 1, 3, 4, 5], trainer: 'red', version: 2, progress: { seed: 'sodium,1234', inputs: [['p2', 'move 1'], ['p1', 'move 3']] } };
+  assert.equal((await post('/api/battle/progress', { date: TODAY, progress: saved }, 'token-gary')).status, 200);
+  assert.equal((await post('/api/battle/progress', { date: TODAY, progress: saved }, 'token-ash')).status, 409, "Ash's battle isn't on");
+  // ...so reopening it the same day offers it back, and it isn't a loss.
+  let me = await (await get(`/api/me?settle=1&room=g:42&date=${TODAY}`, 'token-gary')).json();
+  assert.deepEqual([me.stats.pending, me.stats.losses], [TODAY, 0]);
+  assert.deepEqual(me.progress, saved);
+  // Without the player's date, nothing still continuable is settled.
+  me = await (await get('/api/me?settle=1&room=g:42', 'token-gary')).json();
+  assert.equal(me.stats.pending, TODAY);
+  // The next day it's a loss, with nothing left to continue...
+  me = await (await get('/api/me?settle=1&room=g:42&date=2026-11-07', 'token-gary')).json();
+  assert.deepEqual([me.stats.losses, me.stats.lastResult, me.stats.pending, me.progress], [1, 'lost', null, null]);
   // ...and the battle can't be finished afterwards.
   const late = await (await battle('token-gary', { event: 'result', date: TODAY, won: true })).json();
   assert.equal(late.stats.wins, 0);
@@ -399,6 +410,7 @@ test('money and items: prize money once a day, the PokéMart, the bag only in ba
     assert.deepEqual([lost.prize, lost.wallet.cash], [270 + 4 * 100, 670]);
     const again = await call('/api/battle', { event: 'result', date: '2026-11-16', room: 'g:42', won: true, monsLeft: 6 });
     assert.deepEqual([again.prize, again.wallet.cash], [0, 670], 'only the first result pays');
+    assert.equal(store.getResult(USERS['token-ash'].id, '2026-11-16').prize, 670, 'kept with the result (for /dailyred-redo)');
     assert.equal((await call('/api/bag/use', { date: '2026-11-16', item: 'fullrestore' })).status, 409, 'the battle is over');
     const board = await call('/api/board?room=g:42&date=2026-11-16');
     assert.equal(board.players[0].result.items, 4, "the day's items are on the board (and the bot's card)");

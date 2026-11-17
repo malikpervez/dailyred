@@ -275,6 +275,14 @@ them, today's card with the picture, with a button to turn it on for everyone
 (and later off again). Needs `PUBLIC_URL`, since Discord fetches the picture
 from your server.
 
+**A battle lost to a crash:** someone who can manage the server types
+**`/dailyred-redo`** and picks the player. That clears the player's latest
+result (from the last 3 days): their record goes back to how it was, the
+prize money it paid comes off, and the card and leaderboard drop it. If it was
+today's, they can battle again today. Only the admin sees the reply. (Battles
+that are cut off now carry on from the same turn when the page opens again,
+so this should rarely be needed.)
+
 They have a **▶️ Battle RED** button, a **Leaderboard** button and a
 **🔔 Reminders** button. **▶️ Battle RED** opens the website for that server
 ([play in the browser](#play-in-the-browser-friends-who-arent-app-testers));

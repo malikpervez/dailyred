@@ -250,9 +250,14 @@ export function createBattleView(root, {
   function tweenNumbers(boxParts, hp, maxhp) {
     const from = boxParts.hpShown ?? hp;
     boxParts.hpShown = hp;
+    // A newer update (e.g. catching up on several turns at once) takes over
+    // from one still counting.
+    const token = (boxParts.tween = (boxParts.tween ?? 0) + 1);
     const start = performance.now();
     const duration = from === hp ? 0 : speed().bar;
+    boxParts.numbers.textContent = `${from}/ ${maxhp}`; // right away, then counting
     const step = (now) => {
+      if (boxParts.tween !== token) return;
       const t = duration ? Math.min(1, (now - start) / duration) : 1;
       const value = Math.round(from + (hp - from) * t);
       boxParts.numbers.textContent = `${value}/ ${maxhp}`;

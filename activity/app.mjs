@@ -5,6 +5,7 @@
 //   POST /api/token    { code } -> { access_token }    OAuth2 code exchange
 //   GET  /api/me       ?room=&settle=1&date= -> { user, stats, wallet }
 //   POST /api/battle   { event: 'start' | 'result', date, won, room } -> { stats, wallet, prize }
+//   POST /api/battle/progress { date, progress }   today's battle so far, to continue it after a crash
 //   POST /api/shop     { date, item, quantity } -> { wallet }    the PokéMart
 //   POST /api/bag/use  { date, item } -> { wallet }              an item in today's battle
 //   GET  /api/board    ?room=&date= -> { players, hallOfFame, reminders }
@@ -372,20 +373,28 @@ export function createApp({
     return room;
   }
 
-  // GET /api/me. settle=1 when the activity starts: a battle that started but
-  // never finished is a loss, exactly like reloading the website mid-battle.
-  // settleAbandonedGame(), also saving the loss as that day's result.
-  function settle(player) {
+  // GET /api/me. settle=1 when the page opens: a battle that started on an
+  // earlier day and never finished is a loss (settleAbandonedGame(), also
+  // saving the loss as that day's result). Today's can still be continued.
+  function settle(player, today) {
     const { pending } = player.stats;
-    settleAbandonedGame(player.stats);
+    settleAbandonedGame(player.stats, today);
     if (pending && player.stats.lastPlayed === pending && player.stats.lastResult === 'lost') {
-      store.saveResult({ playerId: player.id, date: pending, won: false });
+      store.saveResult({ playerId: player.id, date: pending, won: false, prize: 0 });
+      store.clearProgress(player.id);
     }
   }
 
   function me(user, query) {
+    // The player's own date (the page sends it). Without it, a day back from
+    // the server's (UTC is ahead of the Americas), so nothing still
+    // continuable is settled by mistake.
+    let date = addDays(now().toISOString().slice(0, 10), -1);
+    try {
+      if (query.get('date')) date = checkDate(query.get('date'));
+    } catch { /* the fallback will do */ }
     const player = loadPlayer(user);
-    if (query.get('settle') === '1') settle(player);
+    if (query.get('settle') === '1') settle(player, date);
     store.savePlayer(player);
     const room = allowRoom(user, checkRoom(query.get('room')));
     const joined = room ? store.joinRoom(room, user.id) : false;
@@ -405,11 +414,20 @@ export function createApp({
         // a bad date from the page shouldn't stop it signing in
       }
     }
-    let date = now().toISOString().slice(0, 10);
-    try {
-      if (query.get('date')) date = checkDate(query.get('date'));
-    } catch { /* the server's date will do */ }
-    return { user, stats: player.stats, wallet: walletOf(user.id, date) };
+    // Today's battle in progress, to continue it (web/app.js).
+    const progress = player.stats.pending === date && !resultFor(player.stats, date) ? store.getProgress(user.id, date) : null;
+    return { user, stats: player.stats, wallet: walletOf(user.id, date), progress };
+  }
+
+  // POST /api/battle/progress: today's official battle so far (its seed and
+  // inputs), saved by the page after every move.
+  function saveProgress(user, body) {
+    const date = checkDate(body.date);
+    const { stats } = loadPlayer(user);
+    if (stats.pending !== date || resultFor(stats, date)) throw new HttpError(409, "Today's battle isn't on");
+    if (!body.progress || typeof body.progress !== 'object' || Array.isArray(body.progress)) throw new HttpError(400, 'Missing progress');
+    store.saveProgress(user.id, date, body.progress);
+    return { ok: true };
   }
 
   function battle(user, body) {
@@ -421,8 +439,9 @@ export function createApp({
     // A battle left unfinished on an earlier day (another device, a crash)
     // is a loss before today's counts.
     if (stats.pending && stats.pending < date && stats.pending !== stats.lastPlayed) {
-      store.saveResult({ playerId: user.id, date: stats.pending, won: false });
+      store.saveResult({ playerId: user.id, date: stats.pending, won: false, prize: 0 });
       recordResult(stats, stats.pending, false);
+      store.clearProgress(user.id);
     }
 
     const wallet = walletOf(user.id, date);
@@ -439,11 +458,12 @@ export function createApp({
           won: body.won, monsLeft: count(body.monsLeft, 6), redLeft: count(body.redLeft, 6), turns: count(body.turns, 1000),
           gaveUp: !body.won && body.gaveUp === true, // pressed RUN
         };
-        store.saveResult({ playerId: user.id, date, ...result, items: usedIn(wallet, date) });
         prize = earn(wallet, date, result); // once a day: the first result counts
+        store.saveResult({ playerId: user.id, date, ...result, items: usedIn(wallet, date), prize });
         finished = true;
       }
       recordResult(stats, date, body.won); // ignored if the day already has a result
+      store.clearProgress(user.id); // nothing left to continue
     } else {
       throw new HttpError(400, 'Unknown event');
     }
@@ -564,6 +584,9 @@ export function createApp({
     } else if (route === 'POST /api/battle') {
       const user = await requireUser(req);
       result = battle(user, await readJson(req));
+    } else if (route === 'POST /api/battle/progress') {
+      const user = await requireUser(req);
+      result = saveProgress(user, await readJson(req, 128 * 1024));
     } else if (route === 'POST /api/shop') {
       const user = await requireUser(req);
       result = shop(user, await readJson(req));
