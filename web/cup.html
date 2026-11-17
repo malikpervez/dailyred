@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="style.css">
   <script type="module" src="cup.js"></script>
 </head>
-<body>
+<body class="cup-page">
   <header class="masthead">
     <a class="wordmark" href="./">Daily <span>Red</span> Cup</a>
     <p class="masthead-meta"><span id="cup-label"></span></p>
@@ -19,13 +19,57 @@
 
   <main class="app" data-state="loading">
     <div class="status-card" id="loading" role="status" aria-live="polite">
-      <p id="loading-text">Loading the battle…</p>
+      <p id="loading-text">Loading the Cup…</p>
     </div>
 
     <div class="status-card status-error" id="error" role="alert">
       <p class="status-heading" id="error-heading">Something went wrong</p>
       <p id="error-text"></p>
       <a class="button button-primary button-discord" id="error-signin" href="auth/login" hidden>Sign in with Discord</a>
+    </div>
+
+    <!-- The week's Cup: sign-ups, the pool and the draft (cup-hub.js). -->
+    <div class="cup-hub" id="cup-hub">
+      <section class="cup-banner">
+        <h1 class="cup-title" id="cup-title"></h1>
+        <p class="cup-note" id="cup-note"></p>
+        <p class="cup-clock" id="cup-clock" hidden>
+          <span class="cup-clock-label" id="cup-clock-label"></span>
+          <span class="cup-clock-time" id="cup-clock-time" role="timer"></span>
+        </p>
+        <p class="cup-last" id="cup-last" hidden></p>
+        <div class="cup-actions" id="cup-actions" hidden></div>
+      </section>
+
+      <aside class="cup-side">
+      <section id="cup-players-section" hidden>
+        <h2 class="section-title" id="cup-players-title">Players</h2>
+        <ol class="cup-players" id="cup-players"></ol>
+      </section>
+
+      <section id="cup-wish-section" hidden>
+        <h2 class="section-title">Your wish list</h2>
+        <p class="section-note">Most wanted first. If your time runs out (or autodraft is on), the draft takes the first one still there; with none left, the best Pokémon left. Only you see it.</p>
+        <p class="section-note" id="cup-wish-empty">Nothing on it yet: press ☆ on Pokémon in the pool.</p>
+        <ol class="cup-wish" id="cup-wish"></ol>
+      </section>
+
+      <section id="cup-log-section" hidden>
+        <h2 class="section-title">Picks</h2>
+        <ol class="cup-log" id="cup-log" reversed></ol>
+      </section>
+      </aside>
+
+      <section id="cup-pool-section" hidden>
+        <h2 class="section-title">The pool <span class="cup-count" id="cup-pool-count"></span></h2>
+        <p class="section-note">Six per player, every one goes to someone. Level 100, moves and items as you see them: tap one for its moves and stats.</p>
+        <div class="cup-pool-tools">
+          <label>Sort <select id="cup-sort"><option value="bst">Base stats, best first</option><option value="dex">Pokédex order</option></select></label>
+          <label><input type="checkbox" id="cup-hide-taken"> Hide taken</label>
+        </div>
+        <ul class="pool-grid" id="cup-pool"></ul>
+      </section>
+      <p class="cup-toast" id="cup-toast" role="status" hidden></p>
     </div>
 
     <!-- A Cup battle (cup.js; battle/view.js builds the inside). -->
@@ -55,6 +99,14 @@
       </div>
     </div>
   </main>
+
+  <dialog class="mon-dialog" id="mon-dialog" aria-label="Pokémon details">
+    <ul class="team-list" id="mon-dialog-card"></ul>
+    <div class="mon-dialog-buttons">
+      <span id="mon-dialog-buttons"></span>
+      <button class="button button-small" type="button" id="mon-dialog-close">Close</button>
+    </div>
+  </dialog>
 
   <dialog class="confirm-dialog" id="run-dialog" aria-labelledby="run-dialog-text">
     <p id="run-dialog-text">Give up this Cup battle? Your opponent wins.</p>

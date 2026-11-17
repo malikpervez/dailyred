@@ -9,6 +9,7 @@ import { createApp } from '../app.mjs';
 import { openStore } from '../store.mjs';
 import { EMPTY, recordResult } from '../../web/daily.js';
 import { walletFor } from '../../web/economy.js';
+import { createCupWeek } from '../cup-week.mjs';
 
 const GUILD = '111';
 const quiet = { log() {}, warn() {} };
@@ -817,4 +818,76 @@ test("/dailyred-redo: an admin clears a player's crash loss; their record, money
   player('3', 'Brock', { losses: 1, lastPlayed: '2026-11-10', lastResult: 'lost' });
   assert.equal(redo('3').content, "Brock's latest result is from Tue, Nov 10: only results from the last 3 days can be cleared.");
   assert.equal(redo('4', '32', { 4: { id: '4', username: 'gary', global_name: 'Gary' } }).content, 'Gary has no Daily Red result to clear.');
+});
+
+test('the Cup in #daily-red-cup: Monday sign-ups with Join and Leave, the board through the draft, a ping for each pick', async () => {
+  const { publicKey } = generateKeyPairSync('ed25519');
+  const rawKey = publicKey.export({ format: 'der', type: 'spki' }).subarray(12).toString('hex');
+  const discord = fakeDiscord({ channels: [{ id: 'c-general', type: 0, name: 'general' }, { id: 'c-cup', type: 0, name: 'daily-red-cup' }] });
+  const store = openStore(':memory:');
+  let time = new Date('2026-11-23T11:05:00Z'); // Monday, 6:05 AM in New York
+  let bot = null;
+  const cupWeek = createCupWeek({
+    store, loadEngine: () => import('../cup-engine.mjs'), now: () => time.getTime(), log: quiet,
+    onChange: (cup, what) => bot.cupChanged(cup, what),
+  });
+  bot = createBot({
+    token: 'bot-token', clientId: '999', publicKey: rawKey, store, fetch: discord.fetch, now: () => time, log: quiet, followUpDelay: 0,
+    publicUrl: 'https://nas.example.ts.net', cupWeek,
+  });
+  const settle = () => new Promise((ok) => setTimeout(ok, 30));
+  const inCup = (calls) => calls.filter((c) => c.path.startsWith('/channels/c-cup/'));
+  const press = (userId, button) => bot.interaction({
+    type: 3, guild_id: GUILD, member: { user: { id: userId, username: `trainer${userId}`, global_name: `Trainer ${userId}` } }, data: { custom_id: button },
+  }).data;
+
+  store.setSetting('gateway_identified', '1');
+  await bot.tick();
+  await settle();
+  const [board] = inCup(discord.posts());
+  assert.match(board.body.embeds[0].title, /Daily Red Cup · week of Nov 23/);
+  assert.match(board.body.embeds[0].description, /Sign-ups are open until \*\*6 PM ET\*\*[^]*Nobody yet/);
+  assert.deepEqual(board.body.components[0].components.map((b) => b.custom_id ?? b.url), ['cup:join', 'cup:leave', `https://nas.example.ts.net/cup.html?g=${GUILD}`]);
+  await bot.tick();
+  await settle();
+  assert.equal(inCup(discord.posts()).length, 1, 'posted once');
+
+  assert.match(press('11', 'cup:join').content, /^🏆 You're in this week's Daily Red Cup! Sign-ups close at 6 PM ET[^]*8 PM ET/);
+  for (const id of ['12', '13', '14', '15']) press(id, 'cup:join');
+  assert.match(press('15', 'cup:leave').content, /You've left/);
+  await settle();
+  assert.match(description(inCup(discord.edits()).at(-1)), /\*\*Players \(4 of 8\)\*\*\n<@11> <@12> <@13> <@14>$/);
+
+  time = new Date('2026-11-23T23:00:00Z'); // 6 PM
+  assert.match(press('16', 'cup:join').content, /closed/);
+  await cupWeek.tick();
+  await settle();
+  const closed = inCup(discord.posts()).at(-1);
+  assert.match(closed.body.content, /^🏆 Sign-ups are closed! <@\d+> <@\d+> <@\d+> <@\d+>: the pool is out/);
+  assert.deepEqual(closed.body.allowed_mentions.users.sort(), ['11', '12', '13', '14']);
+  assert.match(description(inCup(discord.edits()).at(-1)), /\*\*Draft order\*\*\n1\. <@\d+>\n2\./);
+  assert.equal(inCup(discord.edits()).at(-1).body.components[0].components.length, 1, 'no Join button once closed');
+
+  time = new Date('2026-11-24T01:00:00Z'); // 8 PM
+  await cupWeek.tick();
+  await settle();
+  const cup = cupWeek.current(GUILD);
+  const first = cup.draft.order[0];
+  const ping = inCup(discord.posts()).at(-1);
+  assert.equal(ping.body.content.split('\n')[0], `⏰ <@${first}>, you're up! Pick 1 of 24: 90 seconds.`);
+  assert.deepEqual(ping.body.allowed_mentions, { users: [first] });
+
+  cupWeek.pick(GUILD, { id: first }, 0);
+  await settle();
+  assert.equal(discord.deletes().length, 1, 'the old ping goes');
+  assert.match(description(inCup(discord.edits()).at(-1)), new RegExp(`<@${first}>: ${cup.draft.pool[0].set.species}`));
+  assert.match(inCup(discord.posts()).at(-1).body.content, new RegExp(`^⏰ <@${cup.draft.order[1]}>, you're up! Pick 2 of 24`));
+
+  for (const id of cup.draft.order) cupWeek.autodraft(GUILD, { id }, true);
+  await settle();
+  const done = inCup(discord.posts()).at(-1);
+  assert.match(done.body.content, /^🏆 The teams are set!/);
+  const final = description(inCup(discord.edits()).at(-1));
+  assert.match(final, /^\*\*The teams are set!\*\* The bracket starts Tuesday\./);
+  assert.equal(final.split('\n').filter((l) => /^\d\. <@\d+>: (\S[^,]*, ){5}\S/.test(l)).length, 4, 'six each');
 });

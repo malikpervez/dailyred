@@ -14,6 +14,8 @@
 //   recaps        which morning recaps (date) and monthly announcements
 //                 ('month:YYYY-MM') have been posted
 //   settings      small things the server remembers (key/value)
+//   cups          each server's Cup for each week (cup-week.mjs): sign-ups,
+//                 the draft's pool and picks, as JSON
 //   cup_battles   the Cup's player-vs-player battles (cup.mjs): the seed, both
 //                 teams and every choice, which rebuild the battle exactly
 //   progress      each player's official battle in progress (its seed and
@@ -72,6 +74,14 @@ export function openStore(file) {
       wins      INTEGER NOT NULL,
       losses    INTEGER NOT NULL,
       PRIMARY KEY (guild_id, month, player_id)
+    );
+    CREATE TABLE IF NOT EXISTS cups (
+      id         TEXT PRIMARY KEY,
+      guild_id   TEXT NOT NULL,
+      week       TEXT NOT NULL,
+      stage      TEXT NOT NULL,
+      data       TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS cup_battles (
       id         TEXT PRIMARY KEY,
@@ -181,6 +191,13 @@ export function openStore(file) {
       updated_at = excluded.updated_at, ended_at = excluded.ended_at
   `);
   const liveCupBattles = db.prepare('SELECT id FROM cup_battles WHERE ended_at IS NULL');
+  const getCup = db.prepare('SELECT data FROM cups WHERE id = ?');
+  const latestCup = db.prepare('SELECT data FROM cups WHERE guild_id = ? ORDER BY week DESC LIMIT 1');
+  const activeCups = db.prepare("SELECT data FROM cups WHERE stage NOT IN ('cancelled', 'done')");
+  const putCup = db.prepare(`
+    INSERT INTO cups (id, guild_id, week, stage, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT (id) DO UPDATE SET stage = excluded.stage, data = excluded.data, updated_at = excluded.updated_at
+  `);
   const getProgress = db.prepare('SELECT data FROM progress WHERE player_id = ? AND date = ?');
   const putProgress = db.prepare(`
     INSERT INTO progress (player_id, date, data, updated_at) VALUES (?, ?, ?, ?)
@@ -275,6 +292,11 @@ export function openStore(file) {
       putCupBattle.run(id, p1Id, p2Id, JSON.stringify(state), JSON.stringify(asked), winner, time, time, ended ? time : null);
     },
     liveCupBattles: () => liveCupBattles.all().map((row) => row.id),
+    // The week's Cups (cup-week.mjs): { id, guildId, week, stage, ... } as saved.
+    getCup: (id) => JSON.parse(getCup.get(id)?.data ?? 'null'),
+    latestCup: (guildId) => JSON.parse(latestCup.get(guildId)?.data ?? 'null'),
+    activeCups: () => activeCups.all().map((row) => JSON.parse(row.data)),
+    saveCup: (cup) => { putCup.run(cup.id, cup.guildId, cup.week, cup.stage, JSON.stringify(cup), Date.now()); },
     // A player's official battle in progress on `date` (as the page sent it), or null.
     getProgress: (playerId, date) => {
       const text = getProgress.get(playerId, date)?.data;

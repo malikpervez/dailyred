@@ -41,6 +41,8 @@ import {
   economyOpen, ECONOMY_START, ECONOMY_START_LABEL, PRIZE, ITEMS, WEEKLY_BAG, CARRY_LIMIT, prizeFor, walletFor,
 } from '../web/economy.js';
 import { ROAD, ROAD_START, TRAINERS, trainerOn, roadOpen } from '../web/road.js';
+import { scheduleFor, MAX_PLAYERS, MIN_PLAYERS } from './cup-week.mjs';
+import { onClock as draftOnClock } from './cup-draft.mjs';
 
 const API = 'https://discord.com/api/v10';
 const RED = 0xd63a3a;
@@ -52,6 +54,9 @@ const BOARD_BUTTON = 'dailyred:board';
 const REMIND_BUTTON = 'dailyred:remind';
 const BANNER_ON = 'dailyred:banner-on';
 const BANNER_OFF = 'dailyred:banner-off';
+const CUP_JOIN = 'cup:join';
+const CUP_LEAVE = 'cup:leave';
+const CUP_GOLD = 0xe0a800;
 const REDO_COMMAND = 'dailyred-redo';
 const REDO_DAYS = 3; // how far back /dailyred-redo reaches
 const MANAGE_GUILD = 1n << 5n;
@@ -147,6 +152,8 @@ export function createBot({
   cardPictures = false, // whether the server draws /card/<date>.png (card-image.mjs)
   api = API,
   log = console,
+  cupWeek = null, // cup-week.mjs: the Daily Red Cup, posted in #<cupChannelName>
+  cupChannelName = 'daily-red-cup',
 }) {
   // The public key as pasted from the Developer Portal: 64 hex digits.
   // Stray spaces or quotes from copying are ignored.
@@ -1090,6 +1097,13 @@ export function createBot({
         });
       }
     }
+    // Mondays from 6 AM: the Cup's sign-ups, in servers with a Cup channel
+    // (cupWeek.current() opens them; the post follows via cupChanged()).
+    if (cupWeek && weekday === 'Mon' && time >= '06:00' && time < '18:00') {
+      for (const guildId of guilds) {
+        if (await cupChannelFor(guildId)) cupWeek.current(guildId);
+      }
+    }
     if (time >= reminderTime) {
       for (const guildId of store.reminderGuilds()) {
         await once(`remind:${today}`, guildId, 'reminder', async () => {
@@ -1098,6 +1112,173 @@ export function createBot({
         });
       }
     }
+  }
+
+  // --- The Daily Red Cup (cup-week.mjs) -----------------------------------------------------------
+  //
+  // Only in servers with a #daily-red-cup channel: on Mondays at 6 AM the
+  // sign-up post (Join / Leave), edited as the week goes on into the draft
+  // board; a mention for each player when it's their pick (deleted once
+  // they've picked); and one for everyone when the pool is out and when the
+  // teams are set.
+
+  const cupChannels = new Map(); // guild id -> { id, until }
+  async function cupChannelFor(guildId) {
+    const cached = cupChannels.get(guildId);
+    if (cached && cached.until > Date.now()) return cached.id;
+    let id = null;
+    try {
+      const list = await discord('GET', `/guilds/${guildId}/channels`);
+      id = list.find((c) => (c.type === 0 || c.type === 5) && c.name.toLowerCase() === cupChannelName.toLowerCase())?.id ?? null;
+    } catch (err) {
+      log.warn(`Daily Red bot: couldn't look for #${cupChannelName} in server ${guildId}: ${err.message}`);
+    }
+    cupChannels.set(guildId, { id, until: Date.now() + 10 * 60 * 1000 });
+    return id;
+  }
+
+  const cupLink = (guildId) => (site ? `${site}/cup.html?g=${guildId}` : null);
+  const etTime = (ms) => new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }).replace(':00', '');
+  const mention = (id) => `<@${id}>`;
+  const speciesOf = (cup, index) => cup.draft.pool[index].set.species;
+
+  function cupBoardMessage(cup) {
+    const times = scheduleFor(cup.week);
+    const { players, draft } = cup;
+    const lines = [];
+    let color = CUP_GOLD;
+    if (cup.stage === 'signup') {
+      lines.push(
+        `Sign-ups are open until **${etTime(times.signupsClose)} ET** today: up to ${MAX_PLAYERS} players, at least ${MIN_PLAYERS}.`,
+        `The **live draft** is tonight at **${etTime(times.draft)} ET**: a pool of six random Pokémon per player (any of the 386, level 100, moves and items set), picked in turn, snake order, 90 seconds a pick. Whatever's left goes to whoever's left!`,
+        'Then a **double-elimination bracket**, one round a day from Tuesday to the final on Sunday.',
+        '',
+        `**Players (${players.length} of ${MAX_PLAYERS})**`,
+        players.length ? players.map((p) => mention(p.id)).join(' ') : 'Nobody yet: be the first!',
+      );
+    } else if (cup.stage === 'cancelled') {
+      color = 0x808080;
+      lines.push(`No Cup this week: ${players.length} signed up, and it needs ${MIN_PLAYERS}. Sign-ups open again next Monday at 6 AM ET.`);
+    } else if (draft) {
+      const picks = (id) => draft.picks.filter((p) => p.player === id).map((p) => speciesOf(cup, p.pool));
+      if (cup.stage === 'pool') lines.push(`Sign-ups are closed: **${players.length} players**. The pool is out: look it over and rank a wish list before the draft at **${etTime(times.draft)} ET**.`, '');
+      if (cup.stage === 'draft') lines.push(`The draft is on: pick **${draft.picks.length + 1} of ${draft.pool.length}**.`, '');
+      if (cup.stage === 'drafted') lines.push('**The teams are set!** The bracket starts Tuesday.', '');
+      lines.push(cup.stage === 'pool' ? '**Draft order**' : '**Teams**');
+      players.forEach((p, i) => {
+        const team = picks(p.id);
+        const clock = cup.stage === 'draft' && cupOnClock(cup) === p.id ? ' ⏰' : '';
+        lines.push(`${i + 1}. ${mention(p.id)}${clock}${team.length ? `: ${team.join(', ')}` : ''}`);
+      });
+    }
+    const link = cupLink(cup.guildId);
+    const row = [
+      cup.stage === 'signup' && key && { type: 2, style: 3, label: 'Join', custom_id: CUP_JOIN },
+      cup.stage === 'signup' && key && { type: 2, style: 2, label: 'Leave', custom_id: CUP_LEAVE },
+      link && cup.stage !== 'cancelled' && { type: 2, style: 5, label: cup.stage === 'draft' ? 'Draft room' : 'Open the Cup', emoji: { name: '🏆' }, url: link },
+    ].filter(Boolean);
+    return {
+      embeds: [{
+        color,
+        title: `🏆 Daily Red Cup · week of ${dateLabel(cup.week).replace(/^\w+, /, '')}`,
+        description: lines.join('\n'),
+      }],
+      components: row.length ? [{ type: 1, components: row }] : [],
+      allowed_mentions: { parse: [] },
+    };
+  }
+
+  // Whose pick it is, or null.
+  const cupOnClock = (cup) => (cup.stage === 'draft' && cup.draft ? draftOnClock(cup.draft) : null);
+
+  // Posts and edits, one at a time per Cup.
+  const cupQueues = new Map();
+  function cupChanged(cup, what) {
+    if (!posting) return Promise.resolve();
+    const previous = cupQueues.get(cup.id) ?? Promise.resolve();
+    const next = previous.then(() => syncCup(cup, what)).catch((err) => log.warn(`Daily Red bot: the Cup post in server ${cup.guildId}: ${err.message}`));
+    cupQueues.set(cup.id, next);
+    return next;
+  }
+
+  async function syncCup(cup, what) {
+    const channelId = await cupChannelFor(cup.guildId);
+    if (!channelId) return;
+    const settingKey = `cup-post:${cup.id}`;
+    const saved = JSON.parse(store.getSetting(settingKey) ?? 'null') ?? { channelId };
+    const keep = () => store.setSetting(settingKey, JSON.stringify(saved));
+    // The board: one message, edited (posted again if it was deleted).
+    const board = cupBoardMessage(cup);
+    if (saved.boardId) {
+      try {
+        await discord('PATCH', `/channels/${saved.channelId}/messages/${saved.boardId}`, board);
+      } catch (err) {
+        if (err.status !== 404) throw err;
+        saved.boardId = null;
+      }
+    }
+    if (!saved.boardId) {
+      saved.boardId = (await discord('POST', `/channels/${channelId}/messages`, board)).id;
+      saved.channelId = channelId;
+    }
+    keep();
+    // The mentions.
+    const dropPing = async () => {
+      if (!saved.pingId) return;
+      await discord('DELETE', `/channels/${saved.channelId}/messages/${saved.pingId}`).catch(() => {});
+      saved.pingId = null;
+      saved.pingFor = null;
+      keep();
+    };
+    const ping = async (content, ids) => {
+      const link = cupLink(cup.guildId);
+      const posted = await discord('POST', `/channels/${channelId}/messages`, {
+        content: `${content}${link ? `\n${link}` : ''}`,
+        allowed_mentions: { users: ids }, // only the Cup's players
+      });
+      return posted.id;
+    };
+    const everyone = cup.players.map((p) => p.id);
+    if (what === 'closed') {
+      await ping(`🏆 Sign-ups are closed! ${everyone.map(mention).join(' ')}: the pool is out. Look it over and rank your wish list before the draft at ${etTime(scheduleFor(cup.week).draft)} ET.`, everyone);
+    } else if (what === 'drafted') {
+      await dropPing();
+      await ping(`🏆 The teams are set! ${everyone.map(mention).join(' ')}: the bracket starts Tuesday.`, everyone);
+    } else if (cup.stage === 'draft') {
+      // Whose pick it is (not if they're on autodraft: theirs is instant).
+      const up = cupOnClock(cup);
+      const pickNo = cup.draft.picks.length + 1;
+      if (saved.pingFor === `${up}:${pickNo}`) return;
+      await dropPing();
+      if (up && !cup.autodraft?.[up]) {
+        saved.pingId = await ping(`⏰ ${mention(up)}, you're up! Pick ${pickNo} of ${cup.draft.pool.length}: 90 seconds.`, [up]);
+        saved.pingFor = `${up}:${pickNo}`;
+        keep();
+      }
+    }
+  }
+
+  // The Join / Leave buttons.
+  function cupButton(body, joining) {
+    const reply = (content) => ({ type: 4, data: { flags: 64, content, allowed_mentions: { parse: [] } } });
+    const u = body.member?.user ?? body.user;
+    if (!u?.id) return reply("Couldn't tell who pressed that.");
+    const user = {
+      id: String(u.id),
+      name: u.global_name || u.username || 'Trainer',
+      avatarUrl: u.avatar ? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=64` : `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(u.id) >> 22n) % 6n)}.png`,
+    };
+    try {
+      if (joining) cupWeek.join(body.guild_id, user);
+      else cupWeek.leave(body.guild_id, user);
+    } catch (err) {
+      return reply(err.message);
+    }
+    const times = scheduleFor(cupWeek.current(body.guild_id)?.week ?? zonedNow().date);
+    const link = cupLink(body.guild_id);
+    return reply(joining
+      ? `🏆 You're in this week's Daily Red Cup! Sign-ups close at ${etTime(times.signupsClose)} ET, when the pool comes out; the draft is tonight at ${etTime(times.draft)} ET.${link ? ` The draft room: ${link}` : ''}`
+      : "You've left this week's Cup. Changed your mind? Press Join again before sign-ups close.");
   }
 
   // --- Interactions (button presses) -----------------------------------------------------------
@@ -1143,6 +1324,10 @@ export function createBot({
     }
     if (body.type === 2 && id === 'dailyred-preview' && body.guild_id) return { type: 4, data: previewMessage(body.guild_id) };
     if (body.type === 3 && (id === BANNER_ON || id === BANNER_OFF) && body.guild_id) return setBanner(body, id === BANNER_ON);
+    if (body.type === 3 && (id === CUP_JOIN || id === CUP_LEAVE) && body.guild_id) {
+      if (!cupWeek) return { type: 4, data: { flags: 64, content: "The Cup isn't on in this server." } };
+      return cupButton(body, id === CUP_JOIN);
+    }
     if (body.type === 2 && id === REDO_COMMAND && body.guild_id) return redo(body);
     if (body.type === 2 && id === 'dailyred') {
       if (!body.guild_id) return { type: 4, data: { flags: 64, content: 'Daily Red is played in servers: try /dailyred in one.' } };
@@ -1194,6 +1379,7 @@ export function createBot({
   return {
     updateCard,
     postResult,
+    cupChanged,
     ensureCard,
     refreshBoard,
     tick,

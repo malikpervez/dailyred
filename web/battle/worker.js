@@ -32,8 +32,9 @@ import { Battle as ClientBattle } from '@pkmn/client';
 import { Protocol } from '@pkmn/protocol';
 import { LogFormatter } from '@pkmn/view';
 import * as calc from '@smogon/calc';
-import { generateTeam, statsFor, isPhysicalType } from './team.js';
+import { generateTeam, isPhysicalType } from './team.js';
 import { itemHelp } from './items.js';
+import { describeSet } from './describe.js';
 import { TRAINER_TEAMS } from './trainers.js';
 import { TRAINERS } from '../road.js';
 import { chooseForRed } from './ai.js';
@@ -46,48 +47,8 @@ const post = (message) => postMessage(message);
 
 // --- Teams for the page ------------------------------------------------------------
 
-function describeMove(name, set) {
-  const move = dex.moves.get(name);
-  const type = move.id === 'hiddenpower' ? hiddenPowerType(set.ivs) : move.type;
-  return {
-    name: move.name,
-    type,
-    category: move.category === 'Status' ? 'Status' : isPhysicalType(type) ? 'Physical' : 'Special',
-    power: move.basePower || null,
-    accuracy: move.accuracy === true ? null : move.accuracy,
-    pp: Math.floor(move.pp * 8 / 5), // 3 PP Ups, like the FireRed version's teams
-    desc: move.shortDesc,
-  };
-}
-
-// Gen 3 Hidden Power type from the IVs.
-function hiddenPowerType(ivs) {
-  const types = ['Fighting', 'Flying', 'Poison', 'Ground', 'Rock', 'Bug', 'Ghost', 'Steel',
-    'Fire', 'Water', 'Grass', 'Electric', 'Psychic', 'Ice', 'Dragon', 'Dark'];
-  const bit = (s, n) => (ivs[s] >> n) & 1;
-  const index = ['hp', 'atk', 'def', 'spe', 'spa', 'spd'].reduce((sum, s, i) => sum + (bit(s, 0) << i), 0);
-  return types[Math.floor((index * 15) / 63)];
-}
-
-function describe(set) {
-  const species = dex.species.get(set.species);
-  return {
-    species: species.name,
-    num: species.num,
-    types: species.types,
-    item: set.item,
-    ability: set.ability,
-    abilityDesc: dex.abilities.get(set.ability).shortDesc,
-    itemDesc: itemHelp(dex.items.get(set.item)),
-    nature: set.nature,
-    gender: set.gender || species.gender || '',
-    shiny: Boolean(set.shiny),
-    level: set.level,
-    stats: statsFor(dex, set),
-    baseStats: species.baseStats,
-    moves: set.moves.map((m) => describeMove(m, set)),
-  };
-}
+// A set as the summary screens show it (describe.js).
+const describe = (set) => describeSet(dex, set);
 
 // --- Text ---------------------------------------------------------------------------
 

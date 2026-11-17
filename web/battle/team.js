@@ -389,6 +389,21 @@ export function generateTeam(dex, seed, version = TEAM_VERSION) {
   return pickTeamSpecies(dex, rng).map((id) => makeSet(dex, rng, id, trainerId, version));
 }
 
+// The Cup's draft pool: `count` different species drawn from all 386, any of
+// them (legendaries and all, so some picks are far better than others), each
+// a level 100 set made by the same rules as the daily team's.
+export function draftPool(dex, seed, count) {
+  const rng = createRng(seed);
+  const trainerId = rng.next32();
+  const ids = speciesList(dex);
+  const picked = [];
+  while (picked.length < Math.min(count, ids.length)) {
+    const id = ids[rng.below(ids.length)];
+    if (!picked.includes(id)) picked.push(id);
+  }
+  return picked.map((id) => makeSet(dex, rng, FORME_FOR[id] ?? id, trainerId, TEAM_VERSION));
+}
+
 // Level 100 stats for a set, as the battle will have them.
 export function statsFor(dex, set) {
   const species = dex.species.get(set.species);

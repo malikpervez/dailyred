@@ -12,6 +12,8 @@
 import { Battle, Dex, Teams, PRNG, extractChannelMessages } from '@pkmn/sim';
 import * as calc from '@smogon/calc';
 import { chooseFor } from '../web/battle/ai.js';
+import { draftPool as makePool } from '../web/battle/team.js';
+import { describeSet } from '../web/battle/describe.js';
 
 const dex = Dex.forGen(3);
 const FORMAT = 'gen3customgame';
@@ -133,6 +135,14 @@ export function openBattle(saved, onEvent = () => {}) {
     },
   };
 }
+
+// The draft's pool (team.js): `count` sets, each with what the draft room
+// shows of it (describe.js) and its base stat total (the autopick's last
+// resort: the best Pokémon left).
+export const draftPool = (seed, count) => makePool(dex, seed, count).map((set) => {
+  const base = dex.species.get(set.species).baseStats;
+  return { set, info: describeSet(dex, set), bst: Object.values(base).reduce((a, b) => a + b, 0) };
+});
 
 // The Showdown sets for a team, e.g. for tests and the draft: (re)exported so
 // the server doesn't need the simulator itself.

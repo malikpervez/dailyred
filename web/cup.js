@@ -1,4 +1,5 @@
-// The Daily Red Cup's battle page: cup.html?b=<battle id>. The battle runs on
+// The Daily Red Cup's page. cup.html?g=<server>: the week's Cup (sign-ups,
+// the draft: cup-hub.js). cup.html?b=<battle id>: a battle. The battle runs on
 // the server (activity/cup.mjs); this page shows it with Daily Red's battle
 // screen (battle/view.js) through the battle engine's remote mode, sends your
 // choices and keeps listening. Close it any time: the battle waits for you
@@ -108,6 +109,12 @@ function listen() {
 }
 
 async function start() {
+  if (!battleId) {
+    // No battle: the Cup's own page (sign-ups, the draft).
+    const { startHub } = await import('./cup-hub.js');
+    startHub();
+    return;
+  }
   if (!/^[A-Za-z0-9_-]{4,20}$/.test(battleId)) {
     fail('No battle here', "Open your match from the Cup's bracket or the bot's link.");
     return;

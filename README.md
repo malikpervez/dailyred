@@ -231,7 +231,28 @@ player from all 386, picked in snake order, so careless drafters end up with a
 Metapod), then a double-elimination bracket of player-vs-player battles, with
 the grand final by Sunday.
 
-Done so far (phase 1): **battles between two players, run by the server**
+**Sign-ups and the draft** (phase 2, `activity/cup-week.mjs`,
+`activity/cup-draft.mjs`, `web/cup-hub.js`). Each Monday, New York time:
+
+- **6 AM** sign-ups open: up to 8 players, at least 4. Join on the Cup page
+  (`cup.html?g=<server>`) or with the **Join** button on the bot's post in
+  `#daily-red-cup`.
+- **6 PM** sign-ups close, the draft order is drawn at random and the pool
+  comes out: six Pokémon per player, any of the 386 (legendaries and junk
+  alike), each a level 100 set with moves, item and ability made by the
+  daily team's rules (`draftPool` in `web/battle/team.js`). Players look it
+  over and rank a private wish list.
+- **8 PM** the live snake draft: 90 seconds a pick, everyone's page updating
+  as picks are made. When time runs out the pick is the first Pokémon still
+  on that player's wish list, or else the best one left (highest base stat
+  total). Players who can't be there turn on **autodraft**. The bot mentions
+  each player when it's their pick.
+
+Every Pokémon in the pool ends up on someone's team. The Cup is saved after
+every change and the server's clock drives it (`tick()` every 2 seconds), so a
+restart mid-draft carries on.
+
+**Battles between two players, run by the server** (phase 1)
 (`activity/cup.mjs`, `activity/cup-engine.mjs`). The server is the referee:
 each player's browser gets only what that player may see (the other side's
 HP as a percentage, no requests but their own), over Server-Sent Events, and
@@ -241,9 +262,11 @@ to move, and survives closing the page or restarting the server. After 24
 hours without a move, RED's AI makes it. The page is `cup.html?b=<id>`, with
 Daily Red's battle screen (the battle engine's remote mode, `web/cup.js`).
 
-Next: the draft (phase 2), then the bracket, schedule and the Cup's Discord
-channel (phase 3). `cd tests && node cup.mjs` plays a Cup battle in two
-browsers, closing one and restarting the server mid-battle.
+Next (phase 3): the double-elimination bracket from Tuesday, one round a day
+with 24-hour match windows (a no-show forfeits), and the results in the Cup's
+channel. `cd tests && node cup.mjs` plays a Cup battle in two browsers,
+closing one and restarting the server mid-battle; `node cup-draft.mjs` runs a
+Monday: four players sign up, the pool comes out and they draft live.
 
 ## Copyright and licenses
 

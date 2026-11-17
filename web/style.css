@@ -106,11 +106,13 @@ img { image-rendering: pixelated; }
   padding-top: 20px;
 }
 
-.status-card, .home, .battle-screen { display: none; }
+.status-card, .home, .battle-screen, .cup-hub { display: none; }
 .app[data-state="loading"] #loading,
 .app[data-state="error"] #error { display: block; }
 .app[data-state="home"] .home { display: block; }
 .app[data-state="battle"] .battle-screen { display: block; }
+.app[data-state="hub"] .cup-hub { display: grid; }
+.cup-hub { grid-template-columns: minmax(0, 1fr); }
 
 .status-card {
   margin: 40px 0;
@@ -1166,6 +1168,193 @@ img { image-rendering: pixelated; }
 .hall-month { font: 600 14px/1.2 var(--font-pixel); color: var(--muted); }
 .hall-names { overflow: hidden; font-weight: 650; white-space: nowrap; text-overflow: ellipsis; }
 .hall-record { color: var(--muted); }
+
+/* --- The Cup's page: sign-ups and the draft (cup-hub.js) ------------------------------------ */
+
+/* On a phone, one column: what matters most at each stage comes first. */
+.cup-side { display: contents; }
+.cup-banner { order: 0; }
+#cup-players-section { order: 1; }
+#cup-wish-section { order: 2; }
+#cup-pool-section { order: 3; }
+#cup-log-section { order: 4; }
+.cup-hub[data-stage="draft"] #cup-pool-section { order: 1; }
+.cup-hub[data-stage="draft"] #cup-players-section { order: 2; }
+.cup-hub[data-stage="pool"] #cup-players-section { order: 4; }
+
+/* Wider: the pool in the middle, the order, wish list and picks beside it. */
+@media (min-width: 980px) {
+  .cup-page:has(.cup-hub[data-stage="pool"]) :is(.masthead, .app),
+  .cup-page:has(.cup-hub[data-stage="draft"]) :is(.masthead, .app) { max-width: 1120px; }
+  .cup-hub[data-stage="pool"], .cup-hub[data-stage="draft"] {
+    grid-template-columns: minmax(0, 1fr) 360px;
+    grid-template-areas: "banner banner" "pool side";
+    column-gap: 24px;
+  }
+  .cup-hub[data-stage="pool"] .cup-banner, .cup-hub[data-stage="draft"] .cup-banner { grid-area: banner; }
+  .cup-hub[data-stage="pool"] #cup-pool-section, .cup-hub[data-stage="draft"] #cup-pool-section { grid-area: pool; }
+  .cup-hub[data-stage="pool"] .cup-side, .cup-hub[data-stage="draft"] .cup-side {
+    display: block;
+    grid-area: side;
+    align-self: start;
+    position: sticky;
+    top: 12px;
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+  }
+  .cup-side .section-title { margin-top: 28px; }
+  .cup-side .cup-slot { width: 32px; height: 32px; }
+}
+
+.cup-last { margin: 10px 0 0; font-weight: 650; }
+.cup-slot-button { padding: 0; border: 0; background: none; cursor: pointer; }
+
+.cup-banner {
+  padding: 18px;
+  border: 2px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.cup-hub[data-my-turn="true"] .cup-banner { border-color: var(--red); }
+.cup-title { margin: 0 0 4px; font: 700 26px/1.2 var(--font-pixel); }
+.cup-hub[data-my-turn="true"] .cup-title { color: var(--red); }
+.cup-note { margin: 0; color: var(--muted); }
+
+.cup-clock { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin: 12px 0 0; }
+.cup-clock-label { font-size: 14px; color: var(--muted); }
+.cup-clock-time { font: 700 30px/1 var(--font-pixel); font-variant-numeric: tabular-nums; }
+.cup-clock[data-urgent="true"] .cup-clock-time { color: var(--red); }
+
+.cup-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
+.cup-in { font-weight: 700; color: var(--red); }
+.cup-autodraft { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; }
+.cup-autodraft input { margin-top: 4px; }
+.cup-count { font-size: 15px; font-weight: 500; color: var(--muted); }
+
+.cup-players { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+
+.cup-player {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.cup-player.is-you .cup-player-name { color: var(--red); }
+.cup-player.on-clock { border-color: var(--red); }
+.cup-player-name { flex: 1; min-width: 120px; font-weight: 650; }
+.cup-tag { margin-left: 6px; padding: 1px 6px; border-radius: 6px; font: 700 11px/1.5 var(--font-pixel); color: var(--muted); border: 1px solid var(--line); }
+.cup-tag-clock { color: var(--on-red); background: var(--red); border-color: var(--red); }
+.cup-slots { display: flex; gap: 2px; }
+.cup-slot { width: 40px; height: 40px; border-radius: 8px; background: var(--page); }
+.cup-slot-empty { display: inline-block; border: 1px dashed var(--line); background: none; }
+
+.cup-wish { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+
+.cup-wish-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.cup-wish-row.is-taken { opacity: 0.55; }
+.cup-wish-row.is-taken .cup-wish-name { text-decoration: line-through; }
+.cup-wish-rank { width: 22px; font: 700 16px var(--font-pixel); color: var(--muted); text-align: center; }
+.cup-wish-sprite { width: 40px; height: 40px; }
+.cup-wish-name { flex: 1; min-width: 0; overflow: hidden; text-align: left; white-space: nowrap; text-overflow: ellipsis; color: var(--text); background: none; cursor: pointer; }
+.cup-wish-gone { font-size: 13px; color: var(--muted); }
+.cup-wish-tools { display: flex; gap: 4px; }
+.cup-wish-tools .button { min-width: 34px; padding: 4px 8px; }
+.cup-wish-tools .button:disabled { opacity: 0.35; cursor: default; }
+
+.cup-pool-tools { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 10px; font-size: 14px; }
+.cup-pool-tools select { margin-left: 6px; font: inherit; }
+
+.pool-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pool-mon {
+  display: flex;
+  align-items: center;
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.pool-mon.is-wished { border-color: #e0a800; }
+.pool-mon.is-taken { opacity: 0.5; }
+
+.pool-open {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 4px 4px 4px 6px;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  cursor: pointer;
+}
+
+.pool-sprite { flex: none; width: 56px; height: 56px; }
+.pool-text { display: grid; gap: 2px; min-width: 0; }
+.pool-name { font-weight: 700; }
+.pool-facts { overflow: hidden; font-size: 12px; color: var(--muted); white-space: nowrap; text-overflow: ellipsis; }
+.pool-buttons { display: flex; flex: none; flex-direction: column; gap: 4px; padding: 6px; }
+.pool-buttons .button { min-width: 40px; }
+.cup-wish-toggle[aria-pressed="true"] { color: #b88a00; border-color: #e0a800; }
+.cup-taken { padding: 0 4px; font-size: 13px; font-weight: 650; color: var(--muted); }
+
+.cup-log { margin: 0; padding: 0; list-style: none; font-size: 14px; }
+.cup-log-row { padding: 3px 0; border-bottom: 1px solid var(--line); white-space: pre-wrap; }
+
+.cup-toast {
+  position: fixed;
+  left: 50%;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 5;
+  max-width: calc(100vw - 32px);
+  margin: 0;
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-weight: 650;
+  color: #fff;
+  background: var(--frame);
+  transform: translateX(-50%);
+}
+
+.mon-dialog {
+  width: min(460px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 12px;
+  border: 2px solid var(--line);
+  border-radius: 16px;
+  color: var(--text);
+  background: var(--page);
+}
+
+.mon-dialog::backdrop { background: rgb(10 16 22 / 0.6); }
+.mon-dialog .team-list { grid-template-columns: 1fr; }
+.mon-dialog-buttons { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-top: 10px; }
+.mon-dialog-buttons span { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
 /* --- Dialogs and footer ---------------------------------------------------------------------- */
 
