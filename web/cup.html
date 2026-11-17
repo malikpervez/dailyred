@@ -30,15 +30,33 @@
 
     <!-- The month's Cup: sign-ups, the pool and the draft (cup-hub.js). -->
     <div class="cup-hub" id="cup-hub">
+      <section class="cup-signup" id="cup-signup" hidden>
+        <p id="cup-signup-text"></p>
+        <button class="button button-small" type="button" id="cup-signup-button"></button>
+      </section>
+
       <section class="cup-banner">
         <h1 class="cup-title" id="cup-title"></h1>
         <p class="cup-note" id="cup-note"></p>
+        <p class="cup-reigning" id="cup-reigning" hidden></p>
         <p class="cup-clock" id="cup-clock" hidden>
           <span class="cup-clock-label" id="cup-clock-label"></span>
           <span class="cup-clock-time" id="cup-clock-time" role="timer"></span>
         </p>
         <p class="cup-last" id="cup-last" hidden></p>
         <div class="cup-actions" id="cup-actions" hidden></div>
+      </section>
+
+      <section id="cup-bracket-section" hidden>
+        <h2 class="section-title">The bracket</h2>
+        <p class="section-note">Double elimination: lose twice and you're out. A round every 3 days; a match can be played as soon as both players are known.</p>
+        <div id="cup-bracket"></div>
+      </section>
+
+      <section id="cup-team-section" hidden>
+        <h2 class="section-title">Your team</h2>
+        <p class="section-note">Your lead goes out first in every battle you start from now on. Tap one for its moves and stats.</p>
+        <ul class="pool-grid" id="cup-team"></ul>
       </section>
 
       <aside class="cup-side">
@@ -75,6 +93,7 @@
     <!-- A Cup battle (cup.js; battle/view.js builds the inside). -->
     <div class="battle-screen" id="battle-screen">
       <div class="battle-bar">
+        <a class="link-button cup-back" id="cup-back" hidden>← The Cup</a>
         <span class="chip" id="cup-status"></span>
         <span class="battle-turn" id="turn-label"></span>
       </div>
@@ -96,6 +115,7 @@
       <div class="battle-done" id="battle-done" hidden>
         <p class="done-title" id="done-title"></p>
         <p class="done-standing" id="done-note"></p>
+        <a class="button button-primary cup-back-done" id="cup-back-done" hidden>Back to the bracket</a>
       </div>
     </div>
   </main>

@@ -1,6 +1,7 @@
 // The Daily Red Cup's page for a server: cup.html?g=<server id>. A Cup a
 // month: sign-ups from the 25th, then on the 1st the pool (with your wish
-// list) and the live draft at 8 PM New York time. Everything comes from the server (activity/cup-month.mjs), which
+// list) and the live draft at 8 PM New York time, then the bracket: your
+// match and its Battle button, your lead, every round's results. Everything comes from the server (activity/cup-month.mjs), which
 // sends the whole Cup again whenever anything changes.
 import { el, sprite, typeBadges, monCard } from './mon-card.js';
 
@@ -87,6 +88,12 @@ function clockTarget() {
   if (cup.stage === 'pool') return { at: cup.times.draft, label: 'The draft starts in' };
   if (cup.stage === 'draft' && cup.deadline) return { at: cup.deadline, label: cup.onClock === cup.me.id ? 'Your pick: time left' : 'Time left for this pick' };
   if (cup.stage === 'drafted' && serverNow() < cup.times.bracket) return { at: cup.times.bracket, label: 'The bracket starts in' };
+  if (cup.stage === 'bracket') {
+    const mine = cup.bracket.mine;
+    if (mine) return { at: mine.deadline, label: 'Your match: time left' };
+    const round = currentRound();
+    return round && { at: round.ends, label: `Round ${round.slot} ends in` };
+  }
   return null;
 }
 
@@ -108,6 +115,13 @@ const nameOf = (id) => player(id)?.name ?? 'Someone';
 const takenBy = () => new Map(cup.picks.map((p) => [p.pool, p.player]));
 const myTurn = () => cup.stage === 'draft' && cup.onClock === cup.me.id;
 const inDraft = () => cup.me.joined && ['pool', 'draft'].includes(cup.stage);
+const inBracket = () => Boolean(cup.bracket) && ['drafted', 'bracket', 'done'].includes(cup.stage);
+// The round whose deadline is next.
+const currentRound = () => cup.bracket?.slots.find((s) => s.ends > serverNow()) ?? null;
+// "Fri, Dec 4" for a deadline at midnight starting Dec 5.
+const lastDay = (ms) => dayLabel(ms - 60 * 1000);
+const playBy = (ms) => `11:59 PM ET on ${lastDay(ms)}`;
+const matchById = (id) => cup.bracket.matches.find((m) => m.id === id);
 
 function show(next) {
   // Before sign-ups open there's only the schedule.
@@ -128,7 +142,9 @@ function render() {
     cancelled: [`No Cup in ${monthName(cup.month)}`, `${cup.reason === 'too-few' ? `Only ${cup.players?.length} signed up, and the Cup needs ${cup.min}.` : 'Nobody signed up.'} ${nextOpen}`],
     pool: ['The pool is out', `The draft starts tonight at ${clockTime(cup.times?.draft)} ET, ${cup.pickSeconds} seconds a pick. Look over the pool and rank a wish list: if your time runs out, the draft picks from it for you.`],
     draft: [myTurn() ? 'Your pick!' : `${cup.onClock ? nameOf(cup.onClock) : 'Someone'} is picking`, cup.pick ? `Round ${cup.pick.round} of 6 · pick ${cup.pick.overall} of ${cup.totalPicks}` : ''],
-    drafted: ['The teams are set', `Everyone has their six for ${monthName(cup.month)}. The bracket starts ${dayLabel(cup.times?.bracket)}: a round every ${cup.roundDays} days.`],
+    drafted: ['The teams are set', `Everyone has their six for ${monthName(cup.month)}. The bracket starts ${dayLabel(cup.times?.bracket)}: a round every ${cup.roundDays} days. Pick your lead below.`],
+    bracket: bracketBanner(),
+    done: [`${nameOf(cup.champion)} wins the ${monthName(cup.month)} Cup! 🏆`, `They wear the 🏆 until the next champion. ${nextOpen}`],
   }[stage] ?? ['Daily Red Cup', ''];
   $('cup-title').textContent = banner[0];
   $('cup-note').textContent = banner[1];
@@ -137,7 +153,10 @@ function render() {
   $('cup-last').hidden = !(last && stage === 'draft');
   if (last) $('cup-last').textContent = `Last pick: ${nameOf(last.player)} took ${cup.pool[last.pool].species}${last.auto ? ' (auto)' : ''}`;
   $('cup-hub').dataset.stage = stage;
-  $('cup-hub').dataset.myTurn = String(myTurn());
+  $('cup-hub').dataset.myTurn = String(myTurn() || Boolean(stage === 'bracket' && cup.bracket?.mine));
+  const reigning = cup.reigning && cup.reigning.month !== cup.month ? cup.reigning : null;
+  $('cup-reigning').hidden = !reigning;
+  if (reigning) $('cup-reigning').textContent = `🏆 Reigning champion: ${reigning.name} (${monthName(reigning.month)})`;
 
   // Join / Leave / Autodraft.
   const actions = $('cup-actions');
@@ -159,6 +178,14 @@ function render() {
       actions.append(el('span', 'cup-in', `Full: ${cup.max} players`));
     }
   }
+  if (stage === 'bracket' && cup.bracket.mine) {
+    const { mine } = cup.bracket;
+    const battle = el('button', 'button button-primary button-battle', mine.battleId ? 'Continue your battle' : `Battle ${nameOf(mine.opponent)}`);
+    battle.type = 'button';
+    battle.id = 'cup-battle';
+    battle.addEventListener('click', () => play(battle));
+    actions.append(battle);
+  }
   if (inDraft()) {
     const label = el('label', 'cup-autodraft');
     const box = el('input');
@@ -171,7 +198,10 @@ function render() {
   }
   actions.hidden = !actions.childElementCount;
 
+  renderSignup();
   renderPlayers();
+  renderTeam();
+  renderBracket();
   renderWishlist();
   renderPool();
   renderLog();
@@ -179,24 +209,183 @@ function render() {
   if (shown != null) renderDialog();
 }
 
+// The banner during the bracket: your match, or where you stand.
+function bracketBanner() {
+  if (!cup.bracket) return ['', ''];
+  const { mine, next, standings } = cup.bracket;
+  const me = standings[cup.me.id];
+  if (mine) {
+    const again = mine.draws ? ` Your last battle was a draw: play it again.` : '';
+    return [`Your match: vs ${nameOf(mine.opponent)}`, `${mine.label}, one battle. Play by ${playBy(mine.deadline)}: if time runs out, whoever's holding it up loses, and if it never started, a coin toss decides.${again}`];
+  }
+  if (next) {
+    const feeder = next.waitingOn && matchById(next.waitingOn);
+    const waiting = feeder?.players.every((p) => p && p !== 'bye') ? ` Waiting for ${nameOf(feeder.players[0])} vs ${nameOf(feeder.players[1])}.` : '';
+    return [`You're through to the ${next.label}`, `${waiting} Your opponent's still being decided.`.trim()];
+  }
+  if (me?.status === 'out') return ["You're out", `${me.wins}–${me.losses} this month. Watch the rest of the bracket below.`];
+  const round = currentRound();
+  return [`The ${monthName(cup.month)} bracket`, round ? `Round ${round.slot} of ${cup.bracket.slots.length} ends at ${playBy(round.ends)}.` : ''];
+}
+
+async function play(button) {
+  button.disabled = true;
+  try {
+    const { battleId } = await call('POST', 'api/cup/play', { g: guild });
+    location.href = `cup.html?b=${battleId}&g=${guild}`;
+  } catch (err) {
+    button.disabled = false;
+    toast(err.message);
+  }
+}
+
+// Next month's sign-ups, while this month's bracket is still on.
+function renderSignup() {
+  const box = $('cup-signup');
+  const next = cup.signup;
+  box.hidden = !next || next.stage !== 'signup';
+  if (box.hidden) return;
+  $('cup-signup-text').textContent = `Sign-ups for the ${monthName(next.month)} Cup are open until ${dayLabel(next.times.signupsClose)} at ${clockTime(next.times.signupsClose)} ET (${next.players.length} of ${next.max} so far).`;
+  const button = $('cup-signup-button');
+  button.textContent = next.me.joined ? "✓ You're in · Leave" : `Join the ${monthName(next.month)} Cup`;
+  button.classList.toggle('button-primary', !next.me.joined);
+  button.onclick = () => act(next.me.joined ? 'leave' : 'join');
+}
+
+// Your six, and which one leads (for battles you start from now on).
+function renderTeam() {
+  const section = $('cup-team-section');
+  const team = cup.me.team ?? [];
+  section.hidden = !(inBracket() && cup.stage !== 'done' && team.length);
+  if (section.hidden) return;
+  const list = $('cup-team');
+  list.replaceChildren();
+  team.forEach((index, i) => {
+    const mon = cup.pool[index];
+    const tile = el('li', 'pool-mon');
+    if (i === cup.me.lead) tile.classList.add('is-lead');
+    const open = el('button', 'pool-open');
+    open.type = 'button';
+    open.setAttribute('aria-label', `${mon.species}: details`);
+    open.addEventListener('click', () => openMon(index));
+    const text = el('span', 'pool-text');
+    text.append(el('span', 'pool-name', mon.species), typeBadges(mon.types), el('span', 'pool-facts', `${mon.item} · ${mon.ability}`));
+    open.append(sprite(mon, 'pool-sprite'), text);
+    const side = el('span', 'pool-buttons');
+    if (i === cup.me.lead) {
+      side.append(el('span', 'lead-badge', 'LEAD'));
+    } else {
+      const lead = el('button', 'button button-small set-lead', 'Lead');
+      lead.type = 'button';
+      lead.setAttribute('aria-label', `Lead with ${mon.species}`);
+      lead.addEventListener('click', () => act('lead', { index: i }));
+      side.append(lead);
+    }
+    tile.append(open, side);
+    list.append(tile);
+  });
+}
+
+// What happened in a match, in a few words.
+function matchNote(m) {
+  if (m.winner && m.winner !== 'bye') {
+    const loser = nameOf(m.loser);
+    return {
+      battle: [m.details?.left != null && `${m.details.left} left`, m.details?.turns && `${m.details.turns} turns`].filter(Boolean).join(' · '),
+      'gave up': `${loser} gave up`,
+      timeout: `Time ran out on ${loser}`,
+      'no-show': 'Nobody battled: coin toss',
+    }[m.how] ?? '';
+  }
+  if (m.battleId) return 'Battling now';
+  if (m.players.every((p) => p && p !== 'bye')) return m.draws ? 'A draw: playing again' : 'Not started yet';
+  if (m.id === 'F2') return "Only if the losers' side wins the grand final";
+  return '';
+}
+
+// Every round: its matches, who won, and links to watch.
+function renderBracket() {
+  const section = $('cup-bracket-section');
+  section.hidden = !inBracket();
+  if (section.hidden) return;
+  const rounds = $('cup-bracket');
+  rounds.replaceChildren();
+  const source = (src) => {
+    const m = src.match && matchById(src.match);
+    if (src.reset) return 'From the grand final';
+    return m ? `${src.take === 'winner' ? 'Winner' : 'Loser'} of ${m.label}` : 'To be decided';
+  };
+  for (const { slot, ends } of cup.bracket.slots) {
+    const matches = cup.bracket.matches.filter((m) => m.slot === slot && m.how !== 'bye' && m.how !== 'not needed');
+    if (!matches.length) continue;
+    const round = el('section', 'bracket-round');
+    const now = currentRound()?.slot === slot && cup.stage === 'bracket';
+    round.append(el('h3', 'bracket-round-title', `Round ${slot}${now ? ' · now' : ''} · until ${playBy(ends)}`));
+    const list = el('ul', 'bracket-matches');
+    for (const m of matches) {
+      const card = el('li', 'bracket-match');
+      card.dataset.match = m.id;
+      if (m.players.includes(cup.me.id)) card.classList.add('is-yours');
+      if (m.battleId && !m.winner) card.classList.add('is-live');
+      card.append(el('p', 'bracket-label', m.label));
+      m.players.forEach((p, i) => {
+        const row = el('p', 'bracket-player');
+        if (p && p !== 'bye') {
+          const who = player(p);
+          const avatar = el('img', 'board-avatar');
+          avatar.alt = '';
+          if (who?.avatarUrl) avatar.src = who.avatarUrl;
+          row.append(avatar, el('span', 'bracket-name', nameOf(p)));
+          if (m.winner === p) row.classList.add('is-winner');
+          if (m.winner && m.winner !== p) row.classList.add('is-loser');
+        } else {
+          row.append(el('span', 'bracket-tbd', source(m.from[i])));
+        }
+        card.append(row);
+      });
+      const note = matchNote(m);
+      const foot = el('p', 'bracket-note', note);
+      if (m.battleId) {
+        const watch = el('a', 'bracket-watch', m.winner ? 'Replay' : 'Watch');
+        watch.href = `cup.html?b=${m.battleId}&g=${guild}`;
+        foot.append(' ', watch);
+      }
+      if (note || m.battleId) card.append(foot);
+      list.append(card);
+    }
+    round.append(list);
+    rounds.append(round);
+  }
+}
+
 // Sign-ups (in the order they joined), then the draft order with each
-// player's picks so far.
+// player's picks so far, then (in the bracket) the standings.
 function renderPlayers() {
   const list = $('cup-players');
   list.replaceChildren();
   const drafting = Boolean(cup.pool);
-  $('cup-players-title').textContent = drafting ? 'Draft order' : `Players (${cup.players?.length ?? 0} of ${cup.max})`;
+  const table = inBracket() && cup.stage !== 'drafted' ? cup.bracket.standings : null;
+  $('cup-players-title').textContent = table ? 'Standings' : drafting ? (cup.stage === 'drafted' ? 'Teams' : 'Draft order') : `Players (${cup.players?.length ?? 0} of ${cup.max})`;
   $('cup-players-section').hidden = !cup.players?.length;
-  for (const [i, p] of (cup.players ?? []).entries()) {
+  const rank = { champion: 0, winners: 1, losers: 2, out: 3 };
+  const players = table
+    ? [...cup.players].sort((x, y) => rank[table[x.id].status] - rank[table[y.id].status] || table[y.id].wins - table[x.id].wins || table[x.id].losses - table[y.id].losses)
+    : cup.players ?? [];
+  for (const [i, p] of players.entries()) {
     const row = el('li', 'cup-player');
     if (p.id === cup.me.id) row.classList.add('is-you');
     if (cup.onClock === p.id) row.classList.add('on-clock');
     const avatar = el('img', 'board-avatar');
     avatar.alt = '';
     if (p.avatarUrl) avatar.src = p.avatarUrl;
-    const name = el('span', 'cup-player-name', `${drafting ? `${i + 1}. ` : ''}${p.name}`);
-    if (p.autodraft) name.append(el('span', 'cup-tag', 'AUTO'));
+    const name = el('span', 'cup-player-name', `${drafting && !table ? `${i + 1}. ` : ''}${p.name}`);
+    if (p.autodraft && !table) name.append(el('span', 'cup-tag', 'AUTO'));
     if (cup.onClock === p.id) name.append(el('span', 'cup-tag cup-tag-clock', 'PICKING'));
+    if (table) {
+      const row2 = table[p.id];
+      const tag = el('span', `cup-tag cup-status-${row2.status}`, { champion: '🏆 CHAMPION', winners: 'WINNERS', losers: 'LOSERS', out: 'OUT' }[row2.status]);
+      name.append(el('span', 'cup-record', ` ${row2.wins}–${row2.losses}`), tag);
+    }
     row.append(avatar, name);
     if (drafting) {
       const slots = el('span', 'cup-slots');
@@ -307,7 +496,7 @@ function monButtons(index, { compact = false } = {}) {
 
 function renderPool() {
   const section = $('cup-pool-section');
-  section.hidden = !cup.pool || cup.stage === 'drafted'; // all on teams by then: see the board
+  section.hidden = !cup.pool || !['pool', 'draft'].includes(cup.stage); // all on teams after: see the board
   if (section.hidden) return;
   const taken = takenBy();
   $('cup-pool-count').textContent = `${cup.pool.length - taken.size} of ${cup.pool.length} left`;
@@ -342,7 +531,7 @@ function renderPool() {
 
 function renderLog() {
   const section = $('cup-log-section');
-  section.hidden = !cup.picks.length;
+  section.hidden = !cup.picks.length || !['draft', 'drafted'].includes(cup.stage);
   const list = $('cup-log');
   list.replaceChildren();
   const players = cup.players.length;

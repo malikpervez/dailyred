@@ -3,7 +3,7 @@
 // the server (activity/cup.mjs); this page shows it with Daily Red's battle
 // screen (battle/view.js) through the battle engine's remote mode, sends your
 // choices and keeps listening. Close it any time: the battle waits for you
-// (and after a day without a move, RED's AI makes it for you).
+// until the round ends (then whoever's holding it up loses).
 import { startRemote, feedRemote } from './battle/engine.js';
 import { createBattleView } from './battle/view.js';
 
@@ -82,7 +82,7 @@ function end(won, tie) {
   setStatus('Battle over');
   view.end(text, () => {
     $('done-title').textContent = text;
-    $('done-note').textContent = 'The bracket updates by itself.';
+    $('done-note').textContent = tie ? 'A draw means a rematch: start it from the Cup page.' : 'The bracket has moved on.';
     $('battle-done').hidden = false;
   });
 }
@@ -127,8 +127,17 @@ async function start() {
     return;
   }
   const mine = meta.me === 'spectator' ? meta.players.p1.name : meta.players[meta.me].name;
+  const label = meta.context?.label ? `${meta.context.label}: ` : '';
   document.title = `Daily Red Cup: ${meta.players.p1.name} vs ${meta.players.p2.name}`;
-  $('cup-label').textContent = `${meta.players.p1.name} vs ${meta.players.p2.name}`;
+  $('cup-label').textContent = `${label}${meta.players.p1.name} vs ${meta.players.p2.name}`;
+  // Back to the Cup's page (its bracket).
+  const guild = meta.context?.guildId ?? new URLSearchParams(location.search).get('g');
+  if (guild) {
+    for (const id of ['cup-back', 'cup-back-done']) {
+      $(id).href = `cup.html?g=${guild}`;
+      $(id).hidden = false;
+    }
+  }
   view.reset({ name: mine, foe: foeName() });
   startRemote({ me: meta.me, team: meta.team, foeName: foeName() }, {
     onEvents: (events, instant) => {

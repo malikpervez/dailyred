@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createCupMonth, scheduleFor, zonedTime, nextMonth, previousMonth, MAX_PLAYERS } from '../cup-month.mjs';
 import { openStore } from '../store.mjs';
+import { createCup } from '../cup.mjs';
 
 const quiet = { log() {}, warn() {} };
 const loadEngine = () => import('../cup-engine.mjs');
@@ -118,4 +119,106 @@ test('fewer than 4 sign-ups: no Cup that month', async () => {
   at('2026-12-01T23:00:01Z');
   await cups.tick();
   assert.deepEqual([cups.view('g1', user(1)).stage, cups.view('g1', user(1)).reason], ['cancelled', 'too-few']);
+});
+
+test('the bracket: drawn when the draft ends, open from the 2nd, matches battled, timed out or tossed, a champion', async () => {
+  const store = openStore(':memory:');
+  let time = Date.parse('2026-11-28T12:00:00Z');
+  const changes = [];
+  let seed = 11;
+  const random = (max) => { seed = (seed * 1103515245 + 12345) % 2 ** 31; return seed % max; };
+  let month = null;
+  const battles = createCup({ store, loadEngine, now: () => time, onFinished: (id, r) => month.battleEnded(id, r), log: quiet });
+  month = createCupMonth({ store, battles, loadEngine, now: () => time, random, onChange: (cup, what, details) => changes.push([what, details]), log: quiet });
+  const at = (iso) => { time = Date.parse(iso); };
+  const tick = () => month.tick();
+  const what = () => changes.map(([w]) => w);
+
+  for (let n = 1; n <= 4; n++) month.join('g1', user(n));
+  at('2026-12-01T23:00:00Z');
+  await tick();
+  at('2026-12-02T01:00:00Z');
+  await tick();
+  for (let n = 1; n <= 4; n++) month.autodraft('g1', user(n), true);
+  let seen = month.view('g1', user(1));
+  assert.equal(seen.stage, 'drafted');
+  assert.equal(seen.bracket.slots.length, 5, '4 players: 5 rounds of 3 days at most');
+  assert.equal(seen.bracket.slots[0].ends, Date.parse('2026-12-05T05:00:00Z'), 'round 1: the 2nd to the 4th');
+  assert.equal(seen.me.team.length, 6);
+  await assert.rejects(month.play('g1', user(1)), /starts on the 2nd/);
+
+  // Leads: yours, for your battles from now on.
+  month.setLead('g1', user(1), 2);
+  const cup = store.getCup(seen.id);
+  assert.equal(month.teamFor(cup, 'u1')[0], month.teamOf(cup, 'u1')[2]);
+  assert.throws(() => month.setLead('g1', user(1), 6), /No such/);
+
+  at('2026-12-02T05:00:00Z'); // midnight in New York
+  await tick();
+  assert.equal(what().at(-1), 'bracket');
+  assert.equal(changes.at(-1)[1].ready.length, 2, 'two first-round matches');
+  const [m1, m2] = changes.at(-1)[1].ready;
+  const [a, b] = m1.players;
+  const [c, d] = m2.players;
+
+  // a and b both press Battle at once: one battle between them.
+  const [id1, again] = await Promise.all([month.play('g1', { id: a }), month.play('g1', { id: b })]);
+  assert.equal(id1, again);
+  seen = month.view('g1', { id: a });
+  assert.deepEqual([seen.bracket.mine.label, seen.bracket.mine.opponent, seen.bracket.mine.battleId], ['Winners round 1', b, id1]);
+  // A draw: they play it again.
+  month.battleEnded(id1, { winner: '', context: { cupId: seen.id, match: m1.id } });
+  assert.equal(what().at(-1), 'draw');
+  assert.equal(month.view('g1', { id: a }).bracket.mine.battleId, null);
+  const replay = await month.play('g1', { id: a });
+  assert.notEqual(replay, id1);
+  await battles.choose(replay, { id: b }, { choice: 'forfeit' });
+  seen = month.view('g1', { id: a });
+  assert.deepEqual([what().at(-1), seen.bracket.matches.find((m) => m.id === m1.id).winner, seen.bracket.matches.find((m) => m.id === m1.id).how], ['result', a, 'gave up']);
+  assert.deepEqual(seen.bracket.next, { id: 'W2-1', label: 'Winners final', waitingOn: m2.id }, 'a waits for the other match');
+
+  // c starts theirs and moves; d never does. A day before the end, a reminder;
+  // at the end, d is holding it up and loses.
+  const id2 = await month.play('g1', { id: c });
+  await battles.choose(id2, { id: c }, { choice: 'move 1' });
+  at('2026-12-04T05:01:00Z');
+  await tick();
+  assert.deepEqual([what().at(-1), changes.at(-1)[1].match.id], ['reminder', m2.id]);
+  await tick();
+  assert.equal(what().filter((w) => w === 'reminder').length, 1, 'once');
+  at('2026-12-05T05:00:00Z');
+  await tick();
+  seen = month.view('g1', { id: c });
+  const second = seen.bracket.matches.find((m) => m.id === m2.id);
+  assert.deepEqual([second.winner, second.how], [c, 'timeout']);
+  assert.deepEqual(changes.at(-1)[1].ready.map((m) => m.id).sort(), ['L1-1', 'W2-1']);
+
+  // While the bracket's on, next month's sign-ups open alongside it.
+  at('2026-12-25T11:00:00Z');
+  seen = month.view('g1', { id: a });
+  assert.deepEqual([seen.month, seen.stage, seen.signup.month, seen.signup.stage], ['2026-12', 'bracket', '2027-01', 'signup']);
+  at('2026-12-05T06:00:00Z');
+
+  // Nobody plays the losers' match: a coin toss when its round ends.
+  const ended = (id) => month.view('g1', { id: a }).bracket.matches.find((m) => m.id === id);
+  await battles.choose(await month.play('g1', { id: a }), { id: c }, { choice: 'forfeit' }); // a wins the winners' final
+  at('2026-12-08T05:00:00Z');
+  await tick();
+  assert.equal(ended('L1-1').how, 'no-show');
+  assert.ok([b, d].includes(ended('L1-1').winner));
+
+  // The rest by forfeits: the losers' final, then the grand final.
+  for (let guard = 0; guard < 6 && month.view('g1', { id: a }).stage !== 'done'; guard++) {
+    const mine = (id) => month.view('g1', { id }).bracket.mine;
+    const players = [a, b, c, d].filter((p) => mine(p));
+    const [first] = players;
+    const battle = await month.play('g1', { id: first });
+    await battles.choose(battle, { id: mine(first).opponent }, { choice: 'forfeit' });
+  }
+  seen = month.view('g1', { id: a });
+  assert.equal(seen.stage, 'done');
+  assert.ok(seen.champion);
+  assert.equal(what().at(-1), 'champion');
+  assert.equal(seen.bracket.standings[seen.champion].status, 'champion');
+  assert.deepEqual(seen.reigning, { month: '2026-12', id: seen.champion, name: `Player ${seen.champion.slice(1)}` });
 });

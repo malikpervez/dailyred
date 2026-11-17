@@ -72,12 +72,16 @@ try {
   console.warn("activity/dist/team-of-day.mjs is missing (npm run build in activity/): the bot's card won't list today's team.");
 }
 
-// The Daily Red Cup's week (cup-month.mjs): sign-ups on Mondays, the pool at
-// 6 PM, the live draft at 8 PM New York time. The bot posts about it.
+// The Daily Red Cup, once a month (cup-month.mjs): sign-ups from the 25th,
+// the live draft on the 1st, then the bracket. Its battles are run by
+// cup.mjs. The bot posts about it.
 let bot = null;
-const cupMonth = createCupMonth({
+let cupMonth = null;
+const cup = createCup({ store, onFinished: (id, result) => cupMonth?.battleEnded(id, result) });
+cupMonth = createCupMonth({
   store,
-  onChange: (cup, what) => bot?.cupChanged?.(cup, what),
+  battles: cup,
+  onChange: (changed, what, details) => bot?.cupChanged?.(changed, what, details),
 });
 setInterval(() => cupMonth.tick().catch((err) => console.warn(`Cup: ${err.message}`)), 2000).unref();
 
@@ -111,10 +115,6 @@ if ((env.DISCORD_BOT_TOKEN || env.DISCORD_PUBLIC_KEY) && env.DISCORD_CLIENT_ID) 
   console.log('DISCORD_BOT_TOKEN / DISCORD_PUBLIC_KEY are not set (or DISCORD_CLIENT_ID is missing): the bot is off.');
 }
 
-// The Cup's player-vs-player battles (cup.mjs). Every five minutes RED's AI
-// moves for anyone who's kept their opponent waiting a day.
-const cup = createCup({ store });
-setInterval(() => cup.tick().catch((err) => console.warn(`Cup autopilot: ${err.message}`)), 5 * 60 * 1000).unref();
 
 const handle = createApp({
   webRoot,

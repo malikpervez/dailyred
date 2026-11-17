@@ -362,11 +362,19 @@ test('after a crash, the saved progress rebuilds exactly the same battle, which 
       },
     };
   };
-  // Plays first usable moves (an item at the third request), staying in after RED loses one.
-  const answer = (r, n) => (r.kind === 'shift' ? 'stay'
-    : r.kind === 'switch' ? `switch ${r.party.find((p) => !p.active && p.status !== 'fnt').slot}`
-    : n === 3 && r.canBag ? `item xattack ${r.party.find((p) => p.active).slot}`
-    : `move ${r.moves.find((m) => !m.disabled)?.slot ?? 1}`);
+  // Plays first usable moves (an item at the first chance from the third
+  // request on: RED's random mistakes change what comes when), staying in
+  // after RED loses one.
+  let itemUsed = false;
+  const answer = (r, n) => {
+    if (r.kind === 'shift') return 'stay';
+    if (r.kind === 'switch') return `switch ${r.party.find((p) => !p.active && p.status !== 'fnt').slot}`;
+    if (n >= 3 && !itemUsed && r.canBag) {
+      itemUsed = true;
+      return `item xattack ${r.party.find((p) => p.active).slot}`;
+    }
+    return `move ${r.moves.find((m) => !m.disabled)?.slot ?? 1}`;
+  };
   const shape = (r) => JSON.stringify({ kind: r.kind, party: r.party.map((p) => [p.species, p.hp, p.status, p.active]), foe: r.foe && [r.foe.species, r.foe.hp], left: r.itemsLeft });
   const start = { type: 'start', seed: 20261117, version: 2, order: [1, 0, 2, 3, 4, 5], name: 'Ash', trainer: 'blue' };
 

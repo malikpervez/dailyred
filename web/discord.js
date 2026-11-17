@@ -252,6 +252,13 @@ export function renderBoard(list, players, tab = 'today', foe = 'RED') {
       crown.title = "Last month's Pokémon Master";
       name.append(crown);
     }
+    if (p.cupChampion) {
+      const trophy = document.createElement('span');
+      trophy.className = 'board-crown';
+      trophy.textContent = ' 🏆';
+      trophy.title = 'Daily Red Cup champion';
+      name.append(trophy);
+    }
 
     const today = document.createElement('span');
     today.className = 'board-today';

@@ -223,7 +223,7 @@ one Docker image that runs on an x86_64 or arm64 machine, e.g. a Raspberry Pi
 NAS, and builds in a minute or two. Setup:
 [docs/discord-activity.md](docs/discord-activity.md).
 
-## The Daily Red Cup (in progress, on the `cup` branch)
+## The Daily Red Cup
 
 A monthly tournament between friends, in its own Discord channel: everyone
 who opts in by the 1st joins a fantasy-style draft (6 random Pokémon per player
@@ -231,7 +231,7 @@ from all 386, picked in snake order, so careless drafters end up with a
 Metapod), then a double-elimination bracket of player-vs-player battles
 through the month.
 
-**Sign-ups and the draft** (phase 2, `activity/cup-month.mjs`,
+**Sign-ups and the draft** (`activity/cup-month.mjs`,
 `activity/cup-draft.mjs`, `web/cup-hub.js`). In New York time:
 
 - **The 25th, 6 AM** sign-ups for next month's Cup open: up to 16 players, at
@@ -252,21 +252,34 @@ Every Pokémon in the pool ends up on someone's team. The Cup is saved after
 every change and the server's clock drives it (`tick()` every 2 seconds), so a
 restart mid-draft carries on.
 
-**Battles between two players, run by the server** (phase 1)
+**The bracket** (`activity/cup-bracket.mjs`): double elimination, seeded at
+random when the draft ends, in a bracket of 4, 8 or 16 (missing players are
+byes). It opens on the 2nd, a round every 3 days: round 1 until the 4th,
+round 2 until the 7th and so on, the grand final (and its reset, if the
+losers' side wins it) last. A match is one battle with the drafted teams;
+each player picks their lead on the Cup page. Either player presses
+**Battle** and both land in the same battle, which waits for whoever has to
+move. A match can be played as soon as both players are known. When its
+round ends, a battle still going is lost by whoever's holding it up (both:
+the one who never moved, then fewer Pokémon left, then less HP), and a match
+nobody started goes to a coin toss. A draw is played again. The bot posts the
+matchups, every result with the next matches, a reminder a day before a
+match's round ends, and the champion, who wears a 🏆 by their name on the
+daily card and leaderboards until the next Cup's champion.
+
+**Battles between two players, run by the server**
 (`activity/cup.mjs`, `activity/cup-engine.mjs`). The server is the referee:
 each player's browser gets only what that player may see (the other side's
 HP as a percentage, no requests but their own), over Server-Sent Events, and
 sends choices back. A battle is saved as its seed, both teams and every
 choice; replaying them rebuilds it exactly, so a battle waits for whoever has
-to move, and survives closing the page or restarting the server. After 24
-hours without a move, RED's AI makes it. The page is `cup.html?b=<id>`, with
+to move, and survives closing the page or restarting the server. The page is `cup.html?b=<id>`, with
 Daily Red's battle screen (the battle engine's remote mode, `web/cup.js`).
 
-Next (phase 3): the double-elimination bracket from the 2nd, a round every 3
-days, one battle a match (a no-show forfeits when the round ends), and the
-results in the Cup's channel. `cd tests && node cup.mjs` plays a Cup battle in two browsers,
-closing one and restarting the server mid-battle; `node cup-draft.mjs` runs a
-Cup's start: four players sign up, the pool comes out and they draft live.
+`cd tests && node cup.mjs` plays a Cup battle in two browsers, closing one
+and restarting the server mid-battle; `node cup-draft.mjs` runs a Cup: four
+players sign up, the pool comes out, they draft live, and the bracket's first
+round is played (one gives up) and timed out (a coin toss).
 
 ## Copyright and licenses
 

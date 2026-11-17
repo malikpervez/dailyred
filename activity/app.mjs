@@ -23,7 +23,7 @@
 //
 //   GET /card/<date>.png           today's six facing the day's trainer, for the bot's card (card-image.mjs)
 //
-//   /api/cup[/events|/join|/leave|/wishlist|/autodraft|/pick]   the week's Cup: sign-ups and the draft (cup-month.mjs)
+//   /api/cup[/events|/join|/leave|/wishlist|/autodraft|/pick|/lead|/play]   the month's Cup (cup-month.mjs)
 //   /api/cup/battles/<id>[/events|/choose]   the Cup's player-vs-player battles (cup.mjs)
 //
 // Every /api call except config, token and web/session needs "Authorization:
@@ -502,6 +502,8 @@ export function createApp({
     const hall = hallOfFame(room);
     // Last month's Master(s) wear the crown all this month.
     const crowned = new Set(hall.find((h) => h.month === previousMonth(date.slice(0, 7)))?.masters.map((m) => m.id));
+    // The last Daily Red Cup's champion wears the 🏆 until the next one.
+    const champion = room.startsWith('g:') ? store.lastChampion(room.slice(2))?.champion ?? null : null;
     const players = store.roomPlayers(room).map(({ id, name, avatarUrl, stats }) => {
       const full = { ...EMPTY, ...stats };
       const result = resultFor(full, date);
@@ -515,6 +517,7 @@ export function createApp({
         monthWins: month.get(id)?.wins ?? 0, monthLosses: month.get(id)?.losses ?? 0,
         monthLeft: month.get(id)?.monsLeft ?? 0, monthTurns: month.get(id)?.turns ?? 0,
         master: crowned.has(id),
+        cupChampion: id === champion,
         you: id === user.id,
       };
     });
@@ -603,7 +606,7 @@ export function createApp({
       result = reminder(user, await readJson(req));
     } else if (route === 'POST /api/share') {
       result = await share(req);
-    } else if (cupMonth && /^\/api\/cup(\/(events|join|leave|wishlist|autodraft|pick))?$/.test(url.pathname)) {
+    } else if (cupMonth && /^\/api\/cup(\/(events|join|leave|wishlist|autodraft|pick|lead|play))?$/.test(url.pathname)) {
       // The week's Cup for a server (?g= or { g }): signed-in players of that server.
       const user = await requireUser(req);
       const action = url.pathname.slice('/api/cup'.length);
@@ -623,7 +626,9 @@ export function createApp({
           else if (action === '/wishlist') cupMonth.wishlist(guild, user, body.list);
           else if (action === '/autodraft') cupMonth.autodraft(guild, user, body.on === true);
           else if (action === '/pick') cupMonth.pick(guild, user, body.index);
-          result = cupMonth.view(guild, user);
+          else if (action === '/lead') cupMonth.setLead(guild, user, body.index);
+          if (action === '/play') result = { battleId: await cupMonth.play(guild, user) };
+          else result = cupMonth.view(guild, user);
         } else {
           throw new HttpError(405, 'Method not allowed');
         }

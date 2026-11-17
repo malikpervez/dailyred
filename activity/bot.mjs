@@ -41,7 +41,8 @@ import {
   economyOpen, ECONOMY_START, ECONOMY_START_LABEL, PRIZE, ITEMS, WEEKLY_BAG, CARRY_LIMIT, prizeFor, walletFor,
 } from '../web/economy.js';
 import { ROAD, ROAD_START, TRAINERS, trainerOn, roadOpen } from '../web/road.js';
-import { scheduleFor, nextMonth as cupNextMonth, MAX_PLAYERS, MIN_PLAYERS, ROUND_DAYS } from './cup-month.mjs';
+import { scheduleFor, slotEnd, nextMonth as cupNextMonth, MAX_PLAYERS, MIN_PLAYERS, ROUND_DAYS } from './cup-month.mjs';
+import { standings as cupStandings, BYE } from './cup-bracket.mjs';
 import { onClock as draftOnClock } from './cup-draft.mjs';
 
 const API = 'https://discord.com/api/v10';
@@ -105,8 +106,9 @@ export function compareMonths(a, b) {
   return b.wins - a.wins || a.losses - b.losses || b.monsLeft - a.monsLeft || a.turns - b.turns;
 }
 
-// `crowned`: the set of player ids who are the reigning Pokémon Master.
-const who = (id, crowned) => `<@${id}>${crowned?.has(id) ? ' 👑' : ''}`;
+// `crowned`: the set of player ids who are the reigning Pokémon Master,
+// and (.cup) the reigning Daily Red Cup champion's.
+const who = (id, crowned) => `<@${id}>${crowned?.has(id) ? ' 👑' : ''}${crowned?.cup === id ? ' 🏆' : ''}`;
 const ordinal = (n) => `${n}${{ 1: 'st', 2: 'nd', 3: 'rd' }[n % 100 > 10 && n % 100 < 14 ? 0 : n % 10] ?? 'th'}`;
 
 // `foe`: the day's trainer's name (RED, or the week's on the Road to RED).
@@ -365,9 +367,10 @@ export function createBot({
     return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}`, weekday: parts.weekday };
   }
 
-  // The reigning Pokémon Master(s) on `date`: last month's.
-  const crownedOn = (guildId, date) => new Set(store.masters(guildId)
-    .filter((m) => m.month === previousMonth(date.slice(0, 7))).map((m) => m.playerId));
+  // The reigning Pokémon Master(s) on `date`: last month's. And .cup: the
+  // last Daily Red Cup's champion, until the next one is crowned.
+  const crownedOn = (guildId, date) => Object.assign(new Set(store.masters(guildId)
+    .filter((m) => m.month === previousMonth(date.slice(0, 7))).map((m) => m.playerId)), { cup: store.lastChampion?.(guildId)?.champion ?? null });
 
   // --- The live card --------------------------------------------------------------------
 
@@ -604,7 +607,7 @@ export function createBot({
       embeds: [{
         color: result.won ? GOLD : RED,
         author: {
-          name: `${player.name}${crowned.has(playerId) ? ' 👑' : ''} · Daily Red No. ${dayNumber(date)}`,
+          name: `${player.name}${crowned.has(playerId) ? ' 👑' : ''}${crowned.cup === playerId ? ' 🏆' : ''} · Daily Red No. ${dayNumber(date)}`,
           ...(player.avatarUrl && { icon_url: player.avatarUrl }),
         },
         description: [resultLine(player, result, currentStreaks(player.stats, date), crowned, foe.name, { named: false }), extras].filter(Boolean).join('\n'),
@@ -842,6 +845,7 @@ export function createBot({
       `${daysLeft === 0 ? `Last day of ${monthName(month)}` : `${plural(daysLeft, 'day')} left`} · most wins becomes Pokémon Master`,
     ];
     if (crowned.size) intro.push(`👑 Reigning Master: ${[...crowned].map((id) => `<@${id}>`).join(' & ')}`);
+    if (crowned.cup) intro.push(`🏆 Cup champion: <@${crowned.cup}>`);
 
     const race = rows.filter((p) => p.monthWins + p.monthLosses > 0);
     const fields = [{
@@ -1162,6 +1166,22 @@ export function createBot({
     } else if (cup.stage === 'cancelled') {
       color = 0x808080;
       lines.push(`No Cup this month: ${players.length} signed up, and it needs ${MIN_PLAYERS}. Sign-ups for ${monthName(cupNextMonth(cup.month))} open on the 25th at 6 AM ET.`);
+    } else if (cup.bracket && ['bracket', 'done'].includes(cup.stage)) {
+      // The standings: the champion, then who's still in, then who's out.
+      const table = cupStandings(cup.bracket);
+      const rank = { champion: 0, winners: 1, losers: 2, out: 3 };
+      const status = { champion: '🏆 champion', winners: "winners' side", losers: "losers' side", out: 'out' };
+      const team = (id) => draft.picks.filter((p) => p.player === id).map((p) => speciesOf(cup, p.pool)).join(', ');
+      if (cup.stage === 'done') {
+        lines.push(`🏆 **${mention(cup.champion)} wins the ${monthName(cup.month)} Cup!** They wear the 🏆 until the next one.`, '');
+      } else {
+        const slot = cup.bracket.slots && Array.from({ length: cup.bracket.slots }, (_, i) => i + 1).find((n) => slotEnd(cup.month, n) > now().getTime());
+        if (slot) lines.push(`The bracket is on: round ${slot} of ${cup.bracket.slots} ends at 11:59 PM ET on ${cupLastDay(slotEnd(cup.month, slot))}.`, '');
+      }
+      lines.push('**Standings**');
+      [...table.entries()]
+        .sort(([, x], [, y]) => rank[x.status] - rank[y.status] || y.wins - x.wins || x.losses - y.losses)
+        .forEach(([id, row]) => lines.push(`${mention(id)} · ${row.wins}–${row.losses} · ${status[row.status]}: ${team(id)}`));
     } else if (draft) {
       const picks = (id) => draft.picks.filter((p) => p.player === id).map((p) => speciesOf(cup, p.pool));
       if (cup.stage === 'pool') lines.push(`Sign-ups are closed: **${players.length} players**. The pool is out: look it over and rank a wish list before the draft at **${etTime(times.draft)} ET**.`, '');
@@ -1194,17 +1214,37 @@ export function createBot({
   // Whose pick it is, or null.
   const cupOnClock = (cup) => (cup.stage === 'draft' && cup.draft ? draftOnClock(cup.draft) : null);
 
+  // The day a round's deadline (midnight) closes, e.g. "Fri, Dec 4" for
+  // midnight at the start of Dec 5.
+  const cupLastDay = (ms) => dateLabel(new Date(ms - 60 * 1000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }));
+  const cupPlayBy = (cup, match) => `11:59 PM ET on ${cupLastDay(slotEnd(cup.month, match.slot))}`;
+  const vs = (match) => `${mention(match.players[0])} vs ${mention(match.players[1])}`;
+
+  // What a result says, by how the match was decided.
+  function cupResultLine(cup, match) {
+    const [w, l] = [mention(match.winner), mention(match.loser)];
+    const d = match.details ?? {};
+    const line = {
+      battle: `🏆 ${match.label}: ${w} beat ${l}${d.left != null ? ` with ${d.left} left` : ''}${d.turns ? ` in ${d.turns} turns` : ''}.`,
+      'gave up': `🏳️ ${match.label}: ${l} gave up, so ${w} goes through.`,
+      timeout: `⏰ ${match.label}: time ran out with ${l} holding it up, so ${w} goes through.`,
+      'no-show': `🪙 ${match.label}: neither battled in time, and a coin toss sends ${w} through.`,
+    }[match.how] ?? `🏆 ${match.label}: ${w} goes through.`;
+    const fate = cupStandings(cup.bracket).get(match.loser)?.status;
+    return `${line}${fate === 'out' && cup.stage !== 'done' ? ` ${l} is out.` : fate === 'losers' ? ` ${l} drops to the losers' side.` : ''}`;
+  }
+
   // Posts and edits, one at a time per Cup.
   const cupQueues = new Map();
-  function cupChanged(cup, what) {
+  function cupChanged(cup, what, details = {}) {
     if (!posting) return Promise.resolve();
     const previous = cupQueues.get(cup.id) ?? Promise.resolve();
-    const next = previous.then(() => syncCup(cup, what)).catch((err) => log.warn(`Daily Red bot: the Cup post in server ${cup.guildId}: ${err.message}`));
+    const next = previous.then(() => syncCup(cup, what, details)).catch((err) => log.warn(`Daily Red bot: the Cup post in server ${cup.guildId}: ${err.message}`));
     cupQueues.set(cup.id, next);
     return next;
   }
 
-  async function syncCup(cup, what) {
+  async function syncCup(cup, what, details = {}) {
     const channelId = await cupChannelFor(cup.guildId);
     if (!channelId) return;
     const settingKey = `cup-post:${cup.id}`;
@@ -1242,6 +1282,33 @@ export function createBot({
       return posted.id;
     };
     const everyone = cup.players.map((p) => p.id);
+    // The bracket: who plays whom, results, reminders, the champion.
+    const nextUp = (ready = []) => ready.filter((m) => m.players.every((p) => p && p !== BYE));
+    const matchups = (ready) => nextUp(ready).map((m) => `⚔️ ${vs(m)} (${m.label}): play by ${cupPlayBy(cup, m)}.`);
+    const pinged = (ready) => [...new Set(nextUp(ready).flatMap((m) => m.players))];
+    if (what === 'bracket') {
+      const byes = Object.values(cup.bracket.matches).filter((m) => m.slot === 1 && m.how === 'bye').map((m) => mention(m.winner));
+      await ping([`🏆 The ${monthName(cup.month)} bracket is on! Press **Battle** on the Cup page whenever you and your opponent are both on.`,
+        ...matchups(details.ready), byes.length ? `Through to round 2 on a bye: ${byes.join(' ')}.` : ''].filter(Boolean).join('\n'), pinged(details.ready));
+      return;
+    }
+    if (what === 'result' || what === 'champion') {
+      const lines = [cupResultLine(cup, details.match)];
+      if (what === 'champion') lines.push(`🏆 **${mention(cup.champion)} wins the ${monthName(cup.month)} Daily Red Cup!** Congratulations! The 🏆 is theirs until the next Cup's champion.`);
+      else lines.push(...matchups(details.ready));
+      await ping(lines.join('\n'), what === 'champion' ? everyone : pinged(details.ready));
+      return;
+    }
+    if (what === 'reminder') {
+      const m = details.match;
+      await ping(`⏰ ${vs(m)}: your ${m.label} ends at ${cupPlayBy(cup, m)}, a day from now. Whoever's holding it up then loses; if it hasn't started, a coin toss decides.`, m.players);
+      return;
+    }
+    if (what === 'draw') {
+      const m = details.match;
+      await ping(`🤝 ${m.label}: ${vs(m)} ended in a draw! Battle again, by ${cupPlayBy(cup, m)}.`, m.players);
+      return;
+    }
     if (what === 'closed') {
       await ping(`🏆 Sign-ups are closed! ${everyone.map(mention).join(' ')}: the pool is out. Look it over and rank your wish list before the draft tonight at ${etTime(scheduleFor(cup.month).draft)} ET.`, everyone);
     } else if (what === 'drafted') {

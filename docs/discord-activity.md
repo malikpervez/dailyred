@@ -352,8 +352,10 @@ messages go). The recap is skipped on days nobody in the server played.
 called **#daily-red-cup** that the bot can see and post in (or name another one
 with `CUP_CHANNEL`). On the 25th of each month at 6 AM New York time the bot
 posts next month's sign-ups there with **Join** and **Leave** buttons, keeps
-that post up to date through the live draft on the 1st at 8 PM, and mentions
-each player when it's their pick. Servers
+that post up to date through the live draft on the 1st at 8 PM and the
+bracket after it, and mentions each player when it's their pick, when their
+match is ready, a day before its round ends, and when the champion is
+crowned. Servers
 without the channel get no Cup posts. The Cup's page is
 `https://<your address>/cup.html?g=<server id>` (the post links to it).
 

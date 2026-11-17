@@ -115,24 +115,28 @@ test("two players battle through the server, each seeing only what they're allow
     assert.deepEqual(after.map((e) => e.kind), before);
     assert.deepEqual((await site.call(`/api/cup/battles/${id}`, 'token-ash')).waitingOn, ['p1', 'p2']);
 
-    // Ash moves; Misty walks away. A day later RED's AI moves for her.
+    // Ash moves; Misty walks away. At the match's deadline she's the one
+    // holding it up, so she loses.
     const sofar = await site.listen(`/api/cup/battles/${id}/events`, 'token-ash', (e) => /\|turn\|2/.test(logText(e)) && lastRequest(e));
     await site.call(`/api/cup/battles/${id}/choose`, 'token-ash', { choice: 'move 1', rqid: lastRequest(sofar).rqid });
-    clock.time += 23 * 3600 * 1000;
-    await site.cup.tick();
-    assert.deepEqual((await site.call(`/api/cup/battles/${id}`, 'token-ash')).waitingOn, ['p2'], 'not before 24 hours');
-    clock.time += 2 * 3600 * 1000;
-    await site.cup.tick();
-    // A turn only plays out once both have chosen, so Ash's move happening at
-    // all means the autopilot chose for Misty.
-    const moved = await site.listen(`/api/cup/battles/${id}/events`, 'token-ash', (e) => /\|move\|p1a: /.test(logText(e)), { 'Last-Event-ID': String(sofar.at(-1).n) });
-    assert.match(logText(moved), /\|move\|p1a: /, 'the autopilot took her turn, so the turn played out');
-
-    // Ash gives up: Misty wins, and the bracket hears about it.
-    const done = await site.call(`/api/cup/battles/${id}/choose`, 'token-ash', { choice: 'forfeit' });
-    assert.deepEqual([done.ended, done.winner], [true, 'p2']);
-    assert.deepEqual(site.finished.map(([b, r]) => [b, r.winner, r.players.p2]), [[id, 'p2', '202']]);
+    assert.deepEqual((await site.call(`/api/cup/battles/${id}`, 'token-ash')).waitingOn, ['p2']);
+    assert.equal(await site.cup.timeOut(id), 'p2');
+    assert.deepEqual(site.finished.map(([b, r]) => [b, r.winner, r.how, r.players.p1, r.left.p1]), [[id, 'p1', 'timeout', '101', 6]]);
     assert.equal((await site.call(`/api/cup/battles/${id}/choose`, 'token-misty', { choice: 'move 1' })).status, 400, 'over is over');
+    assert.equal(await site.cup.timeOut(id), null);
+
+    // Another: Ash gives up. The bracket hears which match it was.
+    const teams = { p1: { id: '101', name: 'Ash', team: generateTeam(dex, 11, 2) }, p2: { id: '202', name: 'Misty', team: generateTeam(dex, 22, 2) } };
+    const second = await site.cup.create({ ...teams, context: { cupId: 'g:2026-12', match: 'W1-1' } });
+    assert.deepEqual((await site.call(`/api/cup/battles/${second}`, 'token-misty')).context, { cupId: 'g:2026-12', match: 'W1-1' });
+    const done = await site.call(`/api/cup/battles/${second}/choose`, 'token-ash', { choice: 'forfeit' });
+    assert.deepEqual([done.ended, done.winner], [true, 'p2']);
+    assert.deepEqual([site.finished.at(-1)[1].how, site.finished.at(-1)[1].context.match], ['gave up', 'W1-1']);
+
+    // One nobody ever moved in: a coin toss at the deadline.
+    const third = await site.cup.create(teams);
+    assert.equal(await site.cup.timeOut(third, () => 0.9), 'p2');
+    assert.equal(site.finished.at(-1)[1].winner, 'p1');
     assert.equal((await site.call('/api/cup/battles/nope1234', 'token-ash')).status, 404);
   } finally {
     await site.close();

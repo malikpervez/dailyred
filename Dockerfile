@@ -42,7 +42,7 @@ WORKDIR /app
 COPY web/ web/
 COPY --from=build /src/web/vendor/ web/vendor/
 COPY --from=build /src/web/sprites/ web/sprites/
-COPY activity/server.mjs activity/app.mjs activity/store.mjs activity/bot.mjs activity/cup.mjs activity/cup-month.mjs activity/cup-draft.mjs activity/
+COPY activity/server.mjs activity/app.mjs activity/store.mjs activity/bot.mjs activity/cup.mjs activity/cup-month.mjs activity/cup-draft.mjs activity/cup-bracket.mjs activity/
 # Today's card picture: drawn by the server from the sprites and this lettering.
 COPY activity/card-image.mjs activity/png.mjs activity/
 COPY activity/card-titles/ activity/card-titles/

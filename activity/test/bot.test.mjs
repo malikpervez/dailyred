@@ -10,6 +10,7 @@ import { openStore } from '../store.mjs';
 import { EMPTY, recordResult } from '../../web/daily.js';
 import { walletFor } from '../../web/economy.js';
 import { createCupMonth } from '../cup-month.mjs';
+import { createCup } from '../cup.mjs';
 
 const GUILD = '111';
 const quiet = { log() {}, warn() {} };
@@ -890,4 +891,85 @@ test('the Cup in #daily-red-cup: sign-ups from the 25th with Join and Leave, the
   const final = description(inCup(discord.edits()).at(-1));
   assert.match(final, /^\*\*The teams are set!\*\* The bracket starts tomorrow: a round every 3 days\./);
   assert.equal(final.split('\n').filter((l) => /^\d\. <@\d+>: (\S[^,]*, ){5}\S/.test(l)).length, 4, 'six each');
+});
+
+test('the Cup bracket in #daily-red-cup: matchups when it starts, each result with the next matches, reminders, the champion', async () => {
+  const discord = fakeDiscord({ channels: [{ id: 'c-general', type: 0, name: 'general' }, { id: 'c-cup', type: 0, name: 'daily-red-cup' }] });
+  const store = openStore(':memory:');
+  let time = new Date('2026-11-28T12:00:00Z');
+  let bot = null;
+  let month = null;
+  const battles = createCup({ store, loadEngine: () => import('../cup-engine.mjs'), now: () => time.getTime(), onFinished: (id, r) => month.battleEnded(id, r), log: quiet });
+  month = createCupMonth({
+    store, battles, loadEngine: () => import('../cup-engine.mjs'), now: () => time.getTime(), log: quiet,
+    onChange: (cup, what, details) => bot.cupChanged(cup, what, details),
+  });
+  bot = createBot({ token: 'bot-token', clientId: '999', store, fetch: discord.fetch, now: () => time, log: quiet, followUpDelay: 0, publicUrl: 'https://nas.example.ts.net', cupMonth: month });
+  const settle = () => new Promise((ok) => setTimeout(ok, 30));
+  const lastPost = () => discord.posts().filter((c) => c.path === '/channels/c-cup/messages').at(-1).body;
+  const board = () => description(discord.edits().filter((c) => c.path.startsWith('/channels/c-cup/')).at(-1));
+
+  for (const id of ['11', '12', '13', '14']) month.join(GUILD, { id, name: `T${id}` });
+  time = new Date('2026-12-01T23:00:00Z');
+  await month.tick();
+  time = new Date('2026-12-02T01:00:00Z');
+  await month.tick();
+  for (const id of ['11', '12', '13', '14']) month.autodraft(GUILD, { id }, true);
+  time = new Date('2026-12-02T05:00:00Z');
+  await month.tick();
+  await settle();
+
+  const start = lastPost();
+  const lines = start.content.split('\n');
+  assert.equal(lines[0], '🏆 The December bracket is on! Press **Battle** on the Cup page whenever you and your opponent are both on.');
+  assert.match(lines[1], /^⚔️ <@1\d> vs <@1\d> \(Winners round 1\): play by 11:59 PM ET on Fri, Dec 4\.$/);
+  assert.equal(lines.filter((l) => l.startsWith('⚔️')).length, 2);
+  assert.deepEqual(start.allowed_mentions.users.sort(), ['11', '12', '13', '14']);
+  assert.match(board(), /^The bracket is on: round 1 of 5 ends at 11:59 PM ET on Fri, Dec 4\.\n\n\*\*Standings\*\*\n<@1\d> · 0–0 · winners' side: /);
+
+  // A result, with what it means for the loser.
+  const cup = store.getCup(`${GUILD}:2026-12`);
+  const [a, b] = cup.bracket.matches['W1-1'].players;
+  await battles.choose(await month.play(GUILD, { id: a }), { id: b }, { choice: 'forfeit' });
+  await settle();
+  assert.equal(lastPost().content.split('\n')[0], `🏳️ Winners round 1: <@${b}> gave up, so <@${a}> goes through. <@${b}> drops to the losers' side.`);
+  assert.match(board(), new RegExp(`<@${a}> · 1–0 · winners' side`));
+
+  // A day before the round ends, the other match gets a reminder.
+  time = new Date('2026-12-04T05:30:00Z');
+  await month.tick();
+  await settle();
+  const [c, d] = cup.bracket.matches['W1-2'].players;
+  assert.equal(lastPost().content.split('\n')[0], `⏰ <@${c}> vs <@${d}>: your Winners round 1 ends at 11:59 PM ET on Fri, Dec 4, a day from now. Whoever's holding it up then loses; if it hasn't started, a coin toss decides.`);
+  assert.deepEqual(lastPost().allowed_mentions.users, [c, d]);
+
+  // Nobody played it: a coin toss, and the next matches.
+  time = new Date('2026-12-05T05:00:00Z');
+  await month.tick();
+  await settle();
+  const toss = lastPost().content.split('\n');
+  assert.match(toss[0], /^🪙 Winners round 1: neither battled in time, and a coin toss sends <@1\d> through\./);
+  assert.ok(toss.some((l) => /^⚔️ <@1\d> vs <@1\d> \(Winners final\): play by 11:59 PM ET on Mon, Dec 7\.$/.test(l)));
+  assert.ok(toss.some((l) => /\(Losers round 1\)/.test(l)));
+
+  // Forfeits to the end: the champion.
+  for (let guard = 0; guard < 8 && store.getCup(cup.id).stage !== 'done'; guard++) {
+    const now = store.getCup(cup.id);
+    const m = Object.values(now.bracket.matches).find((x) => x.winner == null && x.players.every((p) => p && p !== 'bye'));
+    await battles.choose(await month.play(GUILD, { id: m.players[0] }), { id: m.players[1] }, { choice: 'forfeit' });
+    await settle();
+  }
+  const done = store.getCup(cup.id);
+  assert.equal(done.stage, 'done');
+  assert.match(lastPost().content, new RegExp(`🏆 \\*\\*<@${done.champion}> wins the December Daily Red Cup!\\*\\* Congratulations!`));
+  assert.match(board(), new RegExp(`^🏆 \\*\\*<@${done.champion}> wins the December Cup!\\*\\* They wear the 🏆 until the next one\\.\\n\\n\\*\\*Standings\\*\\*\\n<@${done.champion}> · \\d–[01] · 🏆 champion`));
+
+  // On the daily card from then on: a 🏆 by the champion's name.
+  store.savePlayer({ id: done.champion, name: 'Champ', avatarUrl: '', stats: { ...EMPTY, wins: 1, winStreak: 1, dayStreak: 1, lastPlayed: '2026-12-20', lastResult: 'won' } });
+  store.joinRoom(`g:${GUILD}`, done.champion);
+  store.saveResult({ playerId: done.champion, date: '2026-12-20', won: true, monsLeft: 2, redLeft: 0, turns: 30 });
+  time = new Date('2026-12-20T15:00:00Z');
+  await bot.updateCard(GUILD, '2026-12-20');
+  const card = discord.posts().filter((c) => c.path === '/channels/c-general/messages').at(-1);
+  assert.match(card.body.embeds[0].description, new RegExp(`^<@${done.champion}> 🏆 \\*\\*Beat`, 'm'));
 });

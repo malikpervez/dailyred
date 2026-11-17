@@ -194,6 +194,7 @@ export function openStore(file) {
   const getCup = db.prepare('SELECT data FROM cups WHERE id = ?');
   const latestCup = db.prepare('SELECT data FROM cups WHERE guild_id = ? ORDER BY month DESC LIMIT 1');
   const activeCups = db.prepare("SELECT data FROM cups WHERE stage NOT IN ('cancelled', 'done')");
+  const lastChampion = db.prepare("SELECT data FROM cups WHERE guild_id = ? AND stage = 'done' ORDER BY month DESC LIMIT 1");
   const putCup = db.prepare(`
     INSERT INTO cups (id, guild_id, month, stage, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET stage = excluded.stage, data = excluded.data, updated_at = excluded.updated_at
@@ -296,6 +297,8 @@ export function openStore(file) {
     getCup: (id) => JSON.parse(getCup.get(id)?.data ?? 'null'),
     latestCup: (guildId) => JSON.parse(latestCup.get(guildId)?.data ?? 'null'),
     activeCups: () => activeCups.all().map((row) => JSON.parse(row.data)),
+    // The server's last finished Cup (its champion: .champion), or null.
+    lastChampion: (guildId) => JSON.parse(lastChampion.get(guildId)?.data ?? 'null'),
     saveCup: (cup) => { putCup.run(cup.id, cup.guildId, cup.month, cup.stage, JSON.stringify(cup), Date.now()); },
     // A player's official battle in progress on `date` (as the page sent it), or null.
     getProgress: (playerId, date) => {

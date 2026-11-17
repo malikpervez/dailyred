@@ -10,8 +10,6 @@
 // AI) into activity/dist/cup-engine.mjs, so the server image needs no npm
 // packages.
 import { Battle, Dex, Teams, PRNG, extractChannelMessages } from '@pkmn/sim';
-import * as calc from '@smogon/calc';
-import { chooseFor } from '../web/battle/ai.js';
 import { draftPool as makePool } from '../web/battle/team.js';
 import { describeSet } from '../web/battle/describe.js';
 
@@ -20,7 +18,8 @@ const FORMAT = 'gen3customgame';
 const SIDES = ['p1', 'p2'];
 const CHANNEL = { spectator: 0, p1: 1, p2: 2 };
 
-// saved: { seed, p1: { name, team }, p2: { name, team }, inputs: [[side, choice]] }
+// saved: { seed, p1: { name, team }, p2: { name, team }, inputs: [[side, choice]], context }
+// (context: anything the caller wants kept with it, e.g. the Cup match).
 // (team: Showdown sets; a new battle gets a fresh seed). `onEvent(view,
 // event)` hears what each view ('p1', 'p2', 'spectator') is sent as it
 // happens: { kind: 'log', text } or { kind: 'request', request }.
@@ -30,6 +29,7 @@ export function openBattle(saved, onEvent = () => {}) {
     p1: saved.p1,
     p2: saved.p2,
     inputs: [],
+    context: saved.context ?? null,
   };
   // Everything each view has been sent, in order, so a browser that
   // (re)connects can be brought up to date.
@@ -121,18 +121,16 @@ export function openBattle(saved, onEvent = () => {}) {
     },
     request: (side) => requests[side],
     choose: (side, choice) => apply(side, String(choice ?? '').slice(0, 40)),
-    // RED's AI picks for a side (the Cup's autopilot after 24 hours).
-    autopilot(side) {
-      const request = requests[side];
-      if (!request || request.wait) return 'Nothing to choose';
-      let choice = 'default';
-      try {
-        choice = chooseFor(side, calc, dex, battle, request, Math.random, 0);
-      } catch {
-        // 'default' still moves the battle on
-      }
-      return apply(side, choice) && apply(side, 'default');
+    // How a side stands: Pokémon left, and their HP as a share of the team's.
+    standing(side) {
+      const team = battle[side].pokemon;
+      return {
+        left: team.filter((p) => !p.fainted && p.hp > 0).length,
+        hp: team.reduce((sum, p) => sum + (p.fainted ? 0 : p.hp / p.maxhp), 0) / team.length,
+      };
     },
+    // Whether a side has made any choice yet.
+    moved: (side) => state.inputs.some(([s, c]) => s === side && c !== 'forfeit'),
   };
 }
 

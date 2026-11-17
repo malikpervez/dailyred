@@ -1,8 +1,10 @@
-// End-to-end test of a Cup's start in headless Chrome: four players sign up
-// on the Cup page from the 25th, the pool comes out on the 1st at 6 PM, and
-// the live draft runs at 8 PM (activity/cup-month.mjs), each player in their own browser: picks show
+// End-to-end test of a Cup in headless Chrome: four players sign up on the
+// Cup page from the 25th, the pool comes out on the 1st at 6 PM, the live
+// draft runs at 8 PM, and the bracket opens on the 2nd. In the draft (activity/cup-month.mjs), each player in their own browser: picks show
 // up on everyone's screen, a player who runs out of time gets their wish
-// list's first choice, and one on autodraft picks straight away.
+// list's first choice, and one on autodraft picks straight away. In the
+// bracket two players battle from the Cup page (one gives up) and the other
+// match, never started, goes to a coin toss when the round ends.
 //
 //   cd tests && npm install && node cup-draft.mjs      (CHROME_PATH=... if needed)
 //
@@ -15,6 +17,7 @@ import { createServer } from 'node:http';
 import { chromium } from 'playwright-core';
 import { createApp } from '../activity/app.mjs';
 import { createCupMonth } from '../activity/cup-month.mjs';
+import { createCup } from '../activity/cup.mjs';
 import { openStore } from '../activity/store.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -44,9 +47,12 @@ store.savePlayer({ id: 'someone', name: 'Someone', avatarUrl: '', stats: {} });
 store.joinRoom(`g:${GUILD}`, 'someone'); // a server with Daily Red
 let time = Date.parse('2026-11-25T10:00:00Z'); // Nov 25, 5 AM in New York
 const at = (iso) => { time = Date.parse(iso); };
-const cupMonth = createCupMonth({ store, loadEngine: () => import('../activity/cup-engine.mjs'), now: () => time, log: { log() {}, warn() {} } });
+const quiet = { log() {}, warn() {} };
+let cupMonth = null;
+const cup = createCup({ store, loadEngine: () => import('../activity/cup-engine.mjs'), now: () => time, onFinished: (id, r) => cupMonth.battleEnded(id, r), log: quiet });
+cupMonth = createCupMonth({ store, battles: cup, loadEngine: () => import('../activity/cup-engine.mjs'), now: () => time, log: quiet });
 const http = createServer(createApp({
-  webRoot: join(ROOT, 'web'), store, clientId: '1234', clientSecret: 'secret', fetch: fakeDiscord, publicUrl: 'http://127.0.0.1:0', cupMonth,
+  webRoot: join(ROOT, 'web'), store, clientId: '1234', clientSecret: 'secret', fetch: fakeDiscord, publicUrl: 'http://127.0.0.1:0', cup, cupMonth,
 }));
 await new Promise((ok) => http.listen(0, '127.0.0.1', ok));
 const site = `http://127.0.0.1:${http.address().port}`;
@@ -177,6 +183,61 @@ try {
   assert.ok(garyPicks.every((p) => p.auto), "Gary's were all autodrafted");
   await shot(ash, 'drafted');
   console.log(`  (draft order: ${order.join(', ')})`);
+
+  step('the 2nd at midnight: the bracket. Each player sees their match, with a Battle button');
+  at('2026-12-02T05:00:00Z');
+  await cupMonth.tick();
+  for (const page of Object.values(pages)) await page.waitForFunction(() => window.dailyRedCupHub.cup.stage === 'bracket');
+  const seen = await cupOf(ash);
+  const nameOf = Object.fromEntries(seen.players.map((p) => [p.id, p.name.toLowerCase()]));
+  const [m1, m2] = seen.bracket.matches.filter((m) => m.slot === 1 && m.how !== 'bye');
+  const [x, y] = m1.players.map((id) => pages[nameOf[id]]);
+  const [xName, yName] = m1.players.map((id) => seen.players.find((p) => p.id === id).name);
+  assert.equal(await x.textContent('#cup-title'), `Your match: vs ${yName}`);
+  assert.match(await x.textContent('#cup-note'), /^Winners round 1, one battle\. Play by 11:59 PM ET on Fri, Dec 4/);
+  assert.equal(await x.textContent('#cup-battle'), `Battle ${yName}`);
+  assert.equal(await x.$$eval('.bracket-match', (cards) => cards.length), 7, '4 players: 6 matches and maybe a reset');
+  assert.equal(await x.textContent('.bracket-match[data-match="F2"] .bracket-note'), "Only if the losers' side wins the grand final");
+
+  step('your lead: picked on the Cup page, sent out first');
+  await x.click('#cup-team .pool-mon:nth-child(3) .set-lead');
+  await x.waitForFunction(() => window.dailyRedCupHub.cup.me.lead === 2);
+  const lead = (await x.textContent('#cup-team .pool-mon:nth-child(3) .pool-name')).trim();
+  await shot(x, 'bracket');
+
+  step('Battle: both players land in the same battle; one gives up; the bracket moves on');
+  await x.click('#cup-battle');
+  await x.waitForURL(/cup\.html\?b=/);
+  await y.click('#cup-battle');
+  await y.waitForURL(/cup\.html\?b=/);
+  assert.equal(new URL(x.url()).searchParams.get('b'), new URL(y.url()).searchParams.get('b'));
+  await x.waitForSelector('.commands', { state: 'visible', timeout: 30000 });
+  assert.match(await x.textContent('#cup-label'), new RegExp(`^Winners round 1: `));
+  assert.ok((await x.textContent('.infobox-you .ib-name')).startsWith(lead), `${lead} leads`);
+  await y.waitForSelector('.commands', { state: 'visible', timeout: 30000 });
+  await y.click('.action:has-text("RUN")');
+  await y.click('#run-dialog button[value="run"]');
+  await x.waitForSelector('#battle-done:not([hidden])', { timeout: 30000 });
+  assert.equal(await x.textContent('#done-title'), `You beat ${yName}!`);
+  for (const page of [x, y]) {
+    await page.waitForSelector('#battle-done:not([hidden])', { timeout: 30000 });
+    await page.click('#cup-back-done');
+    await page.waitForSelector('.app[data-state="hub"]');
+  }
+  assert.match(await y.textContent('#cup-title'), /^You're through to|^Your match: vs /, 'one loss: on to the losers\' side');
+  await x.waitForFunction((id) => window.dailyRedCupHub.cup.bracket.matches.find((m) => m.id === id).winner, m1.id);
+  assert.equal(await x.textContent(`.bracket-match[data-match="${m1.id}"] .bracket-note`), `${yName} gave up Replay`);
+  assert.match(await x.textContent('#cup-title'), /^You're through to the Winners final/);
+  assert.match(await ash.textContent('#cup-players'), new RegExp(`${xName} 1–0WINNERS`));
+
+  step('nobody plays the other match: when the round ends, a coin toss, on every page at once');
+  at('2026-12-05T05:00:00Z');
+  await cupMonth.tick();
+  for (const page of Object.values(pages)) {
+    await page.waitForFunction((id) => window.dailyRedCupHub.cup.bracket.matches.find((m) => m.id === id).how === 'no-show', m2.id);
+  }
+  assert.equal(await ash.textContent(`.bracket-match[data-match="${m2.id}"] .bracket-note`), 'Nobody battled: coin toss');
+  await shot(pages.misty, 'bracket-wide');
 
   for (const [name, page] of Object.entries(pages)) assert.deepEqual(page.errors, [], `${name}'s page had errors`);
   console.log('All Cup draft tests passed.');

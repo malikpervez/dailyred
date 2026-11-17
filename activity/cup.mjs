@@ -1,7 +1,7 @@
 // The Cup's battles on the server: two players, each in their own browser,
 // for as long as it takes. The battle waits for whoever has to choose; they
-// can close the page and come back. After AUTOPILOT_MS without a choice,
-// RED's AI makes it for them so the bracket keeps moving.
+// can close the page and come back. A match's deadline (cup-month.mjs) ends
+// it with timeOut(): whoever's holding it up then forfeits.
 //
 //   GET  /api/cup/battles/<id>          { me, players, ended, winner, team }
 //   GET  /api/cup/battles/<id>/events   Server-Sent Events: everything this
@@ -13,7 +13,6 @@
 // every choice, and opened again on demand after a restart.
 import { randomBytes } from 'node:crypto';
 
-export const AUTOPILOT_MS = 24 * 60 * 60 * 1000;
 const HEARTBEAT_MS = 25 * 1000;
 
 export class CupError extends Error {
@@ -24,12 +23,12 @@ export class CupError extends Error {
 }
 
 // `loadEngine`: the bundled engine (activity/dist/cup-engine.mjs; tests use
-// the source). `onFinished(id, { winner, players })`: for the bracket.
+// the source). `onFinished(id, { winner, players, names, how, turns, left,
+// context })`: for the bracket (how: 'battle', 'gave up' or 'timeout').
 export function createCup({
   store,
   loadEngine = () => import('./dist/cup-engine.mjs'),
   now = () => Date.now(),
-  autopilotAfter = AUTOPILOT_MS,
   onFinished = () => {},
   log = console,
 }) {
@@ -70,11 +69,12 @@ export function createCup({
   }
 
   // A new battle between two players: { id, name, team } each (team: the
-  // Showdown sets, lead first). Resolves to its id.
-  async function create({ p1, p2, seed }) {
+  // Showdown sets, lead first; context: kept with it, e.g. the Cup match).
+  // Resolves to its id.
+  async function create({ p1, p2, seed, context = null }) {
     const { openBattle } = await getEngine();
     const id = randomBytes(6).toString('base64url');
-    const battle = openBattle({ seed, p1: { name: p1.name, team: p1.team }, p2: { name: p2.name, team: p2.team } });
+    const battle = openBattle({ seed, context, p1: { name: p1.name, team: p1.team }, p2: { name: p2.name, team: p2.team } });
     const row = { id, p1Id: p1.id, p2Id: p2.id, asked: { p1: now(), p2: now() } };
     store.saveCupBattle({ id, p1Id: p1.id, p2Id: p2.id, state: battle.state, asked: row.asked });
     live.delete(id);
@@ -96,6 +96,7 @@ export function createCup({
       ended: battle.ended,
       winner: battle.winner,
       waitingOn: battle.waitingOn(),
+      context: battle.state.context,
     };
   }
 
@@ -121,11 +122,20 @@ export function createCup({
     });
   }
 
-  function finish(id, entry) {
+  function finish(id, entry, how = 'battle') {
     if (!entry.battle.ended) return;
-    const { state, winner } = entry.battle;
+    const { battle } = entry;
+    const { state, winner } = battle;
     try {
-      onFinished(id, { winner, players: { p1: entry.row.p1Id, p2: entry.row.p2Id }, names: { p1: state.p1.name, p2: state.p2.name } });
+      onFinished(id, {
+        winner,
+        players: { p1: entry.row.p1Id, p2: entry.row.p2Id },
+        names: { p1: state.p1.name, p2: state.p2.name },
+        how,
+        turns: battle.turn,
+        left: { p1: battle.standing('p1').left, p2: battle.standing('p2').left },
+        context: state.context,
+      });
     } catch (err) {
       log.warn(`Cup: after battle ${id} ended: ${err.message}`);
     }
@@ -143,29 +153,32 @@ export function createCup({
     const error = entry.battle.choose(side, choice);
     if (error) throw new CupError(400, error);
     save(entry);
-    finish(id, entry);
+    finish(id, entry, choice === 'forfeit' ? 'gave up' : 'battle');
     return { ok: true, ended: entry.battle.ended, winner: entry.battle.winner };
   }
 
-  // Every few minutes (server.mjs): RED's AI chooses for anyone who's kept
-  // the other player waiting for `autopilotAfter`.
-  async function tick() {
-    for (const id of store.liveCupBattles()) {
-      const entry = await open(id);
-      if (!entry || entry.battle.ended) continue;
-      let changed = false;
-      for (const side of entry.battle.waitingOn()) {
-        if (now() - (entry.row.asked[side] ?? 0) < autopilotAfter) continue;
-        const error = entry.battle.autopilot(side);
-        if (error) log.warn(`Cup: autopilot for ${side} in battle ${id}: ${error}`);
-        else changed = true;
-      }
-      if (changed) {
-        save(entry);
-        finish(id, entry);
-      }
+  // A battle still going at its match's deadline. Whoever's keeping the
+  // other waiting loses. Waiting on both: one who has never moved loses to
+  // one who has; then fewer Pokémon left, then less HP; then a coin toss
+  // (also when neither ever showed up). Returns the side that lost.
+  async function timeOut(id, random = Math.random) {
+    const entry = await open(id);
+    if (!entry || entry.battle.ended) return null;
+    const { battle } = entry;
+    const waiting = battle.waitingOn();
+    let loser = waiting.length === 1 ? waiting[0] : null;
+    if (!loser) {
+      const [a, b] = [battle.standing('p1'), battle.standing('p2')];
+      if (battle.moved('p1') !== battle.moved('p2')) loser = battle.moved('p1') ? 'p2' : 'p1';
+      else if (a.left !== b.left) loser = a.left < b.left ? 'p1' : 'p2';
+      else if (Math.abs(a.hp - b.hp) > 1e-9) loser = a.hp < b.hp ? 'p1' : 'p2';
+      else loser = random() < 0.5 ? 'p1' : 'p2';
     }
+    battle.choose(loser, 'forfeit');
+    save(entry);
+    finish(id, entry, 'timeout');
+    return loser;
   }
 
-  return { create, meta, events, choose, tick, open };
+  return { create, meta, events, choose, timeOut, open };
 }
