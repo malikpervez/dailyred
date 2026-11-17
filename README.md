@@ -220,6 +220,28 @@ one Docker image that runs on an x86_64 or arm64 machine, e.g. a Raspberry Pi
 NAS, and builds in a minute or two. Setup:
 [docs/discord-activity.md](docs/discord-activity.md).
 
+## The Daily Red Cup (in progress, on the `cup` branch)
+
+A weekly tournament between friends, in its own Discord channel: everyone who
+opts in by Monday 6 PM ET joins a fantasy-style draft (6 random Pokémon per
+player from all 386, picked in snake order, so careless drafters end up with a
+Metapod), then a double-elimination bracket of player-vs-player battles, with
+the grand final by Sunday.
+
+Done so far (phase 1): **battles between two players, run by the server**
+(`activity/cup.mjs`, `activity/cup-engine.mjs`). The server is the referee:
+each player's browser gets only what that player may see (the other side's
+HP as a percentage, no requests but their own), over Server-Sent Events, and
+sends choices back. A battle is saved as its seed, both teams and every
+choice; replaying them rebuilds it exactly, so a battle waits for whoever has
+to move, and survives closing the page or restarting the server. After 24
+hours without a move, RED's AI makes it. The page is `cup.html?b=<id>`, with
+Daily Red's battle screen (the battle engine's remote mode, `web/cup.js`).
+
+Next: the draft (phase 2), then the bracket, schedule and the Cup's Discord
+channel (phase 3). `cd tests && node cup.mjs` plays a Cup battle in two
+browsers, closing one and restarting the server mid-battle.
+
 ## Copyright and licenses
 
 Daily Red is a free, unofficial fan project. It isn't affiliated with or

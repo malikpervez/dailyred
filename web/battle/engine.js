@@ -13,7 +13,7 @@ function onMessage({ data }) {
       teams.get(`${data.seed}:${data.version}:${data.trainer}`)?.resolve(data);
       break;
     case 'events':
-      handlers.onEvents?.(data.events);
+      handlers.onEvents?.(data.events, Boolean(data.instant));
       break;
     case 'request':
       handlers.onRequest?.(data.request);
@@ -68,6 +68,16 @@ export function startBattle({ seed, version, order, name, trainer }, on) {
 }
 
 export const choose = (choice) => worker?.postMessage({ type: 'choose', choice });
+
+// The Cup: a battle against another player, run by the server (cup.mjs).
+// `me`: 'p1' or 'p2' ('spectator' to watch), `team`: your own sets, for the
+// summary screens. Then feedRemote() each event from the server's stream;
+// `instant` while catching up on a battle already under way.
+export function startRemote({ me, team, foeName }, on) {
+  handlers = on;
+  getWorker().postMessage({ type: 'remote-start', me, team, foeName });
+}
+export const feedRemote = (event, instant = false) => worker?.postMessage({ type: 'remote-event', event, instant });
 export const forfeit = () => worker?.postMessage({ type: 'forfeit' });
 
 // Stops delivering the current battle's messages (leaving the battle screen).

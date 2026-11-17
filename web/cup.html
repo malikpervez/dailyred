@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Daily Red Cup</title>
+  <meta name="description" content="The Daily Red Cup: a weekly draft and double-elimination bracket between friends.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="vendor/pixelify-sans.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="cup.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <a class="wordmark" href="./">Daily <span>Red</span> Cup</a>
+    <p class="masthead-meta"><span id="cup-label"></span></p>
+  </header>
+
+  <main class="app" data-state="loading">
+    <div class="status-card" id="loading" role="status" aria-live="polite">
+      <p id="loading-text">Loading the battle…</p>
+    </div>
+
+    <div class="status-card status-error" id="error" role="alert">
+      <p class="status-heading" id="error-heading">Something went wrong</p>
+      <p id="error-text"></p>
+      <a class="button button-primary button-discord" id="error-signin" href="auth/login" hidden>Sign in with Discord</a>
+    </div>
+
+    <!-- A Cup battle (cup.js; battle/view.js builds the inside). -->
+    <div class="battle-screen" id="battle-screen">
+      <div class="battle-bar">
+        <span class="chip" id="cup-status"></span>
+        <span class="battle-turn" id="turn-label"></span>
+      </div>
+      <div id="battle-root"></div>
+      <div class="speed">
+        <span>Text speed</span>
+        <div class="segmented" role="group" aria-label="Text speed">
+          <button type="button" data-speed="normal">Normal</button>
+          <button type="button" data-speed="fast">Fast</button>
+        </div>
+      </div>
+      <div class="speed">
+        <span>Animations</span>
+        <div class="segmented" role="group" aria-label="Animations">
+          <button type="button" data-anims="on">On</button>
+          <button type="button" data-anims="off">Off</button>
+        </div>
+      </div>
+      <div class="battle-done" id="battle-done" hidden>
+        <p class="done-title" id="done-title"></p>
+        <p class="done-standing" id="done-note"></p>
+      </div>
+    </div>
+  </main>
+
+  <dialog class="confirm-dialog" id="run-dialog" aria-labelledby="run-dialog-text">
+    <p id="run-dialog-text">Give up this Cup battle? Your opponent wins.</p>
+    <form method="dialog" class="confirm-buttons">
+      <button class="button" value="cancel" type="submit">Keep battling</button>
+      <button class="button button-primary" value="run" type="submit">Give up</button>
+    </form>
+  </dialog>
+</body>
+</html>

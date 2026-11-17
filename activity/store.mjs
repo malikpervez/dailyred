@@ -14,6 +14,8 @@
 //   recaps        which morning recaps (date) and monthly announcements
 //                 ('month:YYYY-MM') have been posted
 //   settings      small things the server remembers (key/value)
+//   cup_battles   the Cup's player-vs-player battles (cup.mjs): the seed, both
+//                 teams and every choice, which rebuild the battle exactly
 import { DatabaseSync } from 'node:sqlite';
 
 export function openStore(file) {
@@ -68,6 +70,17 @@ export function openStore(file) {
       wins      INTEGER NOT NULL,
       losses    INTEGER NOT NULL,
       PRIMARY KEY (guild_id, month, player_id)
+    );
+    CREATE TABLE IF NOT EXISTS cup_battles (
+      id         TEXT PRIMARY KEY,
+      p1_id      TEXT NOT NULL,
+      p2_id      TEXT NOT NULL,
+      state      TEXT NOT NULL,
+      asked      TEXT NOT NULL,
+      winner     TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      ended_at   INTEGER
     );
     CREATE TABLE IF NOT EXISTS reminders (
       guild_id  TEXT NOT NULL,
@@ -147,6 +160,14 @@ export function openStore(file) {
     SELECT DISTINCT rp.room FROM results r JOIN room_players rp ON rp.player_id = r.player_id
     WHERE r.date >= ? AND rp.room LIKE 'g:%'
   `);
+  const getCupBattle = db.prepare('SELECT * FROM cup_battles WHERE id = ?');
+  const putCupBattle = db.prepare(`
+    INSERT INTO cup_battles (id, p1_id, p2_id, state, asked, winner, created_at, updated_at, ended_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (id) DO UPDATE SET state = excluded.state, asked = excluded.asked, winner = excluded.winner,
+      updated_at = excluded.updated_at, ended_at = excluded.ended_at
+  `);
+  const liveCupBattles = db.prepare('SELECT id FROM cup_battles WHERE ended_at IS NULL');
   const getSetting = db.prepare('SELECT value FROM settings WHERE key = ?');
   const putSetting = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value');
 
@@ -213,6 +234,19 @@ export function openStore(file) {
     knownGuilds: () => knownGuilds.all().map((row) => row.room.slice(2)),
     // Servers where anyone finished a battle on or after `date`.
     roomsSince: (date) => roomsSince.all(date).map((row) => row.room),
+    // The Cup's battles: { id, p1Id, p2Id, state, asked: { p1, p2 }, winner, ended }.
+    getCupBattle(id) {
+      const row = getCupBattle.get(id);
+      return row && {
+        id: row.id, p1Id: row.p1_id, p2Id: row.p2_id, state: JSON.parse(row.state), asked: JSON.parse(row.asked),
+        winner: row.winner, ended: row.ended_at != null,
+      };
+    },
+    saveCupBattle({ id, p1Id, p2Id, state, asked, winner = null, ended = false }) {
+      const time = Date.now();
+      putCupBattle.run(id, p1Id, p2Id, JSON.stringify(state), JSON.stringify(asked), winner, time, time, ended ? time : null);
+    },
+    liveCupBattles: () => liveCupBattles.all().map((row) => row.id),
     getSetting: (key) => getSetting.get(key)?.value ?? null,
     setSetting: (key, value) => { putSetting.run(key, String(value)); },
 

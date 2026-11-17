@@ -12,6 +12,11 @@
 //   { type: 'start', seed, order, name, trainer }   -> events / request / end messages
 //   { type: 'choose', choice }             e.g. "move 2", "switch 3", "item fullrestore 2"
 //   { type: 'forfeit' }
+// The Cup (another player, battle run by the server, cup.mjs): the page
+// passes on the server's stream for one side and posts choices itself.
+//   { type: 'remote-start', me, team, foeName }   me: 'p1' | 'p2' (or 'spectator')
+//   { type: 'remote-event', event, instant }      event: { kind: 'log', text } | { kind: 'request', request };
+//                                                 instant: catching up (no animations)
 // Messages out:
 //   { type: 'events', events: [{ text?, state, anim? }] }
 //   { type: 'request', request }           what the player can do now (with
@@ -124,7 +129,7 @@ function pokemonState(mon, own) {
 // The screen as the player sees it. A Pokémon knocked out stays on screen at
 // 0 HP until its "fainted!" line (the client clears it from active then), so
 // its HP bar drains all the way first.
-function snapshot(client) {
+function snapshot(client, me = 'p1') {
   const side = (s, own) => {
     const active = s.active[0] ? pokemonState(s.active[0], own) : null;
     // Only `fainted` counts: the client starts the bench it learns from the
@@ -135,7 +140,9 @@ function snapshot(client) {
     const fainted = s.team.filter((p) => p.fainted).map((p) => p.species.num);
     return { name: s.name, active, party, fainted };
   };
-  return { p1: side(client.p1, true), p2: side(client.p2, false), turn: client.turn };
+  // The screen's "p1" is always the player's own side (in the Cup they may be p2).
+  const them = me === 'p2' ? 'p1' : 'p2';
+  return { p1: side(client[me === 'p2' ? 'p2' : 'p1'], true), p2: side(client[them], false), turn: client.turn };
 }
 
 const STATE_LINES = new Set(['switch', 'drag', 'replace', 'faint', '-damage', '-heal', '-sethp', '-status',
@@ -147,8 +154,12 @@ const toId = (text) => String(text || '').toLowerCase().replace(/^(item|ability|
 
 // What the battle screen should animate for a protocol line (fx.js and the
 // sprite effects in view.js), or null.
-function animFor(args, kwArgs) {
-  const side = (ident) => (ident || '').slice(0, 2);
+function animFor(args, kwArgs, me = 'p1') {
+  // The screen's p1 is the player's own side.
+  const side = (ident) => {
+    const id = (ident || '').slice(0, 2);
+    return me !== 'p2' || !/^p[12]$/.test(id) ? id : id === 'p1' ? 'p2' : 'p1';
+  };
   const other = (s) => (s === 'p1' ? 'p2' : 'p1');
   switch (args[0]) {
     case 'move': {
@@ -449,33 +460,158 @@ async function readPlayer(battle) {
       post({ type: 'request', request: summarizeRequest(request) });
       continue;
     }
-    const events = [];
-    let winner = null;
-    for (const line of chunk.split('\n')) {
-      if (!line.startsWith('|')) continue;
-      const { args, kwArgs } = Protocol.parseBattleLine(line);
-      // A Revive (useBagItem): the client only brings Pokémon back for
-      // Revival Blessing, so it's done here.
-      const revived = args[0] === '-heal' ? client.getPokemon(args[1]) : null;
-      const text = revived?.fainted ? [`${revived.name} was revived!`] : cleanText(formatter.formatText(args, kwArgs));
-      client.add(args, kwArgs);
-      if (revived?.fainted) {
-        revived.fainted = false;
-        revived.status = undefined;
-      }
-      if (args[0] === 'win') winner = args[1];
-      if (args[0] === 'tie') winner = '';
-      if (args[0] === 'win' || args[0] === 'tie') continue;
-      const anim = animFor(args, kwArgs);
-      if (text.length) {
-        text.forEach((t, i) => events.push({ text: t, state: snapshot(client), anim: i === 0 ? anim : null }));
-      } else if (STATE_LINES.has(args[0]) || anim) {
-        events.push({ state: snapshot(client), anim });
-      }
-      if (args[0] === 'turn') events.push({ turn: client.turn, state: snapshot(client) });
+    processLog(battle, chunk);
+  }
+}
+
+// Battle log lines -> what the page shows: text, a snapshot of the screen
+// after each line, and animations. From `battle.me`'s side (p1 against the
+// trainer; either side in the Cup).
+function processLog(battle, chunk, instant = false) {
+  const { client, formatter } = battle;
+  const me = battle.me ?? 'p1';
+  const events = [];
+  let winner = null;
+  for (const line of chunk.split('\n')) {
+    if (!line.startsWith('|')) continue;
+    const { args, kwArgs } = Protocol.parseBattleLine(line);
+    // A Revive (useBagItem): the client only brings Pokémon back for
+    // Revival Blessing, so it's done here.
+    const revived = args[0] === '-heal' ? client.getPokemon(args[1]) : null;
+    const text = revived?.fainted ? [`${revived.name} was revived!`] : cleanText(formatter.formatText(args, kwArgs));
+    client.add(args, kwArgs);
+    if (revived?.fainted) {
+      revived.fainted = false;
+      revived.status = undefined;
     }
-    if (events.length) post({ type: 'events', events });
-    if (winner !== null) post({ type: 'end', won: winner !== '' && winner === client.p1.name, tie: winner === '' });
+    if (args[0] === 'win') winner = args[1];
+    if (args[0] === 'tie') winner = '';
+    if (args[0] === 'win' || args[0] === 'tie') continue;
+    const anim = animFor(args, kwArgs, me);
+    if (text.length) {
+      text.forEach((t, i) => events.push({ text: t, state: snapshot(client, me), anim: i === 0 ? anim : null }));
+    } else if (STATE_LINES.has(args[0]) || anim) {
+      events.push({ state: snapshot(client, me), anim });
+    }
+    if (args[0] === 'turn') events.push({ turn: client.turn, state: snapshot(client, me) });
+  }
+  if (events.length) post({ type: 'events', events, instant });
+  const mine = client[me === 'p2' ? 'p2' : 'p1'].name;
+  if (winner !== null) post({ type: 'end', won: winner !== '' && winner === mine, tie: winner === '', instant });
+}
+
+// --- The Cup: another player, the battle run by the server ----------------------------
+
+// Types of a species as the player sees it.
+const typesOf = (name) => dex.species.get(name).types;
+
+// How a move of `type` hits a Pokémon of `types`: 'super', 'weak', 'none',
+// 'normal', or '' (nothing to hit).
+function typeEffect(type, types) {
+  if (!types) return '';
+  if (!dex.getImmunity(type, types)) return 'none';
+  const e = dex.getEffectiveness(type, types);
+  return e > 0 ? 'super' : e < 0 ? 'weak' : 'normal';
+}
+
+// One of your own Pokémon, from your team's set (everything is yours to
+// know) and the request (its HP, status, item now). `foeTypes`: for the
+// effectiveness hints.
+function ownDetails(battle, p, foeTypes) {
+  const set = battle.sets.find((s) => dex.species.get(s.species).name === dex.species.get(p.speciesForme).name);
+  const base = set ? describe(set) : { species: p.speciesForme, num: dex.species.get(p.speciesForme).num, types: typesOf(p.speciesForme), moves: [] };
+  const poke = battle.client.getPokemon(p.ident);
+  const item = p.item ? dex.items.get(p.item) : null;
+  return {
+    ...base,
+    item: item?.name ?? '',
+    itemDesc: itemHelp(item),
+    hp: p.hp,
+    maxhp: p.maxhp,
+    status: p.fainted || p.hp === 0 ? 'fnt' : p.status || '',
+    moves: base.moves.map((m) => {
+      const used = poke?.moveSlots?.find((slot) => slot.id === dex.moves.get(m.name).id)?.ppUsed ?? 0;
+      return { ...m, maxpp: m.pp, pp: Math.max(0, m.pp - used), effect: m.category === 'Status' ? '' : typeEffect(m.type, foeTypes) };
+    }),
+  };
+}
+
+// The other player's Pokémon: only what's been seen (HP as a percentage,
+// moves it has used, an item or ability once revealed).
+function foeDetails(poke, myTypes) {
+  const species = dex.species.get(poke.speciesForme);
+  const item = poke.item ? dex.items.get(poke.item) : null;
+  const ability = poke.ability ? dex.abilities.get(poke.ability) : null;
+  return {
+    species: species.name,
+    num: species.num,
+    shiny: Boolean(poke.shiny),
+    level: poke.level,
+    gender: poke.gender === 'N' ? '' : poke.gender || '',
+    types: species.types,
+    item: item?.exists ? item.name : '?',
+    itemDesc: item?.exists ? itemHelp(item) : 'Not seen yet',
+    ability: ability?.exists ? ability.name : '?',
+    abilityDesc: ability?.exists ? ability.shortDesc : 'Not seen yet',
+    nature: '?',
+    hp: poke.hp,
+    maxhp: poke.maxhp,
+    status: poke.fainted ? 'fnt' : poke.status || '',
+    stats: null, // unknown
+    moves: poke.moveSlots.map((slot) => {
+      const info = dex.moves.get(slot.id);
+      const category = info.category === 'Status' ? 'Status' : isPhysicalType(info.type) ? 'Physical' : 'Special';
+      return {
+        name: info.name, type: info.type, category, power: info.basePower || null,
+        accuracy: info.accuracy === true ? null : info.accuracy, desc: info.shortDesc,
+        effect: category === 'Status' ? '' : typeEffect(info.type, myTypes),
+      };
+    }),
+  };
+}
+
+// The server's request -> the menus, like summarizeRequest() but from what
+// this player knows (no simulator here).
+function summarizeRemote(battle, request) {
+  if (!request || request.wait) return { kind: 'wait' };
+  const { client } = battle;
+  const theirs = client[battle.me === 'p2' ? 'p1' : 'p2'];
+  const foe = theirs.active[0] && !theirs.active[0].fainted ? theirs.active[0] : null;
+  const foeTypes = foe ? typesOf(foe.speciesForme) : null;
+  const party = request.side.pokemon.map((p, i) => ({ slot: i + 1, active: Boolean(p.active), ...ownDetails(battle, p, foeTypes) }));
+  const yours = party.find((p) => p.active);
+  const foeInfo = foe ? foeDetails(foe, yours && yours.status !== 'fnt' ? yours.types : null) : null;
+  if (request.forceSwitch) return { kind: 'switch', forced: true, rqid: request.rqid, party, foe: foeInfo };
+  const active = request.active[0];
+  const moves = active.moves.map((m, i) => {
+    const info = dex.moves.get(m.id);
+    const type = info.id === 'hiddenpower' ? (/Hidden Power (\w+)/.exec(m.move)?.[1] ?? info.type) : info.type;
+    const category = info.category === 'Status' ? 'Status' : isPhysicalType(type) ? 'Physical' : 'Special';
+    return {
+      slot: i + 1, name: m.move, type, category, power: info.basePower || null,
+      pp: m.pp ?? null, maxpp: m.maxpp ?? null, disabled: Boolean(m.disabled) || m.pp === 0,
+      effect: category === 'Status' ? '' : typeEffect(type, foeTypes),
+    };
+  });
+  return {
+    kind: 'move', rqid: request.rqid, species: yours?.species ?? '', ability: yours?.ability ?? '', moves,
+    canSwitch: !active.trapped && !active.maybeTrapped, canBag: false, party, foe: foeInfo,
+  };
+}
+
+function startRemote({ me, team, foeName }) {
+  const client = new ClientBattle(gens);
+  const side = me === 'p2' ? 'p2' : 'p1'; // spectators watch from p1's side
+  current = { remote: true, me: side, client, formatter: new LogFormatter(side, client), sets: team ?? [], foeName };
+}
+
+function remoteEvent(battle, event, instant) {
+  if (event.kind === 'log') {
+    processLog(battle, event.text, instant);
+  } else if (event.kind === 'request') {
+    const request = Protocol.parseRequest(JSON.stringify(event.request));
+    battle.client.update(request);
+    post({ type: 'request', request: summarizeRemote(battle, request) });
   }
 }
 
@@ -560,6 +696,12 @@ onmessage = ({ data }) => {
         break;
       case 'forfeit':
         current?.streams.omniscient.write('>forcelose p1');
+        break;
+      case 'remote-start':
+        startRemote(data);
+        break;
+      case 'remote-event':
+        if (current?.remote) remoteEvent(current, data.event, Boolean(data.instant));
         break;
       default:
         break;

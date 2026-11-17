@@ -56,8 +56,10 @@ function infoBox(side) {
 // `getBag()`: what's in the bag for this battle, { items: [{ id, count }], note },
 // or null for no bag. `useItem(id, slot)`: takes it out of the bag (the
 // server's, for an official battle); resolves to an error message or null.
+// `waitText()`: shown after choosing, until the turn plays out (the Cup:
+// "Waiting for Misty…"; RED answers at once).
 export function createBattleView(root, {
-  onChoose, onRun, getSpeed, getAnimations = () => true, getBag = () => null, useItem = async () => null,
+  onChoose, onRun, getSpeed, getAnimations = () => true, getBag = () => null, useItem = async () => null, waitText = () => '',
 }) {
   root.replaceChildren();
   root.classList.add('battle-view');
@@ -564,9 +566,11 @@ export function createBattleView(root, {
     const stats = el('dl', 'sum-stats');
     for (const [key, label] of [['hp', 'HP'], ['atk', 'ATK'], ['def', 'DEF'], ['spa', 'SP.ATK'], ['spd', 'SP.DEF'], ['spe', 'SPEED']]) {
       const row = el('div');
-      row.append(el('dt', '', label), el('dd', '', String(mon.stats[key])));
+      // Another player's Pokémon (the Cup): its stats aren't known.
+      row.append(el('dt', '', label), el('dd', '', mon.stats ? String(mon.stats[key]) : '?'));
       stats.append(row);
     }
+    if (!mon.moves.length) moves.append(el('li', 'sum-move sum-move-none', 'No moves seen yet'));
 
     const buttons = el('div', 'sum-buttons');
     if (!foe) {
@@ -603,7 +607,7 @@ export function createBattleView(root, {
   function submit(choice) {
     request = null;
     setPanel('message');
-    showText('');
+    showText(waitText());
     onChoose(choice);
   }
 
@@ -646,6 +650,18 @@ export function createBattleView(root, {
       queue.push(...events);
       drain();
     },
+    // A battle already under way (the Cup, opened again): its log and the
+    // screen as it is now, without playing it all out.
+    catchUp(events) {
+      for (const event of events) {
+        if (event.turn) addLog(`Turn ${event.turn}`, 'turn');
+        else if (event.text) addLog(event.text);
+      }
+      const last = events.findLast((e) => e.state);
+      if (last) render(last.state);
+    },
+    // The request on screen now (null once a choice is made).
+    get pending() { return request; },
     request(req) {
       request = req;
       if (!playing && !queue.length) showRequest();

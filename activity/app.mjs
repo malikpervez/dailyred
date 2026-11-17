@@ -20,7 +20,9 @@
 //                                     which must be the app's OAuth2 redirect
 //   GET /auth/logout
 //
-//   GET /card/<date>.png           today's six facing RED, for the bot's card (card-image.mjs)
+//   GET /card/<date>.png           today's six facing the day's trainer, for the bot's card (card-image.mjs)
+//
+//   /api/cup/battles/<id>[/events|/choose]   the Cup's player-vs-player battles (cup.mjs)
 //
 // Every /api call except config, token and web/session needs "Authorization:
 // Bearer <Discord access token>" (the Activity) or the website's session
@@ -40,6 +42,7 @@ import {
 import { previousMonth } from './bot.mjs';
 import { dayNumber } from '../web/daily.js';
 import { walletFor, earn, buy, useItem, usedIn, economyOpen, EconomyError, ECONOMY_START_LABEL } from '../web/economy.js';
+import { CupError } from './cup.mjs';
 
 // daily.js saves through this; the server saves players itself.
 useStatsStorage({ read: () => null, write: () => {} });
@@ -89,6 +92,7 @@ export function createApp({
   bot = null, // bot.mjs: the live card, recaps and button presses (optional)
   publicUrl = null, // https://... this site's public address: turns on the website's sign-in
   cardPicture = null, // date -> PNG of the day's six facing the day's trainer (card-image.mjs), for the bot's card
+  cup = null, // cup.mjs: the Cup's battles (optional)
 }) {
   const pictures = new Map(); // date -> PNG, the last few days
   const site = publicUrl ? String(publicUrl).replace(/\/$/, '') : null;
@@ -265,12 +269,14 @@ export function createApp({
   function login(req, res, url) {
     if (!webSignIn) throw new HttpError(404, 'Website sign-in is off (PUBLIC_URL is not set)');
     const guild = /^\d{1,20}$/.test(url.searchParams.get('g') || '') ? url.searchParams.get('g') : null;
+    // Where to come back to (e.g. a Cup battle): a page of this site only.
+    const next = /^\/(?!\/)[\w./?=&%-]{0,200}$/.test(url.searchParams.get('next') || '') ? url.searchParams.get('next') : null;
     const state = randomBytes(16).toString('base64url');
     const authorize = new URL('https://discord.com/oauth2/authorize');
     for (const [k, v] of Object.entries({
       response_type: 'code', client_id: clientId, scope: 'identify guilds', state, redirect_uri: redirectUri, prompt: 'none',
     })) authorize.searchParams.set(k, v);
-    redirect(res, authorize.href, [cookie(STATE_COOKIE, seal({ state, guild, exp: now().getTime() + 10 * 60 * 1000 }), 600)]);
+    redirect(res, authorize.href, [cookie(STATE_COOKIE, seal({ state, guild, next, exp: now().getTime() + 10 * 60 * 1000 }), 600)]);
   }
 
   // GET /auth/callback: Discord sends the player back with a code.
@@ -296,7 +302,7 @@ export function createApp({
     const user = { id: String(me.body.id), name: me.body.global_name || me.body.username || 'Trainer', avatarUrl: avatarUrl(me.body) };
     const session = { ...user, rooms };
     const guild = rooms.some((r) => r.room === `g:${pending.guild}`) ? pending.guild : null;
-    redirect(res, back(guild), [clear, sessionCookie(session)]);
+    redirect(res, pending.next ?? back(guild), [clear, sessionCookie(session)]);
   }
 
   // A room the player may use. Website players: only their own servers.
@@ -571,6 +577,26 @@ export function createApp({
       result = reminder(user, await readJson(req));
     } else if (route === 'POST /api/share') {
       result = await share(req);
+    } else if (cup && /^\/api\/cup\/battles\//.test(url.pathname)) {
+      // The Cup's battles (cup.mjs): signed-in players only.
+      const match = /^\/api\/cup\/battles\/([A-Za-z0-9_-]{4,20})(\/events|\/choose)?$/.exec(url.pathname);
+      if (!match) throw new HttpError(404, 'Not found');
+      const user = await requireUser(req);
+      const [, id, action = ''] = match;
+      try {
+        if (action === '' && req.method === 'GET') {
+          result = await cup.meta(id, user);
+        } else if (action === '/events' && req.method === 'GET') {
+          await cup.events(req, res, id, user, url.searchParams.get('since'));
+          return; // a stream, answered by cup.mjs
+        } else if (action === '/choose' && req.method === 'POST') {
+          result = await cup.choose(id, user, await readJson(req));
+        } else {
+          throw new HttpError(405, 'Method not allowed');
+        }
+      } catch (err) {
+        throw err instanceof CupError ? new HttpError(err.status, err.message) : err;
+      }
     } else if (route === 'GET /api/interactions') {
       // Open this in a browser to check the bot's setup (no secrets shown).
       const status = bot?.status() ?? { publicKey: 'missing', posting: false };

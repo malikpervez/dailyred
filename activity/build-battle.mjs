@@ -45,6 +45,22 @@ await build({
   banner: { js: '// Bundled from @pkmn/sim (MIT, see web/vendor/battle-worker.LICENSE.txt) and web/battle/team.js.' },
 });
 
+// The Cup's server-side battles (cup-engine.mjs: @pkmn/sim, @smogon/calc and
+// RED's AI for the autopilot).
+await build({
+  entryPoints: [join(here, 'cup-engine.mjs')],
+  outfile: join(here, 'dist/cup-engine.mjs'),
+  bundle: true,
+  minify: true,
+  format: 'esm',
+  platform: 'node',
+  target: ['node22'],
+  define: { 'process.env.NODE_ENV': '"production"' },
+  legalComments: 'none',
+  logLevel: 'warning',
+  banner: { js: '// Bundled from @pkmn/sim and @smogon/calc (MIT, see web/vendor/battle-worker.LICENSE.txt) and web/battle/ai.js.' },
+});
+
 // Every npm package that ended up in the bundle, with its license text.
 const packages = new Set();
 for (const input of Object.keys(result.metafile.inputs)) {
@@ -60,4 +76,4 @@ const sections = [...packages].sort().map((name) => {
 });
 writeFileSync(join(vendor, 'battle-worker.LICENSE.txt'),
   `Packages bundled into battle-worker.js\n\n${sections.join('\n')}`);
-console.log(`Built web/vendor/battle-worker.js (${[...packages].join(', ')}) and activity/dist/team-of-day.mjs`);
+console.log(`Built web/vendor/battle-worker.js (${[...packages].join(', ')}), activity/dist/team-of-day.mjs and activity/dist/cup-engine.mjs`);

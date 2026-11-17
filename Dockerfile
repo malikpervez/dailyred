@@ -27,7 +27,7 @@ COPY activity/build-sprites.mjs activity/
 COPY web/battle/fx-sprites.js web/battle/
 COPY scripts/get-sprites.sh scripts/
 RUN scripts/get-sprites.sh /tmp/pokefirered && rm -rf /tmp/pokefirered
-COPY activity/build-sdk.mjs activity/build-battle.mjs activity/team-of-day.mjs activity/
+COPY activity/build-sdk.mjs activity/build-battle.mjs activity/team-of-day.mjs activity/cup-engine.mjs activity/
 COPY web/battle/ web/battle/
 # Shared rules the battle engine imports: the bag's (economy.js) and the
 # Road to RED's trainers (road.js).
@@ -42,7 +42,7 @@ WORKDIR /app
 COPY web/ web/
 COPY --from=build /src/web/vendor/ web/vendor/
 COPY --from=build /src/web/sprites/ web/sprites/
-COPY activity/server.mjs activity/app.mjs activity/store.mjs activity/bot.mjs activity/
+COPY activity/server.mjs activity/app.mjs activity/store.mjs activity/bot.mjs activity/cup.mjs activity/
 # Today's card picture: drawn by the server from the sprites and this lettering.
 COPY activity/card-image.mjs activity/png.mjs activity/
 COPY activity/card-titles/ activity/card-titles/

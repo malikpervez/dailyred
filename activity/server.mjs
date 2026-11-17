@@ -29,6 +29,7 @@ import { createBot, inviteUrl } from './bot.mjs';
 import { openStore } from './store.mjs';
 import { dailySeed, teamVersion } from '../web/daily.js';
 import { trainerOn } from '../web/road.js';
+import { createCup } from './cup.mjs';
 import { createCardPainter } from './card-image.mjs';
 
 // Values pasted into OMV's environment box can pick up spaces or quotes.
@@ -99,6 +100,11 @@ if ((env.DISCORD_BOT_TOKEN || env.DISCORD_PUBLIC_KEY) && env.DISCORD_CLIENT_ID) 
   console.log('DISCORD_BOT_TOKEN / DISCORD_PUBLIC_KEY are not set (or DISCORD_CLIENT_ID is missing): the bot is off.');
 }
 
+// The Cup's player-vs-player battles (cup.mjs). Every five minutes RED's AI
+// moves for anyone who's kept their opponent waiting a day.
+const cup = createCup({ store });
+setInterval(() => cup.tick().catch((err) => console.warn(`Cup autopilot: ${err.message}`)), 5 * 60 * 1000).unref();
+
 const handle = createApp({
   webRoot,
   store,
@@ -107,6 +113,7 @@ const handle = createApp({
   bot,
   publicUrl: env.PUBLIC_URL || null,
   cardPicture,
+  cup,
 });
 console.log(env.PUBLIC_URL && env.DISCORD_CLIENT_SECRET
   ? `Website sign-in on: the app's only OAuth2 redirect must be ${env.PUBLIC_URL.replace(/\/$/, '')}/auth/callback`
